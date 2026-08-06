@@ -1,0 +1,6310 @@
+// ============================================
+// Fehler-Anzeige: zeigt Skriptfehler direkt auf dem
+// Bildschirm an. Kann spaeter geloescht werden.
+// ============================================
+
+(function(){
+
+    function zeige(text){
+
+        var box=document.getElementById("fehlerBox");
+
+        if(!box){
+
+            box=document.createElement("div");
+
+            box.id="fehlerBox";
+
+            box.style.cssText=
+            "position:fixed;left:0;right:0;top:0;z-index:99999;"+
+            "background:#b00020;color:#fff;font:12px/1.4 monospace;"+
+            "padding:10px;white-space:pre-wrap;max-height:45vh;overflow:auto;";
+
+            box.addEventListener("click",function(){ box.remove(); });
+
+            (document.body||document.documentElement).appendChild(box);
+
+        }
+
+        box.textContent+=text+String.fromCharCode(10,10);
+
+    }
+
+    window.addEventListener("error",function(e){
+
+        var u=String.fromCharCode(10);
+
+        zeige("FEHLER: "+e.message+
+              u+"Datei: "+(e.filename||"?").split("/").pop()+
+              u+"Zeile: "+e.lineno+":"+e.colno);
+
+    });
+
+    window.addEventListener("unhandledrejection",function(e){
+
+        zeige("PROMISE-FEHLER: "+e.reason);
+
+    });
+
+})();
+
+const karte=document.getElementById("karte");
+
+// Debug: Prüfe ob karte existiert
+if(!karte){
+    console.error("❌ FEHLER: #karte Element nicht gefunden!");
+}
+const spieler=document.getElementById("spieler");
+
+if(!spieler){
+    console.error("❌ FEHLER: #spieler Element nicht gefunden!");
+}
+
+const levelText=document.getElementById("level");
+const coinsText=document.getElementById("coins");
+const juwelenText=document.getElementById("juwelen");
+const sterneText=document.getElementById("sterne");
+const beerenCountText=document.getElementById("berryCount");
+
+// Test: Sichtbares Element oben hinzufügen
+
+setTimeout(() => {
+    
+}, 2000);
+
+// Aufgaben-Elemente finden
+const aufgabenListeHTML=document.getElementById("aufgabenListe");
+
+
+const GROESSE=30;
+const FELD=40;
+
+let coins=2008888;
+let juwelen=1000002;
+
+// Lilie: seltene Währung aus Wasser-Kisten, bewusst nicht im Haupt-HUD sichtbar
+
+let lilie=0;
+
+let level=1;
+let xp=0;
+
+// Sterne: bei jedem Level-Up gibt es einen, damit wird
+// der Skill-Baum im Charakter-Fenster freigeschaltet
+
+let sterne=0;
+
+let buesche=[];
+let kisten=[];
+let pets=[];
+
+// Berry-Harvest-Mechanik (aus Vorlage übernommen)
+
+let pflanzen=[];
+let liegendeBeeren=[];
+// Beeren: Gesamtzähler (wird angezeigt)
+let beeren=0;
+
+// Beeren nach Typ: für Aufgaben-Verfolgung
+// Gesammelte Fruechte je Sorte. Die Schluessel kommen aus
+// PFLANZEN in aufgaben.js, damit hier nichts nachgepflegt
+// werden muss, wenn eine Sorte dazukommt.
+
+let gesammelteBeeren={};
+
+function setzeBeerenZurueck(){
+
+    gesammelteBeeren={};
+
+    PFLANZEN.forEach(p=>{ gesammelteBeeren[p.typ]=0; });
+
+}
+
+setzeBeerenZurueck();
+
+let aktiveAufgaben=[];
+
+let erledigteAufgaben=[];
+
+// Wird ausgelöst, wenn die "Lager aufwerten"-Aufgabe abgeschlossen wird
+
+function gewaehreLagerBelohnung(){
+
+
+    lagerLevel++;
+
+    // Die Inselgroesse haengt allein am Spieler-Level, siehe
+    // karteSizeForLevel. Frueher wuchs sie hier zusaetzlich um
+    // eins - dabei entstanden gerade Kantenlaengen, bei denen
+    // das Lager nicht mehr mittig sass.
+
+}
+
+// Sterne: bei jedem Level-Up gibt's einen, damit schaltet man den Skill-Baum frei
+
+let pruefeAufgabenTimer = null;
+
+function pruefeAufgabenDebounced(){
+    
+    if(pruefeAufgabenTimer) return; // Bereits geplant
+    
+    pruefeAufgabenTimer = setTimeout(() => {
+        
+        pruefeAufgaben();
+        pruefeAufgabenTimer = null;
+        
+    }, 100); // Nach 100ms prüfen
+    
+}
+
+// Hauptfunktion für Aufgaben-Prüfung
+function pruefeAufgaben(){
+
+    let hatSichGeaendert = false;
+
+    // Schaue ob Aufgaben fertig sind
+    aktiveAufgaben.forEach(aufgabe=>{
+
+        let fertig =
+        aufgabe.anforderungen.every(
+            a=>a.fortschritt>=a.ziel
+        );
+
+        if(fertig && !aufgabe.abgeschlossen){
+
+            aufgabe.abgeschlossen=true;
+            hatSichGeaendert = true;
+
+            // Animation für fertige Aufgabe
+            if(aufgabenListeHTML){
+
+                let karte=
+                aufgabenListeHTML.querySelector(
+                    `[data-aufgabe-id="${aufgabe.id}"]`
+                );
+
+                if(karte){
+                    spieleCoinFlugAnimation(karte);
+                }
+
+            }
+
+            // Belohnungen
+            coins+=aufgabe.belohnung;
+
+            xp+=Math.round(
+                aufgabe.xp*ausruestungsXpMultiplikator()
+            );
+
+            erledigteAufgaben.push(
+                aufgabe.id
+            );
+
+            if(typeof questFortschritt==="function"){
+
+                questFortschritt("auftraege",1);
+
+            }
+
+            // Lager-Upgrade durchführen
+            let istLagerAufgabe=
+            aufgabe.anforderungen.some(
+                a=>a.typ==="lager"
+            );
+
+            if(istLagerAufgabe){
+
+                gewaehreLagerBelohnung();
+
+            }
+
+        }
+
+    });
+
+    // Entferne fertige Aufgaben
+    aktiveAufgaben =
+    aktiveAufgaben.filter(
+        a=>!a.abgeschlossen
+    );
+
+    // Max-Level erreicht: aufgabenListe hat keine Einträge mehr für
+    // dieses Level (aktuell nur bis Level 50 befüllt). Statt
+    // abzustürzen, einfach nichts mehr laden/prüfen - das Spiel
+    // läuft in diesem Zustand einfach weiter.
+
+    if(!aufgabenListe[level]){
+
+        aktualisiereAnzeige();
+
+        if(hatSichGeaendert){
+            zeigeAufgaben();
+        } else {
+            aktualisiereAufgabenAnzeige();
+        }
+
+        return;
+
+    }
+
+    // Lade neue normale Aufgaben
+    let offene =
+    aufgabenListe[level]
+    .filter(
+        a=>
+        !erledigteAufgaben.includes(a.id) &&
+        !aktiveAufgaben.some(ak=>ak.id===a.id) &&
+        !a.isLagerUpgrade
+    );
+
+    while(
+        aktiveAufgaben.length<2 &&
+        offene.length>0
+    ){
+
+        let neu =
+        offene.shift();
+
+        aktiveAufgaben.push(
+            klonAufgabe(neu)
+        );
+        
+        hatSichGeaendert = true;
+
+    }
+
+    // Wenn alle normalen Aufgaben erledigt: Lager-Aufgabe laden
+    
+    let allNormalErledigt = 
+    aufgabenListe[level]
+    .filter(a => !a.isLagerUpgrade)
+    .every(a => erledigteAufgaben.includes(a.id));
+
+    if(allNormalErledigt && aktiveAufgaben.length < 3){
+        
+        let lagerAufgabe = aufgabenListe[level].find(a => a.isLagerUpgrade && !erledigteAufgaben.includes(a.id));
+        
+        if(lagerAufgabe && !aktiveAufgaben.some(ak => ak.id === lagerAufgabe.id)){
+            
+            aktiveAufgaben.push(klonAufgabe(lagerAufgabe));
+            hatSichGeaendert = true;
+            
+        }
+        
+    }
+
+    // Level-UP wenn ALLE Aufgaben erledigt
+    let levelFertig =
+    aufgabenListe[level]
+    .every(
+        a=>erledigteAufgaben.includes(a.id)
+    );
+
+    if(levelFertig){
+
+        level++;
+
+        sterne+=1;
+
+        if(typeof questFortschritt==="function"){
+
+            questFortschritt("level",1);
+
+        }
+
+        erledigteAufgaben=[];
+
+        aktiveAufgaben=[];
+        
+        // Update Karten-Größe für neues Level
+        kartenStufe = karteSizeForLevel(level);
+        plattformGroesse = kartenStufe;
+        aktualisierePlattform();
+        aktualisiereLagerPosition();
+        aktualisiereSpawnRate();
+        
+        // Beeren-Zaehler zuruecksetzen fuer neues Level
+
+        setzeBeerenZurueck();
+        
+        hatSichGeaendert = true;
+
+        // Alle bestehenden Pflanzen entfernen und neu spawnen, damit
+        // frisch freigeschaltete Sorten (z.B. Brokkoli ab Level 29)
+        // sofort erscheinen können, statt auf zufälliges Nachwachsen
+        // einer geernteten Pflanze zu warten.
+
+        pflanzen.forEach(p=>{
+
+            if(p.element)p.element.remove();
+
+        });
+
+        pflanzen=[];
+
+        for(let i=0;i<pflanzenZiel();i++){
+
+            pflanzeErstellen();
+
+        }
+
+        if(aufgabenListe[level]){
+
+            starteAufgaben();
+
+        }
+
+    }
+
+    aktualisiereAnzeige();
+
+    // Update UI nur wenn nötig
+    if(hatSichGeaendert){
+        zeigeAufgaben();
+    } else {
+        aktualisiereAufgabenAnzeige();
+    }
+
+}
+
+
+// Charakter-Skills: 3 feste Skills, pro Spieler-Level wird 1 weitere Stufe
+// in JEDEM der 3 Skills freigeschaltet (also 3 neue Stufen pro Level-Up),
+// bis maximal Stufe 50. Jede Stufe bringt nur einen kleinen Schritt.
+
+// ============================================
+// CHARAKTER-KETTE
+//
+// 30 Knoten in 10 Gruppen. Jede Gruppe hat drei Knoten -
+// Erntebereich, Sammelradius und Tempo. Eine Gruppe geht auf,
+// sobald der Spieler das passende Level erreicht hat:
+// Gruppe 1 ab Level 10, Gruppe 2 ab Level 20, und so weiter
+// bis Gruppe 10 ab Level 100.
+//
+// Bezahlt wird mit Muenzen. Der Preis verdoppelt sich pro
+// Gruppe: 80, 160, 320 ... bis 40.960.
+// ============================================
+
+const SKILL_GRUPPEN=10;
+
+const SKILL_STUFE_PRO_GRUPPE=10;
+
+const SKILL_ARTEN={
+
+    erntebereich:{
+
+        name:"Erntebereich",
+        icon:"🪓",
+        schritt:1.2,
+        einheit:" px"
+
+    },
+
+    sammelradius:{
+
+        name:"Sammelradius",
+        icon:"🧲",
+        schritt:1.5,
+        einheit:" px"
+
+    },
+
+    tempo:{
+
+        name:"Bewegungsgeschwindigkeit",
+        icon:"👟",
+        schritt:0.03,
+        einheit:""
+
+    }
+
+};
+
+const SKILL_REIHENFOLGE=["erntebereich","sammelradius","tempo"];
+
+// Gekaufte Knoten, Schluessel ist "typ_gruppe"
+
+let gekaufteKnoten={};
+
+function skillGruppenLevel(gruppe){
+
+    return gruppe*SKILL_STUFE_PRO_GRUPPE;
+
+}
+
+function skillKnotenKosten(gruppe){
+
+    return 80*Math.pow(2,gruppe-1);
+
+}
+
+function skillKnotenGekauft(typ,gruppe){
+
+    return gekaufteKnoten[typ+"_"+gruppe]===true;
+
+}
+
+function skillGruppeOffen(gruppe){
+
+    return level>=skillGruppenLevel(gruppe);
+
+}
+
+// Wie viele Knoten einer Art gekauft wurden
+
+function skillAnzahl(typ){
+
+    let summe=0;
+
+    for(let g=1;g<=SKILL_GRUPPEN;g++){
+
+        if(skillKnotenGekauft(typ,g))summe++;
+
+    }
+
+    return summe;
+
+}
+
+// ---- Die drei Boni, die daraus entstehen ----
+
+function skillErntebereichBonus(){
+
+    return skillAnzahl("erntebereich")*SKILL_ARTEN.erntebereich.schritt;
+
+}
+
+function skillSammelradiusBonus(){
+
+    return skillAnzahl("sammelradius")*SKILL_ARTEN.sammelradius.schritt;
+
+}
+
+function skillTempoBonus(){
+
+    return skillAnzahl("tempo")*SKILL_ARTEN.tempo.schritt;
+
+}
+
+const BASIS_TEMPO=2.5;
+
+function aktuellesTempo(){
+
+    return BASIS_TEMPO+
+    skillTempoBonus()+
+    ausruestungsTempoBonus();
+
+}
+
+// Nur noch ein Biom: Grün, theoretisches Maximum 25x25
+
+const GRUEN_MAX=25;
+
+// Aktuelle Wachstums-Obergrenze - wird später weiter freigeschaltet
+
+let wachstumsGrenze=7;
+
+// Kartenstufe wächst schrittweise (5,6,7,...) über die Lager-Aufgabe
+
+// Karten-Größe basierend auf Level
+// L1-9: 3x3
+// L10-24: 4x4
+// L25-50: 5x5
+
+// Nur ungerade Kantenlaengen. Eine gerade Zahl hat kein
+// Mittelfeld - das Lager saesse dann ein halbes Feld daneben.
+
+function karteSizeForLevel(lvl){
+
+    if(lvl<10)return 3;   // L1-9:   3x3, 9 Felder
+
+    if(lvl<40)return 5;   // L10-39: 5x5, 25 Felder
+
+    return 7;             // L40+:   7x7, 49 Felder
+
+}
+
+// Wie viele Pflanzen gleichzeitig stehen. Waechst mit der Flaeche,
+// sonst wird die groessere Insel nur leerer statt ergiebiger.
+
+function pflanzenZiel(){
+
+    if(kartenStufe<=3)return 3;
+
+    if(kartenStufe<=5)return 6;
+
+    return 10;
+
+}
+
+let kartenStufe = karteSizeForLevel(1); // Startet mit 3x3
+
+let plattformGroesse=kartenStufe;
+
+const mitte=
+Math.floor(GROESSE/2);
+
+// Insel-Unterseite (brauner Sockel, der unter dem Grün rausguckt)
+
+let inselUnterseite=
+document.createElement("div");
+
+inselUnterseite.id="inselUnterseite";
+
+karte.appendChild(inselUnterseite);
+
+// Karte erstellen
+
+for(let y=0;y<GROESSE;y++){
+
+    for(let x=0;x<GROESSE;x++){
+
+        let feld=document.createElement("div");
+
+        feld.className="feld";
+
+        karte.appendChild(feld);
+
+    }
+
+}
+
+// Insel-Oberseite: eine glatte, abgerundete grüne Fläche über den Kacheln
+
+let inselOberseite=
+document.createElement("div");
+
+inselOberseite.id="inselOberseite";
+
+karte.appendChild(inselOberseite);
+
+// Prüft ob eine Feld-Koordinate innerhalb eines zentrierten Quadrats liegt
+
+function inBereich(x,y,groesse){
+
+    let start =
+    mitte - Math.floor(groesse/2);
+
+    return (
+        x>=start && x<start+groesse &&
+        y>=start && y<start+groesse
+    );
+
+}
+
+// Insel aktualisieren
+
+function aktualisierePlattform(){
+
+    let felder=
+    document.querySelectorAll(".feld");
+
+    felder.forEach(feld=>{
+
+        feld.classList.remove("gruen");
+
+    });
+
+    let gruenGroesse =
+    Math.min(plattformGroesse,GRUEN_MAX);
+
+    let gStartX =
+    mitte -
+    Math.floor(gruenGroesse/2);
+
+    let gStartY =
+    mitte -
+    Math.floor(gruenGroesse/2);
+
+    for(let y=0;y<gruenGroesse;y++){
+
+        for(let x=0;x<gruenGroesse;x++){
+
+            let gx=gStartX+x;
+
+            let gy=gStartY+y;
+
+            let feld =
+            felder[
+                gy*GROESSE+gx
+            ];
+
+            if(feld){
+
+                feld.classList.add("gruen");
+
+            }
+
+        }
+
+    }
+
+    // Grüne Oberseite exakt über der Kachel-Fläche
+
+    inselOberseite.style.left=
+    (gStartX*FELD)+"px";
+
+    inselOberseite.style.top=
+    (gStartY*FELD)+"px";
+
+    inselOberseite.style.width=
+    (gruenGroesse*FELD)+"px";
+
+    inselOberseite.style.height=
+    (gruenGroesse*FELD)+"px";
+
+    // Braune Unterseite: gleiche Breite, nur unten leicht überstehend
+
+    inselUnterseite.style.left=
+    (gStartX*FELD)+"px";
+
+    inselUnterseite.style.top=
+    (gStartY*FELD+10)+"px";
+
+    inselUnterseite.style.width=
+    (gruenGroesse*FELD)+"px";
+
+    inselUnterseite.style.height=
+    (gruenGroesse*FELD+8)+"px";
+
+}
+
+// Lager
+
+let lagerLevel=1;
+
+// Lager erstellen
+
+let lager=document.createElement("div");
+
+lager.id="lager";
+
+lager.innerHTML=`<svg viewBox="0 0 36 36">
+<path fill="#F4900C" d="M16.812 33c-.588 0-1.112-.37-1.31-.924L8.549 12.608a1.339 1.339 0 0 1 .173-1.242c.261-.369.685-.563 1.137-.563h16.313c.557 0 1.059.305 1.279.817l8.343 19.455c.184.43.14.917-.116 1.307a1.39 1.39 0 0 1-1.163.618H16.812z"/>
+<path fill="#FFCC4D" d="M1.515 33c-.467 0-.904-.236-1.162-.625a1.398 1.398 0 0 1-.116-1.315l8.348-19.479a1.392 1.392 0 0 1 2.557 0L19.49 31.06A1.391 1.391 0 0 1 18.212 33H1.515z"/>
+<path fill="#292F33" d="M9.859 14.182L7.077 33h5.563z"/>
+<path fill="#FFAC33" d="M15.46 31.456L16.081 33H12.64zm-11.203 0L3.636 33h3.441z"/>
+<path fill="#FFE8B6" d="M12.64 33s2.529-.645 3.766-1.786L9.859 14.182L12.64 33zm-5.563 0s-2.529-.645-3.766-1.786l6.546-17.031L7.077 33z"/>
+</svg>`;
+
+karte.appendChild(lager);
+
+function aktualisiereLagerPosition(){
+
+    lager.style.left =
+    (mitte*FELD)+"px";
+
+    lager.style.top =
+    (mitte*FELD)+"px";
+    
+}
+
+aktualisiereLagerPosition();
+
+// Lager verbessern: Kosten in Coins, wächst die Insel
+
+lager.addEventListener("touchstart",()=>{
+
+    let kosten =
+    lagerLevel * 60;
+
+    if(coins>=kosten){
+
+        coins-=kosten;
+
+        lagerLevel++;
+
+        aktualisiereAufgabenFortschritt(
+            "lager",
+            lagerLevel
+        );
+
+        pruefeAufgaben();
+
+        aktualisiereAnzeige();
+
+    }
+
+});
+
+aktualisierePlattform();
+
+// ============================================
+// Aufgaben-System
+// ============================================
+
+function aktuellerWertFuer(typ){
+
+    if(typ==="lager")return lagerLevel;
+
+    // Normale Beeren: zähle was der Spieler gesammelt hat
+    if(typ in gesammelteBeeren) return gesammelteBeeren[typ];
+
+    return 0;
+
+}
+
+function klonAufgabe(vorlage){
+
+    return {
+
+        ...vorlage,
+
+        anforderungen:
+        vorlage.anforderungen.map(a=>({
+
+            typ:a.typ,
+
+            ziel:a.ziel,
+
+            fortschritt:Math.min(
+                aktuellerWertFuer(a.typ),
+                a.ziel
+            )
+
+        })),
+
+        abgeschlossen:false
+
+    };
+
+}
+
+function starteAufgaben(){
+
+    
+    
+    if(!aufgabenListe[level]){
+        console.error("❌ FEHLER: Keine Aufgaben für Level", level);
+        return;
+    }
+
+    aktiveAufgaben=[];
+
+    let offene =
+    aufgabenListe[level]
+    .filter(
+        a=>!erledigteAufgaben.includes(a.id) && !a.isLagerUpgrade
+    );
+    
+
+    while(
+        aktiveAufgaben.length<2 &&
+        offene.length>0
+    ){
+
+        let neu =
+        offene.shift();
+        
+
+        aktiveAufgaben.push(
+            klonAufgabe(neu)
+        );
+
+    }
+
+    zeigeAufgaben();
+
+}
+
+// Beeren-Icon Pfad Mapping
+
+function getFruchtIcon(typ){
+
+    if(typ==="lager"){
+        
+        return `<svg viewBox="0 0 36 36" style="width:100%;height:100%;"><path fill="#F4900C" d="M16.812 33c-.588 0-1.112-.37-1.31-.924L8.549 12.608a1.339 1.339 0 0 1 .173-1.242c.261-.369.685-.563 1.137-.563h16.313c.557 0 1.059.305 1.279.817l8.343 19.455c.184.43.14.917-.116 1.307a1.39 1.39 0 0 1-1.163.618H16.812z"/><path fill="#FFCC4D" d="M1.515 33c-.467 0-.904-.236-1.162-.625a1.398 1.398 0 0 1-.116-1.315l8.348-19.479a1.392 1.392 0 0 1 2.557 0L19.49 31.06A1.391 1.391 0 0 1 18.212 33H1.515z"/><path fill="#292F33" d="M9.859 14.182L7.077 33h5.563z"/><path fill="#FFAC33" d="M15.46 31.456L16.081 33H12.64zm-11.203 0L3.636 33h3.441z"/><path fill="#FFE8B6" d="M12.64 33s2.529-.645 3.766-1.786L9.859 14.182L12.64 33zm-5.563 0s-2.529-.645-3.766-1.786l6.546-17.031L7.077 33z"/></svg>`;
+        
+    }
+    
+    // Beeren-Bild aus BushCSS
+    
+    return `<img src="BushCSS/${typ}-outline-256.png" alt="${typ}" style="width:100%;height:100%;object-fit:contain;">`;
+    
+}
+
+
+
+// Coin-Icon für die Flug-Animation bei abgeschlossenen Aufgaben
+
+const COIN_SVG=`<svg viewBox="0 0 512 512">
+<path fill="#EFB832" d="M256,512C114.841,512,0,397.159,0,256S114.841,0,256,0s256,114.841,256,256S397.159,512,256,512z"/>
+<circle fill="#CC9322" cx="256" cy="256" r="150"/>
+<circle fill="#EFB832" cx="256" cy="256" r="120"/>
+</svg>`;
+
+function spieleCoinFlugAnimation(vonElement){
+
+    if(!vonElement || !coinsText)return;
+
+    let startRect=
+    vonElement.getBoundingClientRect();
+
+    let zielRect=
+    coinsText.getBoundingClientRect();
+
+    let anzahl=4;
+
+    for(let i=0;i<anzahl;i++){
+
+        setTimeout(()=>{
+
+            let coin=
+            document.createElement("div");
+
+            coin.className="coinFlug";
+
+            coin.innerHTML=COIN_SVG;
+
+            let winkel=
+            Math.random()*Math.PI*2;
+
+            let entfernung=
+            20+Math.random()*30;
+
+            let versatzX=
+            Math.cos(winkel)*entfernung;
+
+            let versatzY=
+            Math.sin(winkel)*entfernung;
+
+            let startX=
+            startRect.left+startRect.width/2;
+
+            let startY=
+            startRect.top+startRect.height/2;
+
+            let endX=
+            zielRect.left+zielRect.width/2-startX+versatzX;
+
+            let endY=
+            zielRect.top+zielRect.height/2-startY+versatzY;
+
+            coin.style.left=startX+"px";
+
+            coin.style.top=startY+"px";
+
+            coin.style.setProperty("--tx",endX+"px");
+
+            coin.style.setProperty("--ty",endY+"px");
+
+            coin.style.setProperty("--tx-mid",(endX*0.6)+"px");
+
+            coin.style.setProperty("--ty-mid",(endY*0.6)+"px");
+
+            document.body.appendChild(coin);
+
+            requestAnimationFrame(()=>{
+
+                coin.classList.add("fliegt");
+
+            });
+
+            setTimeout(()=>{
+
+                coin.remove();
+
+            },1000);
+
+        },i*60);
+
+    }
+
+}
+
+// SCHNELLE Funktion um nur Fortschritt-Zahlen zu aktualisieren (ohne ganz neuzeichnen!)
+function aktualisiereAufgabenAnzeige(){
+    
+    if(!aufgabenListeHTML) return; // Guard clause
+    
+    aktiveAufgaben.forEach(aufgabe => {
+        
+        // Wenn Element nicht gecacht: neu suchen
+        if(!aufgabe.fortschrittElement){
+            
+            let karte = aufgabenListeHTML.querySelector(
+                `[data-aufgabe-id="${aufgabe.id}"]`
+            );
+            
+            if(karte){
+                aufgabe.fortschrittElement = karte.querySelector('.aufgaben-fortschritt');
+            }
+            
+        }
+        
+        // Nur wenn Element existiert
+        if(aufgabe.fortschrittElement){
+            
+            let hauptAnforderung = aufgabe.anforderungen[0];
+            
+            aufgabe.fortschrittElement.textContent = `${hauptAnforderung.fortschritt}/${hauptAnforderung.ziel}`;
+            
+        }
+        
+    });
+    
+}
+
+function zeigeAufgaben(){
+
+    if(!aufgabenListeHTML){
+        return;
+    }
+
+    aufgabenListeHTML.innerHTML="";
+    
+    let isMobile = window.innerWidth < 768;
+    let iconSize = isMobile ? 8 : 10;
+    let numberSize = isMobile ? 12 : 14;
+
+    try {
+        aktiveAufgaben.forEach((aufgabe, idx)=>{
+
+            let card=document.createElement("div");
+            
+            // NEUE: Viel kompakter! Nur Logo + Zahl
+            card.style.cssText=`
+                background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                border-radius: 12px;
+                padding: 6px;
+                min-width: ${isMobile ? '60px' : '70px'};
+                height: ${isMobile ? '50px' : '55px'};
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+                border: 3px solid white;
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 4px;
+                flex-shrink: 0;
+            `;
+
+            card.dataset.aufgabeId=aufgabe.id;
+
+            let hauptAnforderung = aufgabe.anforderungen[0];
+            
+            if(!hauptAnforderung){
+                return;
+            }
+            
+            let iconHTML = getFruchtIcon(hauptAnforderung.typ);
+
+            // NEUE: Viel minimalistischer!
+            card.innerHTML=`
+            
+            <div style="max-width: 30px; max-height: 30px; text-align: center; overflow: hidden;">
+                ${iconHTML}
+            </div>
+            
+            <div style="color: white; font-weight: bold; font-size: ${numberSize}px; text-align: center;" class="aufgaben-fortschritt">
+                ${hauptAnforderung.fortschritt}/${hauptAnforderung.ziel}
+            </div>
+            
+            `;
+            
+            aufgabe.fortschrittElement = card.querySelector('.aufgaben-fortschritt');
+
+            aufgabenListeHTML.appendChild(card);
+
+        });
+        
+    } catch(err) {
+        console.error("❌ FEHLER in zeigeAufgaben():", err.message);
+    }
+
+    // Immer 3 gleich große Karten zeigen
+    
+    for(let i=aktiveAufgaben.length;i<3;i++){
+
+        let platzhalter=document.createElement("div");
+
+        platzhalter.style.cssText=`
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 12px;
+            padding: 6px;
+            min-width: ${isMobile ? '60px' : '70px'};
+            height: ${isMobile ? '50px' : '55px'};
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border: 3px solid rgba(255, 255, 255, 0.5);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            flex-shrink: 0;
+            font-size: 8px;
+            color: rgba(255, 255, 255, 0.6);
+        `;
+
+        platzhalter.innerHTML=`🎉`;
+
+        aufgabenListeHTML.appendChild(platzhalter);
+
+    }
+    
+
+}
+
+function aktualisiereAufgabenFortschritt(typ,aktuellerWert){
+
+    aktiveAufgaben.forEach(aufgabe=>{
+
+        aufgabe.anforderungen.forEach(a=>{
+
+            if(a.typ===typ){
+
+                a.fortschritt=
+                Math.min(aktuellerWert,a.ziel);
+
+            }
+
+        });
+
+    });
+
+}
+
+// Früchte entfernt - Sammelkorb-Aufgaben liefern jetzt immer 0
+
+
+
+// Prüft ob auf einem Feld (x,y) schon ein aktiver Busch steht
+
+
+// ============================================
+// Berry-Harvest-Mechanik (aus Vorlage übernommen,
+// ins bestehende Weltkoordinaten-System eingebaut)
+// ============================================
+
+function pflanzeIstFrei(x,y){
+
+    return !pflanzen.some(p=>
+
+        p.aktiv &&
+        p.x===x*FELD &&
+        p.y===y*FELD
+
+    );
+
+}
+
+// Die 9 Busch-Arten aus deinem neuen Design
+
+// Büsche die bis zu diesem Level freigeschaltet sind
+// Alle 5 Level eine neue Pflanze
+//
+// >>> FIX (05.08.2026): Brokkoli wurde erst ab Level 30 freigeschaltet,
+// die zugehörige Aufgabe in aufgaben.js verlangt Brokkoli aber schon in
+// Level 29. Dadurch war die Aufgabe in Level 29 unerfüllbar. Schwelle
+// von "level < 30" auf "level < 29" verschoben, damit Freischaltung und
+// Aufgabe zusammenpassen.
+function verfügbareBüsche(){
+
+    return sortenAbLevel(level);
+
+}
+
+function pflanzeErstellen(){
+
+    let gruenGroesse=
+    Math.min(plattformGroesse,GRUEN_MAX);
+
+    let radius=
+    Math.floor(gruenGroesse/2);
+
+    let x,y;
+
+    let versuche=0;
+
+    do{
+
+        x=
+        mitte-radius+
+        Math.floor(Math.random()*gruenGroesse);
+
+        y=
+        mitte-radius+
+        Math.floor(Math.random()*gruenGroesse);
+
+        versuche++;
+
+    }while(
+        !pflanzeIstFrei(x,y) &&
+        versuche<20
+    );
+
+    if(!pflanzeIstFrei(x,y))return;
+
+    const plant=
+    document.createElement("div");
+
+    plant.className="plant";
+
+    plant.style.left=
+    (x*FELD-4)+"px";
+
+    plant.style.top=
+    (y*FELD-4)+"px";
+
+    let art=
+    verfügbareBüsche()[
+        Math.floor(Math.random()*verfügbareBüsche().length)
+    ];
+
+    const img=
+    document.createElement("img");
+
+    img.src="BushCSS/"+PFLANZEN_BILD[art];
+
+    img.alt=art+" Busch";
+
+    plant.appendChild(img);
+
+    karte.appendChild(plant);
+
+    pflanzen.push({
+
+        element:plant,
+
+        x:x*FELD,
+
+        y:y*FELD,
+
+        aktiv:true,
+
+        art:art
+
+    });
+
+}
+
+for(let i=0;i<pflanzenZiel();i++){
+
+    pflanzeErstellen();
+
+}
+
+let pflanzenSpawnInterval=null;
+
+function aktualisiereSpawnRate(){
+
+    // Je größer die Karte, desto schneller spawnen
+    
+    let interval=Math.max(2000, 10000-(kartenStufe*300));
+    
+    if(pflanzenSpawnInterval)clearInterval(pflanzenSpawnInterval);
+    
+    pflanzenSpawnInterval=setInterval(()=>{
+
+        if(pflanzen.filter(p=>p.aktiv).length<pflanzenZiel()){
+
+            pflanzeErstellen();
+
+        }
+
+    },interval);
+
+}
+
+aktualisiereSpawnRate();
+
+// Beeren um die Pflanze herum erstellen (genau wie in der Vorlage)
+
+function spawnBerries(plantX,plantY,art){
+
+    let berryCount=
+    6+Math.floor(Math.random()*3);
+
+    let gruenGroesse=
+    Math.min(plattformGroesse,GRUEN_MAX);
+
+    let centerX=plantX+20;
+
+    let centerY=plantY+20;
+
+    for(let i=0;i<berryCount;i++){
+
+        // Zufälligen Punkt nah an der Pflanze suchen, der noch im Grünen liegt
+
+        let versatzX=0;
+
+        let versatzY=0;
+
+        let versuche=0;
+
+        let gefunden=false;
+
+        do{
+
+            let winkel=
+            Math.random()*Math.PI*2;
+
+            let entfernung=
+            8+Math.random()*14;
+
+            versatzX=
+            Math.cos(winkel)*entfernung;
+
+            versatzY=
+            Math.sin(winkel)*entfernung;
+
+            gefunden=
+            inBereich(
+
+                Math.floor((centerX+versatzX)/FELD),
+                Math.floor((centerY+versatzY)/FELD),
+                gruenGroesse
+
+            );
+
+            versuche++;
+
+        }while(
+            !gefunden &&
+            versuche<10
+        );
+
+        // Kein sicherer Punkt gefunden? Dann direkt auf die Pflanze selbst (garantiert im Grünen)
+
+        if(!gefunden){
+
+            versatzX=0;
+
+            versatzY=0;
+
+        }
+
+        const berry=
+        document.createElement("div");
+
+        berry.className="berry";
+
+        berry.style.left=
+        (centerX+versatzX)+"px";
+
+        berry.style.top=
+        (centerY+versatzY)+"px";
+
+        const img=
+        document.createElement("img");
+
+        img.src="BushCSS/"+art+"-outline-256.png";
+
+        img.alt=art;
+
+        berry.appendChild(img);
+
+        karte.appendChild(berry);
+
+        liegendeBeeren.push({
+
+            element:berry,
+
+            x:centerX+versatzX,
+
+            y:centerY+versatzY,
+
+            aktiv:true,
+            
+            art:art
+
+        });
+
+    }
+
+
+    begrenzeLiegendeBeeren();
+
+}
+
+// Spieler sammelt liegende Beeren erst ein, wenn er wirklich dagegen läuft
+
+// Obergrenze: sonst sammeln sich nicht eingesammelte Beeren endlos an
+// und der Frame muss jedes Mal ueber alle drueberrechnen
+
+const MAX_LIEGENDE_BEEREN=90;
+
+function begrenzeLiegendeBeeren(){
+
+    while(liegendeBeeren.length>MAX_LIEGENDE_BEEREN){
+
+        let alt=liegendeBeeren.shift();
+
+        if(alt && alt.element)alt.element.remove();
+
+    }
+
+}
+
+// Quadrierter Radius - spart den Wurzel-Aufruf pro Beere und Frame
+
+function aktuellerSammelRadiusQuadrat(){
+
+    let radius=26+skillSammelradiusBonus()+ausruestungsSammelradiusBonus();
+
+    return radius*radius;
+
+}
+
+function pruefeBeerenKollision(){
+
+    let mitteX=spielerX+16;
+
+    let mitteY=spielerY+16;
+
+    let etwasGesammelt=false;
+
+    // rueckwaerts laufen, damit das Entfernen den Index nicht verschiebt
+
+    for(let i=liegendeBeeren.length-1;i>=0;i--){
+
+        let b=liegendeBeeren[i];
+
+        if(!b || !b.aktiv)continue;
+
+        let dx=mitteX-b.x;
+
+        let dy=mitteY-b.y;
+
+        if(dx*dx+dy*dy>=aktuellerSammelRadiusQuadrat())continue;
+
+        b.aktiv=false;
+
+        b.element.remove();
+
+        liegendeBeeren.splice(i,1);
+
+        // Ertragsstufe aus dem Verbessern-Hub: eine aufgesammelte
+        // Beere zaehlt so oft, wie die Stufe hoch ist
+
+        let ertrag=1;
+
+        if(b.art && typeof ertragStufe!=="undefined" && ertragStufe[b.art]){
+
+            ertrag=ertragStufe[b.art];
+
+        }
+
+        ertrag=Math.round(ertrag*ausruestungsErtragMultiplikator());
+
+        beeren+=ertrag;
+
+        if(b.art){
+
+            if(!gesammelteBeeren.hasOwnProperty(b.art)){
+
+                gesammelteBeeren[b.art]=0;
+
+            }
+
+            gesammelteBeeren[b.art]+=ertrag;
+
+            aktualisiereAufgabenFortschritt(b.art,gesammelteBeeren[b.art]);
+
+            if(typeof questFortschritt==="function"){
+
+                questFortschritt("beeren",ertrag);
+
+            }
+
+        }
+
+        etwasGesammelt=true;
+
+    }
+
+    // Anzeige nur einmal pro Frame aktualisieren, nicht pro Beere
+
+    if(etwasGesammelt){
+
+        aktualisiereAufgabenAnzeige();
+
+        pruefeAufgabenDebounced();
+
+        if(beerenCountText){
+
+            beerenCountText.innerHTML=beeren;
+
+        }
+
+    }
+
+}
+
+// Kollision: Spieler läuft gegen Pflanze
+
+const LEAF_COUNT=10; // 20 Blätter sind cooler!
+const MAX_BLAETTER=40;
+
+let aktiveBlaetter=[];
+
+function begrenzeBlaetter(){
+
+    while(aktiveBlaetter.length>MAX_BLAETTER){
+
+        let altesBlatt=aktiveBlaetter.shift();
+
+        if(altesBlatt)altesBlatt.remove();
+
+    }
+
+}
+
+function spawnFallingLeaves(pflanzeX,pflanzeY){
+
+    let bushCenterX=pflanzeX+20;
+
+    let bushCenterY=pflanzeY+20;
+
+    for(let i=0;i<LEAF_COUNT;i++){
+
+        const leaf=
+        document.createElement("div");
+
+        leaf.className="leaf";
+
+        // Zufälliger Start um den Busch (viel enger!)
+
+        let angle=
+        Math.random()*Math.PI*2;
+
+        let distance=
+        15+Math.random()*15;
+
+        let startX=
+        bushCenterX+Math.cos(angle)*distance;
+
+        let startY=
+        bushCenterY+Math.sin(angle)*distance;
+
+        leaf.style.left=
+        startX+"px";
+
+        leaf.style.top=
+        startY+"px";
+
+        const img=
+        document.createElement("img");
+
+        img.src="BushCSS/Leaf_Outline_256.png";
+
+        img.alt="Blatt";
+
+        leaf.appendChild(img);
+
+        karte.appendChild(leaf);
+
+        aktiveBlaetter.push(leaf);
+
+        begrenzeBlaetter();
+
+        // OPTIMIERT: Schnellere Animation (50% schneller!)
+
+        let fallTime=
+        0.15+Math.random()*0.1; // Kürzer statt 0.3-0.5s
+
+        let fallDistance=
+        30+Math.random()*20;
+
+        let lateralDrift=
+        -15+Math.random()*30;
+
+        leaf.style.setProperty(
+            "--fall-time",
+            fallTime+"s"
+        );
+
+        leaf.style.setProperty(
+            "--fall-distance",
+            `calc(${fallDistance}px + ${lateralDrift}px)`
+        );
+
+        // OPTIMIERT: Direkt Animation starten (kein 50ms Delay!)
+
+        leaf.classList.add("falling");
+
+        // Blatt schneller löschen (nur fallTime, nicht +50ms!)
+        setTimeout(()=>{
+
+            leaf.remove();
+
+        },fallTime*1000+100); // +100ms buffer
+
+    }
+
+}
+
+function pruefePflanzenKollision(){
+
+    pflanzen.forEach(p=>{
+
+        if(!p.aktiv)return;
+
+        let dx=(spielerX+16)-(p.x+20);
+
+        let dy=(spielerY+16)-(p.y+20);
+
+        let entfernung=
+        Math.sqrt(dx*dx+dy*dy);
+
+        if(entfernung<34+skillErntebereichBonus()+ausruestungsErntebereichBonus()){
+
+            p.aktiv=false;
+
+            p.element.classList.add("destroyed");
+
+            if(typeof questFortschritt==="function"){
+
+                questFortschritt("pflanzen",1);
+
+            }
+
+            spawnBerries(p.x,p.y,p.art);
+
+            spawnFallingLeaves(p.x,p.y);
+
+            setTimeout(()=>{
+
+                p.element.remove();
+
+                let index=pflanzen.indexOf(p);
+
+                if(index>-1)pflanzen.splice(index,1);
+
+                pflanzeErstellen();
+
+            },400);
+
+        }
+
+    });
+
+}
+
+// ============================================
+// Wasser-Kisten: geben nur noch Lilie
+// ============================================
+
+function istWasserfeld(x,y){
+
+    let gesamtGroesse =
+    Math.min(plattformGroesse,GRUEN_MAX);
+
+    return !inBereich(x,y,gesamtGroesse);
+
+}
+
+function kisteIstFrei(x,y){
+
+    return !kisten.some(k=>
+
+        k.aktiv &&
+        k.x===x*FELD &&
+        k.y===y*FELD
+
+    );
+
+}
+
+function kisteErstellen(){
+
+    let versuche=0;
+
+    let x,y;
+
+    let gruenGroesse=
+    Math.min(plattformGroesse,GRUEN_MAX);
+
+    let wasser =
+    gruenGroesse + 10; // Spawnbereich: mindestens 10 Felder außerhalb des Grüns
+
+    do{
+
+        x =
+        mitte-Math.floor(wasser/2)+
+        Math.floor(Math.random()*wasser);
+
+        y =
+        mitte-Math.floor(wasser/2)+
+        Math.floor(Math.random()*wasser);
+
+        versuche++;
+
+    }while(
+        (
+            !istWasserfeld(x,y) ||
+            !kisteIstFrei(x,y) ||
+            x<0 || y<0 ||
+            x>=GROESSE || y>=GROESSE
+        ) &&
+        versuche<30
+    );
+
+    if(versuche>=30)return;
+
+    let kiste=
+    document.createElement("div");
+
+    kiste.className="wasserkiste";
+
+    kiste.innerHTML=`
+    <div class="kisteNadel">
+        <div class="kisteNadelKreis">
+            <img src="BushCSS/kiste.png" alt="" class="kisteNadelBild">
+            <div class="kisteRing"></div>
+        </div>
+    </div>
+    <img src="BushCSS/kiste.png" alt="Wasserkiste" class="kiste-img">
+    `;
+
+    kiste.style.left=
+    x*FELD+"px";
+
+    kiste.style.top=
+    y*FELD+"px";
+
+    karte.appendChild(kiste);
+
+    kisten.push({
+
+        element:kiste,
+
+        x:x*FELD,
+
+        y:y*FELD,
+
+        aktiv:true,
+
+        progress:0,
+
+        bildElement:kiste.querySelector(".kisteNadelBild"),
+
+        ringElement:kiste.querySelector(".kisteRing")
+
+    });
+
+}
+
+// Wie viele Kisten hoechstens gleichzeitig im Wasser treiben,
+// wie viele pro Schub dazukommen und in welchem Abstand
+
+const KISTEN_MAX=6;
+
+const KISTEN_PRO_SCHUB=2;
+
+const KISTEN_ABSTAND=120000;
+
+function kistenSchubErstellen(){
+
+    if(kisten.length>=KISTEN_MAX)return;
+
+    for(let i=0;i<KISTEN_PRO_SCHUB;i++){
+
+        kisteErstellen();
+
+    }
+
+}
+
+kistenSchubErstellen();
+
+setInterval(kistenSchubErstellen,KISTEN_ABSTAND);
+
+// Fuellzeit des Kreises in Millisekunden
+
+const KISTE_DAUER=2000;
+
+// Ab welcher Entfernung die Kiste anspringt, in Pixeln.
+// Ein Feld ist 40 Pixel breit, die Kiste selbst ist 40 breit
+// und 48 hoch, der Spieler 32 - 40 heisst also grob
+// "beruehrt sie".
+
+const KISTE_REICHWEITE=40;
+
+// Wie schnell der Kreis zurueckfaellt, wenn man weggeht.
+// 1 = genauso schnell wie er sich fuellt.
+
+const KISTE_RUECKLAUF=1.4;
+
+// Beute: drei verschiedene Sorten, je 10 bis 50 Stueck.
+// Die Ertragsstufen aus dem Verbessern-Hub zaehlen mit.
+
+function kistenBeute(){
+
+    let sorten=verfuegbareSortenFuerKiste();
+
+    let auswahl=[];
+
+    while(auswahl.length<3 && sorten.length>0){
+
+        let i=Math.floor(Math.random()*sorten.length);
+
+        auswahl.push(sorten.splice(i,1)[0]);
+
+    }
+
+    return auswahl.map(art=>{
+
+        let grund=10+Math.floor(Math.random()*41);
+
+        let stufe=1;
+
+        if(typeof ertragStufe!=="undefined" && ertragStufe[art]){
+
+            stufe=ertragStufe[art];
+
+        }
+
+        let menge=Math.max(1,Math.round(
+            grund*stufe*ausruestungsErtragMultiplikator()
+        ));
+
+        return {art:art,menge:menge};
+
+    });
+
+}
+
+function verfuegbareSortenFuerKiste(){
+
+    return verfügbareBüsche().slice();
+
+}
+
+function zeigeKistenBeute(kiste,beute){
+
+    let blase=document.createElement("div");
+
+    blase.className="kisteBeute";
+
+    blase.innerHTML=beute.map(e=>
+
+        '<div class="kisteBeuteZeile">'+
+        '<img src="BushCSS/'+e.art+'-outline-256.png" alt="">'+
+        '<span>+'+e.menge+'</span>'+
+        '</div>'
+
+    ).join("");
+
+    blase.style.left=kiste.x+"px";
+
+    blase.style.top=(kiste.y-30)+"px";
+
+    karte.appendChild(blase);
+
+    setTimeout(()=>blase.remove(),1500);
+
+}
+
+function oeffneKiste(kiste){
+
+    kiste.aktiv=false;
+
+    kiste.element.classList.add("kiste-gone");
+
+    if(typeof questFortschritt==="function"){
+
+        questFortschritt("kisten",1);
+
+    }
+
+    let beute=kistenBeute();
+
+    beute.forEach(e=>{
+
+        if(!gesammelteBeeren.hasOwnProperty(e.art)){
+
+            gesammelteBeeren[e.art]=0;
+
+        }
+
+        gesammelteBeeren[e.art]+=e.menge;
+
+        beeren+=e.menge;
+
+        aktualisiereAufgabenFortschritt(e.art,gesammelteBeeren[e.art]);
+
+    });
+
+    zeigeKistenBeute(kiste,beute);
+
+    coins+=10+Math.floor(Math.random()*31);
+
+    if(beerenCountText){
+
+        beerenCountText.innerHTML=beeren;
+
+    }
+
+    aktualisiereAufgabenAnzeige();
+
+    pruefeAufgabenDebounced();
+
+    aktualisiereAnzeige();
+
+    setTimeout(()=>{
+
+        kiste.element.remove();
+
+        let index=kisten.indexOf(kiste);
+
+        if(index>-1)kisten.splice(index,1);
+
+    },600);
+
+}
+
+function zeichneKistenRing(kiste){
+
+    if(!kiste.ringElement || !kiste.bildElement)return;
+
+    if(kiste.progress<=0){
+
+        // Nichts angefangen: nur das Kisten-Symbol zeigen
+
+        kiste.ringElement.style.display="none";
+
+        kiste.bildElement.style.display="block";
+
+        return;
+
+    }
+
+    kiste.ringElement.style.display="block";
+
+    kiste.bildElement.style.display="none";
+
+    let anteil=(kiste.progress/100);
+
+    kiste.ringElement.style.background=
+    "conic-gradient(#f5b820 0turn "+anteil.toFixed(3)+
+    "turn, #26333f "+anteil.toFixed(3)+"turn 1turn)";
+
+}
+
+function versucheKisteOeffnen(deltaMs){
+
+    let schritt=100*(deltaMs/KISTE_DAUER);
+
+    for(let i=kisten.length-1;i>=0;i--){
+
+        let k=kisten[i];
+
+        if(!k.aktiv)continue;
+
+        // Die Kiste sitzt wegen ihrer negativen Raender optisch
+        // MITTIG auf k.x/k.y - vorher wurde hier k.x+20 gerechnet,
+        // dadurch lag der Auslesepunkt schraeg daneben.
+
+        let dx=(spielerX+16)-k.x;
+
+        let dy=(spielerY+16)-k.y;
+
+        let nah=Math.sqrt(dx*dx+dy*dy)<KISTE_REICHWEITE;
+
+        let vorher=k.progress;
+
+        if(nah){
+
+            k.progress=Math.min(100,k.progress+schritt);
+
+        }else{
+
+            // Geht der Spieler weg, laeuft der Kreis wieder zurueck
+
+            k.progress=Math.max(0,k.progress-schritt*KISTE_RUECKLAUF);
+
+        }
+
+        if(k.progress!==vorher)zeichneKistenRing(k);
+
+        if(k.progress>=100)oeffneKiste(k);
+
+    }
+
+}
+
+// Büsche/Früchte entfernt (Ressourcensystem kommt neu)
+
+// Spieler Start beim Lager
+
+let spielerX =
+mitte*FELD;
+
+let spielerY =
+mitte*FELD;
+
+// Anzeige
+
+function aktualisiereAnzeige(){
+
+    if(levelText)
+
+    levelText.innerHTML=level;
+
+    if(coinsText)
+
+    coinsText.innerHTML=coins;
+
+    if(juwelenText)
+
+    juwelenText.innerHTML=juwelen;
+
+    if(sterneText)
+
+    sterneText.innerHTML=sterne;
+
+}
+
+// Feld-Anzeige entfernt (war Busch-Belegung)
+
+// Joystick
+
+const joystick=document.getElementById("joystick");
+
+const knopf=document.getElementById("knopf");
+
+let richtungX=0;
+
+let richtungY=0;
+
+let halten=false;
+
+joystick.addEventListener("touchstart",()=>{
+
+    halten=true;
+
+});
+
+joystick.addEventListener("touchmove",e=>{
+
+    if(!halten)return;
+
+    let finger=e.touches[0];
+
+    let box=
+    joystick.getBoundingClientRect();
+
+    let dx=
+    finger.clientX-(box.left+50);
+
+    let dy=
+    finger.clientY-(box.top+50);
+
+    let max=35;
+
+    let entfernung=
+    Math.sqrt(
+        dx*dx+
+        dy*dy
+    );
+
+    if(entfernung>max){
+
+        dx=
+        dx/entfernung*max;
+
+        dy=
+        dy/entfernung*max;
+
+    }
+
+    knopf.style.left=
+    30+dx+"px";
+
+    knopf.style.top=
+    30+dy+"px";
+
+    richtungX=
+    dx/max;
+
+    richtungY=
+    dy/max;
+
+});
+
+joystick.addEventListener("touchend",()=>{
+
+    halten=false;
+
+    richtungX=0;
+
+    richtungY=0;
+
+    knopf.style.left="28px";
+
+    knopf.style.top="28px";
+
+});
+
+// WASD-Tastatursteuerung (zusätzlich zum Joystick, keine eigene Anzeige)
+
+let tasten={w:false,a:false,s:false,d:false};
+
+function aktualisiereTastaturRichtung(){
+
+    let x=
+    (tasten.d?1:0)-(tasten.a?1:0);
+
+    let y=
+    (tasten.s?1:0)-(tasten.w?1:0);
+
+    if(x!==0 || y!==0){
+
+        let laenge=
+        Math.sqrt(x*x+y*y);
+
+        richtungX=x/laenge;
+
+        richtungY=y/laenge;
+
+    }else if(!halten){
+
+        richtungX=0;
+
+        richtungY=0;
+
+    }
+
+}
+
+window.addEventListener("keydown",e=>{
+
+    let taste=e.key.toLowerCase();
+
+    if(tasten.hasOwnProperty(taste)){
+
+        tasten[taste]=true;
+
+        aktualisiereTastaturRichtung();
+
+    }
+
+});
+
+window.addEventListener("keyup",e=>{
+
+    let taste=e.key.toLowerCase();
+
+    if(tasten.hasOwnProperty(taste)){
+
+        tasten[taste]=false;
+
+        aktualisiereTastaturRichtung();
+
+    }
+
+});
+
+// Ernte-Logik entfernt (war busch-spezifisch) - Funktion bleibt als leerer Platzhalter,
+// damit der Aufruf im Update-Loop nicht crasht
+
+
+// ============================================
+// Haustier-Helfer
+//
+// Wohnt am Lager. Er sucht sich eine Pflanze aus, die im
+// Umkreis um das LAGER steht, laeuft hin, erntet sie und
+// sammelt die Fruechte gleich mit ein. Danach macht er kurz
+// Pause und geht zurueck, wenn nichts mehr in Reichweite ist.
+// ============================================
+
+const PET_GROESSE=22;
+
+const PET_TEMPO=1.9;
+
+let petHelferElement=null;
+
+let petHelferKennung="";
+
+let petX=null;
+
+let petY=null;
+
+let petZiel=null;
+
+let petPause=0;
+
+function holePetInfo(){
+
+    if(typeof window.Ausruestung==="undefined")return null;
+
+    if(typeof window.Ausruestung.aktivesPet!=="function")return null;
+
+    return window.Ausruestung.aktivesPet();
+
+}
+
+function lagerMitteX(){ return mitte*FELD+20; }
+
+function lagerMitteY(){ return mitte*FELD+20; }
+
+function zeigePetHelfer(info){
+
+    if(!info){
+
+        if(petHelferElement){
+
+            petHelferElement.remove();
+
+            petHelferElement=null;
+
+            petHelferKennung="";
+
+        }
+
+        petX=null;
+
+        petY=null;
+
+        petZiel=null;
+
+        petPause=0;
+
+        return;
+
+    }
+
+    if(!petHelferElement){
+
+        petHelferElement=document.createElement("div");
+
+        petHelferElement.className="petHelfer";
+
+        karte.appendChild(petHelferElement);
+
+    }
+
+    let kennung=info.seltenheit+"-"+info.stufe;
+
+    if(kennung!==petHelferKennung){
+
+        petHelferElement.innerHTML=info.bildHtml;
+
+        petHelferKennung=kennung;
+
+    }
+
+    if(petX===null){
+
+        petX=lagerMitteX();
+
+        petY=lagerMitteY()+26;
+
+    }
+
+    petHelferElement.style.left=(petX-PET_GROESSE/2)+"px";
+
+    petHelferElement.style.top=(petY-PET_GROESSE/2)+"px";
+
+}
+
+// Naechste Pflanze, die im Umkreis um das Lager steht
+
+function petSuchtZiel(info){
+
+    let reichweite=info.radiusFelder*FELD;
+
+    let beste=null;
+
+    let besteEntfernung=Infinity;
+
+    for(let i=0;i<pflanzen.length;i++){
+
+        let p=pflanzen[i];
+
+        if(!p.aktiv)continue;
+
+        // Umkreis wird vom Lager aus gemessen
+
+        let lx=lagerMitteX()-(p.x+20);
+
+        let ly=lagerMitteY()-(p.y+20);
+
+        if(Math.sqrt(lx*lx+ly*ly)>reichweite)continue;
+
+        // Von mehreren nimmt er die, die ihm am naechsten ist
+
+        let dx=petX-(p.x+20);
+
+        let dy=petY-(p.y+20);
+
+        let entfernung=Math.sqrt(dx*dx+dy*dy);
+
+        if(entfernung<besteEntfernung){
+
+            besteEntfernung=entfernung;
+
+            beste=p;
+
+        }
+
+    }
+
+    return beste;
+
+}
+
+function petBewegtSich(zielX,zielY,deltaFaktor){
+
+    let dx=zielX-petX;
+
+    let dy=zielY-petY;
+
+    let entfernung=Math.sqrt(dx*dx+dy*dy);
+
+    if(entfernung<2)return 0;
+
+    let schritt=Math.min(entfernung,PET_TEMPO*deltaFaktor);
+
+    petX+=(dx/entfernung)*schritt;
+
+    petY+=(dy/entfernung)*schritt;
+
+    return entfernung-schritt;
+
+}
+
+function petErntet(pflanze,info){
+
+    pflanze.aktiv=false;
+
+    pflanze.element.classList.add("destroyed");
+
+    spawnFallingLeaves(pflanze.x,pflanze.y);
+
+    // Ernte direkt gutschreiben, statt Beeren liegen zu lassen
+
+    let menge=6+Math.floor(Math.random()*3);
+
+    let ertrag=1;
+
+    if(pflanze.art && typeof ertragStufe!=="undefined" && ertragStufe[pflanze.art]){
+
+        ertrag=ertragStufe[pflanze.art];
+
+    }
+
+    ertrag=ertrag*ausruestungsErtragMultiplikator()*(1+info.ertragBonus);
+
+    let gutschrift=Math.max(1,Math.round(menge*ertrag));
+
+    beeren+=gutschrift;
+
+    if(pflanze.art){
+
+        if(!gesammelteBeeren.hasOwnProperty(pflanze.art)){
+
+            gesammelteBeeren[pflanze.art]=0;
+
+        }
+
+        gesammelteBeeren[pflanze.art]+=gutschrift;
+
+        aktualisiereAufgabenFortschritt(pflanze.art,gesammelteBeeren[pflanze.art]);
+
+        if(typeof questFortschritt==="function"){
+
+            questFortschritt("petbeeren",gutschrift);
+
+            questFortschritt("pflanzen",1);
+
+        }
+
+    }
+
+    aktualisiereAufgabenAnzeige();
+
+    pruefeAufgabenDebounced();
+
+    if(beerenCountText){
+
+        beerenCountText.innerHTML=beeren;
+
+    }
+
+    let element=pflanze.element;
+
+    setTimeout(()=>{
+
+        element.remove();
+
+        let index=pflanzen.indexOf(pflanze);
+
+        if(index>-1)pflanzen.splice(index,1);
+
+        pflanzeErstellen();
+
+    },400);
+
+}
+
+function aktualisierePetHelfer(deltaMs,deltaFaktor){
+
+    let info=holePetInfo();
+
+    zeigePetHelfer(info);
+
+    if(!info)return;
+
+    // Pause nach dem Ernten
+
+    if(petPause>0){
+
+        petPause-=deltaMs;
+
+        // In der Pause schlendert er Richtung Lager zurueck
+
+        petBewegtSich(lagerMitteX(),lagerMitteY()+26,deltaFaktor*0.5);
+
+        return;
+
+    }
+
+    // Ziel pruefen und notfalls neu suchen
+
+    if(petZiel && !petZiel.aktiv)petZiel=null;
+
+    if(!petZiel)petZiel=petSuchtZiel(info);
+
+    if(!petZiel){
+
+        // Nichts in Reichweite - zurueck zum Lager
+
+        petBewegtSich(lagerMitteX(),lagerMitteY()+26,deltaFaktor);
+
+        return;
+
+    }
+
+    let rest=petBewegtSich(petZiel.x+20,petZiel.y+20,deltaFaktor);
+
+    if(rest<=22){
+
+        petErntet(petZiel,info);
+
+        petZiel=null;
+
+        petPause=info.intervall;
+
+    }
+
+}
+
+// Spiel Update
+
+let letzterZeitstempel=null;
+
+function update(zeitstempel){
+
+    if(letzterZeitstempel===null){
+
+        letzterZeitstempel=zeitstempel;
+
+    }
+
+    let deltaMs =
+    zeitstempel-letzterZeitstempel;
+
+    letzterZeitstempel=zeitstempel;
+
+    if(deltaMs>100)deltaMs=100;
+
+    let deltaFaktor =
+    deltaMs/(1000/60);
+
+    spielerX += richtungX*aktuellesTempo()*deltaFaktor;
+
+    spielerY += richtungY*aktuellesTempo()*deltaFaktor;
+
+    let welt =
+    GROESSE*FELD;
+
+    if(spielerX<0)
+
+    spielerX=0;
+
+    if(spielerY<0)
+
+    spielerY=0;
+
+    if(spielerX>welt-FELD)
+
+    spielerX=welt-FELD;
+
+    if(spielerY>welt-FELD)
+
+    spielerY=welt-FELD;
+
+    karte.style.transform=
+
+    `translate3d(${
+    -(spielerX-window.innerWidth/2+FELD/2)
+    }px,${
+    -(spielerY-window.innerHeight/2+FELD/2)
+    }px,0)`;
+
+    // Spieler steht immer in der Bildmitte - nur bei Groessenaenderung neu setzen
+
+    if(spieler.dataset.mitteB!==String(window.innerWidth) ||
+       spieler.dataset.mitteH!==String(window.innerHeight)){
+
+        spieler.style.left=window.innerWidth/2+"px";
+
+        spieler.style.top=window.innerHeight/2+"px";
+
+        spieler.dataset.mitteB=window.innerWidth;
+
+        spieler.dataset.mitteH=window.innerHeight;
+
+    }
+
+    if(richtungX!==0 || richtungY!==0){
+
+        spieler.classList.add("laeuft");
+
+    }else{
+
+        spieler.classList.remove("laeuft");
+
+    }
+
+    pruefePflanzenKollision();
+
+    pruefeBeerenKollision();
+
+    versucheKisteOeffnen(deltaMs);
+
+    aktualisierePetHelfer(deltaMs,deltaFaktor);
+
+    aktualisierePets(deltaFaktor);
+
+    diagTick();
+
+    requestAnimationFrame(update);
+
+}
+
+// Aufwerten-Panel
+
+const aufwertenPanel=
+document.getElementById("aufwertenPanel");
+
+const aufwertenListeHTML=
+document.getElementById("aufwertenListe");
+
+const verbessernBtn=
+document.getElementById("verbessern");
+
+const aufwertenSchliessenBtn=
+document.getElementById("aufwertenSchliessen");
+
+// ============================================
+// Verbessern-Hub
+// ============================================
+
+// Alle Sorten aus aufgaben.js, gesperrte zeigen ihr Level
+
+const HUB_PFLANZEN=PFLANZEN.map(p=>({
+
+    typ:p.typ,
+    name:p.name,
+    abLevel:p.abLevel
+
+}));
+
+// Ertrag pro Ernte je Sorte - wird mit Gold hochgekauft
+
+let ertragStufe={};
+
+HUB_PFLANZEN.forEach(p=>{
+
+    ertragStufe[p.typ]=1;
+
+});
+
+function ertragKosten(typ){
+
+    let stufe=ertragStufe[typ]||1;
+
+    let index=HUB_PFLANZEN.findIndex(p=>p.typ===typ);
+
+    return Math.round(
+        (40+index*25)*Math.pow(1.35,stufe-1)
+    );
+
+}
+
+function zahlKurz(zahl){
+
+    if(zahl>=1000000)return (zahl/1000000).toFixed(2).replace(".",",")+"M";
+
+    if(zahl>=1000)return (zahl/1000).toFixed(2).replace(".",",")+"k";
+
+    return zahl;
+
+}
+
+function hubKarteHtml(eintrag){
+
+    let typ=eintrag.typ;
+
+    let frei=level>=eintrag.abLevel;
+
+    let ertrag=ertragStufe[typ]||1;
+
+    let kosten=ertragKosten(typ);
+
+    let bezahlbar=coins>=kosten;
+
+    let btn=!frei
+
+        ? `<div class="hubBtn gesperrt">🔒 Level ${eintrag.abLevel}</div>`
+
+        : `<div class="hubBtn ${bezahlbar?"":"zuTeuer"}" data-upgrade="${typ}">
+           <span class="hubBtnMuenze"></span> ${zahlKurz(kosten)}
+           </div>`;
+
+    return `
+
+    <div class="hubKarte">
+
+        <div class="hubKarteKopf">
+
+            <div class="hubIcon">
+                <img src="BushCSS/${typ}-outline-256.png" alt="">
+            </div>
+
+            <div class="hubName">${eintrag.name}</div>
+
+        </div>
+
+        <div class="hubErnte"><b>${ertrag}</b> Pro Ernte</div>
+
+        ${btn}
+
+    </div>
+
+    `;
+
+}
+
+function bestesUpgradeHtml(){
+
+    let offene=HUB_PFLANZEN.filter(p=>level>=p.abLevel);
+
+    if(offene.length===0)return "";
+
+    let guenstigste=offene.reduce((a,b)=>
+        ertragKosten(a.typ)<=ertragKosten(b.typ)?a:b
+    );
+
+    let typ=guenstigste.typ;
+
+    let kosten=ertragKosten(typ);
+
+    let bezahlbar=coins>=kosten;
+
+    return `
+
+    <div class="hubIcon">
+        <img src="BushCSS/${typ}-outline-256.png" alt="">
+    </div>
+
+    <div class="bestesUpgradeText">
+        <div class="bestesUpgradeName">${guenstigste.name}</div>
+        <div class="bestesUpgradeErnte"><b>${ertragStufe[typ]}</b> Pro Ernte</div>
+    </div>
+
+    <div class="hubBtn ${bezahlbar?"":"zuTeuer"}" data-upgrade="${typ}">
+        <span class="hubBtnMuenze"></span> ${zahlKurz(kosten)}
+    </div>
+
+    `;
+
+}
+
+function kaufeErtrag(typ){
+
+    let eintrag=HUB_PFLANZEN.find(p=>p.typ===typ);
+
+    if(!eintrag || level<eintrag.abLevel)return;
+
+    let kosten=ertragKosten(typ);
+
+    if(coins<kosten)return;
+
+    coins-=kosten;
+
+    ertragStufe[typ]++;
+
+    if(typeof questFortschritt==="function"){
+
+        questFortschritt("ertrag",1);
+
+    }
+
+    aktualisiereAnzeige();
+
+    renderAufwertenPanel();
+
+}
+
+function renderAufwertenPanel(){
+
+    if(!aufwertenListeHTML)return;
+
+    aufwertenListeHTML.innerHTML=
+    HUB_PFLANZEN.map(p=>hubKarteHtml(p)).join("");
+
+    let fuss=document.getElementById("bestesUpgrade");
+
+    if(fuss){
+
+        fuss.innerHTML=bestesUpgradeHtml();
+
+    }
+
+    document.querySelectorAll("#aufwertenPanel [data-upgrade]").forEach(btn=>{
+
+        btn.addEventListener("click",()=>{
+
+            kaufeErtrag(btn.dataset.upgrade);
+
+        });
+
+    });
+
+}
+
+if(verbessernBtn){
+
+    verbessernBtn.addEventListener("click",()=>{
+
+        renderAufwertenPanel();
+
+        aufwertenPanel.classList.remove("versteckt");
+
+    });
+
+}
+
+if(aufwertenSchliessenBtn){
+
+    aufwertenSchliessenBtn.addEventListener("click",()=>{
+
+        aufwertenPanel.classList.add("versteckt");
+
+    });
+
+}
+
+// Charakter-Panel
+
+const charakterPanel=
+document.getElementById("charakterPanel");
+
+const charakterListeHTML=
+document.getElementById("charakterListe");
+
+const charakterBtn=
+document.getElementById("charakter");
+
+const charakterSchliessenBtn=
+document.getElementById("charakterSchliessen");
+
+
+
+// Welcher Knoten hat gerade seine Blase offen
+
+let offeneBlase=null;
+
+function skillKnotenId(typ,gruppe){
+
+    return typ+"_"+gruppe;
+
+}
+
+function renderCharakterPanel(){
+
+    if(!charakterListeHTML)return;
+
+    let html='<div class="skillKopf">Level '+level+
+    ' <span class="skillKopfMuenzen">'+zahlKurz(coins)+'</span></div>';
+
+    html+='<div class="skillKette">';
+
+    for(let gruppe=1;gruppe<=SKILL_GRUPPEN;gruppe++){
+
+        let offen=skillGruppeOffen(gruppe);
+
+        SKILL_REIHENFOLGE.forEach((typ,platz)=>{
+
+            let art=SKILL_ARTEN[typ];
+
+            let gekauft=skillKnotenGekauft(typ,gruppe);
+
+            let id=skillKnotenId(typ,gruppe);
+
+            let klassen="skillKnoten";
+
+            if(gekauft)klassen+=" gekauft";
+
+            else if(offen)klassen+=" offen";
+
+            else klassen+=" gesperrt";
+
+            html+='<div class="skillReihe">';
+
+            // Der Stern steht nur am ersten Knoten einer Gruppe
+
+            if(platz===0){
+
+                html+='<div class="skillStern'+(offen?" erreicht":"")+'">'+
+                skillGruppenLevel(gruppe)+'</div>';
+
+            }
+
+            html+='<div class="'+klassen+'" data-knoten="'+id+'" '+
+            'data-typ="'+typ+'" data-gruppe="'+gruppe+'">'+art.icon+'</div>';
+
+            html+='</div>';
+
+        });
+
+    }
+
+    html+='</div>';
+
+    charakterListeHTML.innerHTML=html;
+
+    charakterListeHTML.querySelectorAll("[data-knoten]").forEach(el=>{
+
+        el.addEventListener("click",()=>{
+
+            let id=el.dataset.knoten;
+
+            offeneBlase=offeneBlase===id?null:id;
+
+            zeigeSkillBlase();
+
+        });
+
+    });
+
+    zeigeSkillBlase();
+
+    springeZumNaechsten();
+
+}
+
+// Blase ueber dem angetippten Knoten
+
+function zeigeSkillBlase(){
+
+    if(!charakterListeHTML)return;
+
+    let alteBlase=charakterListeHTML.querySelector(".skillBlase");
+
+    if(alteBlase)alteBlase.remove();
+
+    if(!offeneBlase)return;
+
+    let knoten=charakterListeHTML.querySelector('[data-knoten="'+offeneBlase+'"]');
+
+    if(!knoten)return;
+
+    let typ=knoten.dataset.typ;
+
+    let gruppe=Number(knoten.dataset.gruppe);
+
+    let art=SKILL_ARTEN[typ];
+
+    let gekauft=skillKnotenGekauft(typ,gruppe);
+
+    let offen=skillGruppeOffen(gruppe);
+
+    let kosten=skillKnotenKosten(gruppe);
+
+    let wert="+"+art.schritt.toString().replace(".",",")+art.einheit;
+
+    let unten="";
+
+    if(gekauft){
+
+        unten='<div class="skillBlaseFertig">Freigeschaltet</div>';
+
+    }else if(!offen){
+
+        unten='<div class="skillBlaseGesperrt">Ab Level '+
+        skillGruppenLevel(gruppe)+'</div>';
+
+    }else{
+
+        unten='<div class="skillKaufBtn'+(coins<kosten?" zuTeuer":"")+'" '+
+        'data-kauf="'+offeneBlase+'">Freischalten '+zahlKurz(kosten)+'</div>';
+
+    }
+
+    let blase=document.createElement("div");
+
+    blase.className="skillBlase";
+
+    blase.innerHTML=
+    '<div class="skillBlaseKopf">'+art.name+'</div>'+
+    '<div class="skillBlaseWert">'+wert+'</div>'+
+    unten;
+
+    knoten.parentNode.appendChild(blase);
+
+    let kaufKnopf=blase.querySelector("[data-kauf]");
+
+    if(kaufKnopf){
+
+        kaufKnopf.addEventListener("click",e=>{
+
+            e.stopPropagation();
+
+            kaufeSkillKnoten(typ,gruppe);
+
+        });
+
+    }
+
+}
+
+function kaufeSkillKnoten(typ,gruppe){
+
+    if(skillKnotenGekauft(typ,gruppe))return;
+
+    if(!skillGruppeOffen(gruppe))return;
+
+    let kosten=skillKnotenKosten(gruppe);
+
+    if(coins<kosten)return;
+
+    coins-=kosten;
+
+    gekaufteKnoten[skillKnotenId(typ,gruppe)]=true;
+
+    if(typeof questFortschritt==="function"){
+
+        questFortschritt("knoten",1);
+
+    }
+
+    aktualisiereAnzeige();
+
+    offeneBlase=null;
+
+    renderCharakterPanel();
+
+}
+
+// Beim Oeffnen zum ersten noch nicht gekauften Knoten scrollen
+
+function springeZumNaechsten(){
+
+    if(!charakterListeHTML)return;
+
+    let ziel=charakterListeHTML.querySelector(".skillKnoten.offen");
+
+    if(!ziel)ziel=charakterListeHTML.querySelector(".skillKnoten.gesperrt");
+
+    if(!ziel)return;
+
+    try{
+
+        ziel.scrollIntoView({block:"center"});
+
+    }catch(e){}
+
+}
+
+if(charakterBtn){
+
+    charakterBtn.addEventListener("click",()=>{
+
+        renderCharakterPanel();
+
+        charakterPanel.classList.remove("versteckt");
+
+    });
+
+}
+
+if(charakterSchliessenBtn){
+
+    charakterSchliessenBtn.addEventListener("click",()=>{
+
+        charakterPanel.classList.add("versteckt");
+
+    });
+
+}
+
+// ============================================
+// Haustiere: laufen aktiv zu Büschen und ernten sie,
+// bleiben in der Nähe des Spielers, Level 1-10
+// ============================================
+
+
+function petRadius(level){
+
+    // Moderates Wachstum, bleibt "normal" statt riesig
+
+    return 60+level*10;
+
+}
+
+function petDropBonus(level){
+
+    return level*2;
+
+}
+
+
+
+function petKosten(){
+
+    return 400;
+
+}
+
+function petUpgradeKosten(level){
+
+    return level*20;
+
+}
+
+function petErstellen(){
+
+    let el=
+    document.createElement("div");
+
+    el.className="haustier";
+
+    el.innerHTML=`<svg viewBox="0 0 128 128">
+    <path fill="#888071" d="M19.7 45.67c-.04 0-.08 0-.12-.01c-.06-.01-1.56-.18-4.11-.64c-2.78-.51-4.61-.72-4.63-.72c-.6-.07-1.04-.61-.97-1.22c.07-.6.62-1.04 1.22-.97c.08.01 1.92.22 4.78.74c2.47.45 3.95.62 3.96.62c.6.07 1.04.61.97 1.22c-.07.56-.55.98-1.1.98z"/>
+    <path fill="#888071" d="M10.78 50.08c-.55 0-1.03-.41-1.09-.97a1.1 1.1 0 0 1 .97-1.22c.03 0 2.81-.33 4.22-.56c1.46-.23 4.74-.75 4.74-.75l.34 2.17l-4.73.75c-1.46.24-4.2.56-4.32.57c-.05 0-.09.01-.13.01z"/>
+    <path fill="#888071" d="M12.51 54.68c-.48 0-.92-.31-1.06-.8c-.17-.58.17-1.19.76-1.36l7.88-2.25a1.102 1.102 0 0 1 .6 2.12l-7.88 2.25c-.09.02-.2.04-.3.04z"/>
+    <path fill="#b85c3e" d="M53.29 84.41l-10.84 8.31s.42 17.32.14 18.02c-.28.7-4.08 5.07-3.66 7.6c.33 1.97 1.83 2.67 5.91 2.82s12.39-1.69 12.39-1.69l-3.94-35.06z"/>
+    <path fill="#b85c3e" d="M85.11 91.02l-8.02 4.5s1.13 3.38 1.13 8.17s-.42 7.79-.7 8.78c-.28.99-2.63 2.86-2.39 5.58c.11 1.26 1.69 2.25 4.5 2.11s6.9-.42 6.9-.42l4.08-26.61l-5.5-2.11z"/>
+    <path fill="#fb8b02" d="M33.26 27.81s-1.31-4.6-.19-11.92c1.13-7.32 3-11.17 4.79-11.36c1.78-.19 5.16 3.19 7.79 7.23c2.63 4.04 4.79 11.17 4.79 11.17l-17.18 4.88z"/>
+    <path fill="#fb8b02" d="M63.85 97.26s.09 8.45.28 12.2c.19 3.75.01 12.08-.75 13c-1.17 1.41-2.35 1.45-4.88 1.55c-1.51.06.47-9.29.47-9.67s.09-22.81.09-22.81l4.79 5.73z"/>
+    <path fill="#ffb800" d="M38.79 68.08s-2.25 7.13-1.69 12.48c.56 5.35 3.66 12.11 6.76 14.83s5.91 4.13 6.19 4.79c.28.66 1.41 9.95 1.03 11.92s-3.1 7.04-2.63 9.01c.47 1.97 2.33 3.21 7.13 3.1c6.24-.14 5.91-1.08 6.38-4.97c.32-2.62-.09-20.74-.09-20.74s3.85.38 9.29 0c5.44-.38 12.2-2.82 12.2-2.82s3.85 12.01 2.53 15.67c-1.31 3.66-3.47 5.73-3.1 8.26c.38 2.53 3.66 3.66 7.7 3.28c4.04-.38 7.13-3 7.32-6.48c.19-3.47.09-22.71.66-24.21c.56-1.5 2.63-6.66 2.44-11.83s-.56-7.23-.56-7.23s4.85-1.85 9.34-5.25c3.42-2.59 5.99-6 7.36-11.08c2.25-8.35-.84-16.61-7.04-19.43c-5.96-2.71-11.83-1.69-12.01 2.63s3.66 3.38 6.57 4.5c2.91 1.13 6.19 6.29 2.72 11.36c-3.47 5.07-9.57 6.66-11.45 6.85c-1.88.19-5.35-2.72-12.58-2.91c-7.23-.19-17.64 5.07-17.93 4.41c-.28-.66 10.32-7.51 11.07-16.42c.7-8.26-1.03-12.11-1.03-12.11s-1.31-13.98-3.19-20.55S67.7 3.69 66.01 3.79c-1.69.09-7.13 6.01-9.1 8.92s-4.13 7.6-4.13 7.6s-8.4-.31-12.11 1.03c-3.38 1.22-7.23 3.28-9.67 7.13s-3.19 6.1-4.32 6.66c-1.13.56-6.48 1.69-6.95 2.35c-.47.66-1.69 9.39-1.41 10.7s.5 4.37 2.06 6.1c1.78 1.97 6.71 5.3 10.61 7.79c3.77 2.4 7.43 4.32 7.8 6.01z"/>
+    <path fill="#ff9b31" d="M73.38 77.27c3.47-.05 3.38-4.22 3.43-9.39c.04-4.52-.14-7.18-.14-7.18s-1.99.27-3.75.94c-1.74.66-3.24 1.27-3.24 1.27v7.27c-.01 2.49.27 7.14 3.7 7.09z"/>
+    <path fill="#ff9b31" d="M79.48 60.05s0 4.36.05 8.07c.05 3.99-.33 8.31 3.66 8.26c3.43-.04 3.43-4.41 3.47-9.34c.02-2.58.09-6.99.09-6.99s-1.69-.33-3.71-.28c-1.59.04-3.56.28-3.56.28z"/>
+    <path fill="#2c312c" d="M44.81 41.02c-.73 1.77-2.3 4.3-4.89 3.64c-1.66-.42-1.78-3.99-.81-6.11c1.15-2.5 2.68-3.63 4.47-3.42c1.97.24 2.16 3.62 1.23 5.89z"/>
+    <path fill="#2c312c" d="M27.67 40.48c-.05-1.13-2.96-1.92-5.21-2.77c-1.91-.71-2.96-.75-3.47-.28s-1.13 1.69-1.41 3.57s-.18 5.06.28 7.04c.47 2.02 1.22 4.55 4.55 5.87c2.86 1.13 4.55-.42 5.77-1.27c1.55-1.07.88-3.61-1.31-2.3c-1.64.99-2.77 1.27-4.04.33c-1.74-1.29-2.16-5.11-2.02-5.44c.61-1.43 3.05-1.78 4.04-2.16c.99-.38 2.87-1.6 2.82-2.59z"/>
+    <path fill="#888071" d="M47.34 50.45h-.08c-.03 0-3.19-.23-5.16-.28l-5.63-.14s-1.18.1-1.18-1.06c0-1.23 1.23-1.04 1.23-1.04l5.63.14c2.02.05 5.13.27 5.26.28c.58.04 1.01.55.97 1.12c-.04.56-.5.98-1.04.98z"/>
+    <path fill="#888071" d="M45.55 57.3c-.15 0-.31-.03-.45-.1c-.02-.01-2.51-1.2-4.76-1.97c-2.34-.79-4.96-1.64-4.96-1.64c-.55-.18-.86-.77-.68-1.32c.18-.55.77-.86 1.32-.68c0 0 2.64.85 4.99 1.65c2.38.81 4.89 2.01 5 2.07c.52.25.74.88.49 1.4c-.18.37-.56.59-.95.59z"/>
+    <path fill="#888071" d="M40.44 61.2c-.2 0-.41-.06-.59-.18c-.02-.01-1.78-1.21-2.96-1.94c-1.23-.75-3.44-2.17-3.44-2.17s-.99-.58-.35-1.5s1.48-.28 1.48-.28s2.2 1.4 3.41 2.15c1.23.75 2.97 1.95 3.05 2c.48.33.6.98.27 1.46c-.21.3-.54.46-.87.46z"/>
+    <path fill="#fed0ab" d="M64.35 12.33c-.48-.17-3.59 3.45-5.14 7.04c-1.55 3.59-2.11 5.56-1.97 6.19c.06.28 1.85 1.83 4.5 3.94c2.75 2.18 4.5 3.52 5.28 3.45c.77-.07.99-6.05.35-11.47s-2.25-8.87-3.02-9.15z"/>
+    </svg>`;
+
+    karte.appendChild(el);
+
+    pets.push({
+
+        element:el,
+
+        x:mitte*FELD,
+
+        y:mitte*FELD,
+
+        level:1,
+
+        ziel:null
+
+    });
+
+}
+
+function petZielFinden(pet){
+
+    let naechste=null;
+
+    let minEntfernung=
+    petRadius(pet.level);
+
+    // Radius wird vom Lager aus gemessen, nicht vom Spieler
+
+    let lagerMitteX=mitte*FELD+20;
+
+    let lagerMitteY=mitte*FELD+20;
+
+    buesche.forEach(o=>{
+
+        if(!o.aktiv || o.zielVon)return;
+
+        let dx=lagerMitteX-(o.x+20);
+
+        let dy=lagerMitteY-(o.y+20);
+
+        let entfernung=
+        Math.sqrt(dx*dx+dy*dy);
+
+        if(entfernung<minEntfernung){
+
+            minEntfernung=entfernung;
+
+            naechste=o;
+
+        }
+
+    });
+
+    return naechste;
+
+}
+
+function aktualisierePets(deltaFaktor){
+
+    pets.forEach(pet=>{
+
+        if(pet.ziel && !pet.ziel.aktiv){
+
+            pet.ziel=null;
+
+        }
+
+        if(!pet.ziel){
+
+            pet.ziel=petZielFinden(pet);
+
+            if(pet.ziel){
+
+                pet.ziel.zielVon=pet;
+
+            }
+
+        }
+
+        let petTempo=
+        aktuellesTempo()*0.7;
+
+        if(pet.ziel){
+
+            let zx=pet.ziel.x+20;
+
+            let zy=pet.ziel.y+20;
+
+            let dx=zx-pet.x;
+
+            let dy=zy-pet.y;
+
+            let distanz=
+            Math.sqrt(dx*dx+dy*dy);
+
+            if(distanz<26){
+
+                petErnten(pet);
+
+            }else{
+
+                pet.x+=
+                (dx/distanz)*petTempo*deltaFaktor;
+
+                pet.y+=
+                (dy/distanz)*petTempo*deltaFaktor;
+
+            }
+
+        }else{
+
+            let lagerMitteX=mitte*FELD+20;
+
+            let lagerMitteY=mitte*FELD+20;
+
+            let dx=lagerMitteX-pet.x;
+
+            let dy=lagerMitteY-pet.y;
+
+            let distanz=
+            Math.sqrt(dx*dx+dy*dy);
+
+            if(distanz>36){
+
+                pet.x+=
+                (dx/distanz)*petTempo*deltaFaktor;
+
+                pet.y+=
+                (dy/distanz)*petTempo*deltaFaktor;
+
+            }
+
+        }
+
+        pet.element.style.left=
+        pet.x+"px";
+
+        pet.element.style.top=
+        pet.y+"px";
+
+    });
+
+}
+
+function petErnten(pet){
+
+    // Ernte-Logik entfernt (war busch-spezifisch)
+
+    pet.ziel=null;
+
+}
+
+// Haustiere-Panel
+
+const haustierePanel=
+document.getElementById("haustierePanel");
+
+const haustiereListeHTML=
+document.getElementById("haustiereListe");
+
+const haustiereSchliessenBtn=
+document.getElementById("haustiereSchliessen");
+
+function renderHaustierePanel(){
+
+    if(!haustiereListeHTML)return;
+
+    if(pets.length===0){
+
+        haustiereListeHTML.innerHTML=`
+
+        <div class="aufwertenInfo" style="margin-bottom:10px;">
+
+        Ein Haustier läuft aktiv zu Büschen in deiner Nähe
+        und erntet sie selbst – etwas langsamer als du.
+        Höhere Level bringen größeren Sammelradius,
+        mehr Ertrag und eine Chance auf Ausrüstungs-Drops.
+
+        </div>
+
+        `;
+
+        let kaufDiv=
+        document.createElement("div");
+
+        kaufDiv.className="aufwertenEintrag";
+
+        let kosten=petKosten();
+
+        kaufDiv.innerHTML=`
+
+        <div class="aufwertenInfo">🐾 Erstes Haustier</div>
+
+        <button class="aufwertenBtn" id="petKaufBtn" ${coins<kosten?"disabled":""}>
+
+        🪙${kosten}
+
+        </button>
+
+        `;
+
+        haustiereListeHTML.appendChild(kaufDiv);
+
+        let btn=
+        document.getElementById("petKaufBtn");
+
+        if(btn){
+
+            btn.addEventListener("click",()=>{
+
+                if(coins>=kosten){
+
+                    coins-=kosten;
+
+                    petErstellen();
+
+                    aktualisiereAnzeige();
+
+                    renderHaustierePanel();
+
+                }
+
+            });
+
+        }
+
+        return;
+
+    }
+
+    haustiereListeHTML.innerHTML=`
+
+    <div class="aufwertenInfo" style="margin-bottom:10px;">
+
+    🌸 ${lilie} Lilie · 🎒 ${ausruestungsInventar.length} Ausrüstungsteile
+
+    </div>
+
+    `;
+
+    pets.forEach((pet,i)=>{
+
+        let kosten=
+        petUpgradeKosten(pet.level);
+
+        let maxLevel=
+        pet.level>=10;
+
+        let div=
+        document.createElement("div");
+
+        div.className="aufwertenEintrag";
+
+        div.innerHTML=`
+
+        <div class="aufwertenInfo">
+
+        🐾 Haustier ${i+1}<br>
+
+        Level ${pet.level}/10 ·
+        Radius ${petRadius(pet.level)}<br>
+
+        +${petDropBonus(pet.level)} Bonus-Ertrag
+
+        </div>
+
+        <button class="aufwertenBtn" data-index="${i}"
+        ${maxLevel || lilie<kosten?"disabled":""}>
+
+        ${maxLevel?"Max":"🌸"+kosten}
+
+        </button>
+
+        `;
+
+        haustiereListeHTML.appendChild(div);
+
+    });
+
+    haustiereListeHTML.querySelectorAll(".aufwertenBtn").forEach(btn=>{
+
+        if(!btn.dataset.index)return;
+
+        btn.addEventListener("click",()=>{
+
+            let i=Number(btn.dataset.index);
+
+            let pet=pets[i];
+
+            let kosten=
+            petUpgradeKosten(pet.level);
+
+            if(pet.level<10 && lilie>=kosten){
+
+                lilie-=kosten;
+
+                pet.level++;
+
+                renderHaustierePanel();
+
+            }
+
+        });
+
+    });
+
+}
+
+const haustiereBtn=
+document.getElementById("haustiere");
+
+if(haustiereBtn){
+
+    haustiereBtn.addEventListener("click",()=>{
+
+        renderHaustierePanel();
+
+        haustierePanel.classList.remove("versteckt");
+
+    });
+
+}
+
+if(haustiereSchliessenBtn){
+
+    haustiereSchliessenBtn.addEventListener("click",()=>{
+
+        haustierePanel.classList.add("versteckt");
+
+    });
+
+}
+
+// ============================================
+// SKALIERUNGSFAKTOREN je Buff
+// Die rohe "Stärke" eines Items (siehe baueItem/neuBerechnen)
+// ist nur eine Anzeige-Zahl fürs Detail-Fenster und war nie auf
+// echte Spiel-Einheiten abgestimmt. Jeder Faktor hier übersetzt
+// die rohe Stärke in eine spürbare, aber nicht übertriebene
+// Auswirkung. Rohe Maximalwerte (Gold, Stufe 10) zum Vergleich:
+// Waffe(erntebereich) ~10,8 · Rücken(sammelradius) ~74,1 ·
+// Brust(ertrag) ~59,8 · Kopf(ertrag) ~45,5 · Füße(tempo) ~45,5
+// ============================================
+
+const SKALIERUNG_TEMPO=0.20;         // max ≈ +0,23 Tempo (Gold, Stufe 10)
+const SKALIERUNG_ERTRAG=0.18;        // max ≈ +19% Ertrag (Brust+Kopf zusammen Gold)
+const SKALIERUNG_SAMMELRADIUS=0.20;  // max ≈ +15px Sammelradius (Gold, Stufe 10)
+const SKALIERUNG_ERNTEBEREICH=1.0;   // max ≈ +11px Erntebereich (Gold, Stufe 10)
+
+function aktuelleAusruestungsBuffs(){
+
+    if(typeof window.Ausruestung==="undefined")return null;
+
+    return window.Ausruestung.buffs();
+
+}
+
+function ausruestungsTempoBonus(){
+
+    let buffs=aktuelleAusruestungsBuffs();
+
+    if(!buffs)return 0;
+
+    // buffs.tempo (Rohwert in %) * Skalierung, wirkt auf das Basis-Tempo
+
+    return BASIS_TEMPO*((buffs.tempo*SKALIERUNG_TEMPO)/100);
+
+}
+
+function ausruestungsErtragMultiplikator(){
+
+    let buffs=aktuelleAusruestungsBuffs();
+
+    if(!buffs)return 1;
+
+    return 1+((buffs.ertrag*SKALIERUNG_ERTRAG)/100);
+
+}
+
+function ausruestungsSammelradiusBonus(){
+
+    let buffs=aktuelleAusruestungsBuffs();
+
+    if(!buffs)return 0;
+
+    return buffs.sammelradius*SKALIERUNG_SAMMELRADIUS;
+
+}
+
+function ausruestungsErntebereichBonus(){
+
+    let buffs=aktuelleAusruestungsBuffs();
+
+    if(!buffs)return 0;
+
+    return buffs.erntebereich*SKALIERUNG_ERNTEBEREICH;
+
+}
+
+function ausruestungsXpMultiplikator(){ return 1; }
+
+
+// ============================================
+// Speichern im Browser (localStorage)
+// ============================================
+
+const SPEICHER_SCHLUESSEL="inselAbenteuerSpielstand";
+
+function sammleSpielstand(){
+
+    return{
+
+        coins:coins,
+        juwelen:juwelen,
+        sterne:sterne,
+        level:level,
+        xp:xp,
+        lilie:lilie,
+        gekaufteKnoten:gekaufteKnoten,
+        lagerLevel:lagerLevel,
+        kartenStufe:kartenStufe,
+        ausruestungsInventar:ausruestungsInventar,
+        erledigteAufgaben:erledigteAufgaben,
+        ertragStufe:ertragStufe,
+        petLevels:pets.map(p=>p.level)
+
+    };
+
+}
+
+function speichereSpiel(){
+
+    try{
+
+        localStorage.setItem(
+            SPEICHER_SCHLUESSEL,
+            JSON.stringify(sammleSpielstand())
+        );
+
+    }catch(e){
+
+        // localStorage evtl. nicht verfügbar - Spiel läuft trotzdem weiter
+
+    }
+
+}
+
+function ladeSpielstand(){
+
+    try{
+
+        let roh=
+        localStorage.getItem(SPEICHER_SCHLUESSEL);
+
+        if(!roh)return null;
+
+        return JSON.parse(roh);
+
+    }catch(e){
+
+        return null;
+
+    }
+
+}
+
+function wendeSpielstandAn(d){
+
+    if(!d)return;
+
+    if(typeof d.coins==="number")coins=d.coins;
+
+    if(typeof d.juwelen==="number")juwelen=d.juwelen;
+
+    if(typeof d.sterne==="number")sterne=d.sterne;
+
+    if(typeof d.level==="number")level=d.level;
+
+    if(typeof d.xp==="number")xp=d.xp;
+
+    if(typeof d.lilie==="number")lilie=d.lilie;
+
+    if(d.gekaufteKnoten){
+
+        gekaufteKnoten=d.gekaufteKnoten;
+
+    }
+
+    if(typeof d.lagerLevel==="number")lagerLevel=d.lagerLevel;
+
+    if(typeof d.kartenStufe==="number"){
+
+        kartenStufe=d.kartenStufe;
+
+        plattformGroesse=kartenStufe;
+
+    }
+
+    if(d.ausruestungsInventar){
+
+        ausruestungsInventar=d.ausruestungsInventar;
+
+    }
+
+    if(d.erledigteAufgaben){
+
+        erledigteAufgaben=d.erledigteAufgaben;
+
+    }
+
+    if(d.ertragStufe){
+
+        Object.keys(d.ertragStufe).forEach(k=>{
+
+            if(ertragStufe.hasOwnProperty(k)){
+
+                ertragStufe[k]=d.ertragStufe[k];
+
+            }
+
+        });
+
+    }
+
+    if(Array.isArray(d.petLevels)){
+
+        pets.forEach(p=>p.element.remove());
+
+        pets.length=0;
+
+        d.petLevels.forEach(lvl=>{
+
+            petErstellen();
+
+            pets[pets.length-1].level=lvl;
+
+        });
+
+    }
+
+    aktualisierePlattform();
+
+    aktualisiereLagerPosition();
+
+    starteAufgaben();
+
+    aktualisiereAnzeige();
+
+}
+
+// Beim Start laden, falls ein Spielstand existiert
+
+let geladenSpielstand=ladeSpielstand();
+wendeSpielstandAn(geladenSpielstand);
+
+// Plattform IMMER aktualisieren (auch bei neuem Spiel)
+
+aktualisierePlattform();
+
+aktualisiereLagerPosition();
+
+// Alle 5 Sekunden automatisch speichern + beim Verlassen/Minimieren
+
+setInterval(speichereSpiel,5000);
+
+document.addEventListener("visibilitychange",()=>{
+
+    if(document.visibilityState==="hidden"){
+
+        speichereSpiel();
+
+    }
+
+});
+
+window.addEventListener("pagehide",speichereSpiel);
+
+// Spiel starten
+
+
+starteAufgaben();
+
+aktualisiereAnzeige();
+
+// ============================================
+// Diagnose-Anzeige (nur zum Messen - kann spaeter
+// komplett geloescht werden, haengt an nichts dran)
+// ============================================
+
+let diagAn=true;
+
+let diagBox=document.createElement("div");
+
+diagBox.id="diagBox";
+
+diagBox.style.cssText=
+"position:fixed;left:6px;bottom:120px;z-index:999;opacity:.85;"+
+"background:rgba(0,0,0,.65);color:#0f0;font:11px/1.35 monospace;"+
+"padding:6px 8px;border-radius:8px;white-space:pre;pointer-events:auto;";
+
+document.body.appendChild(diagBox);
+
+// Antippen blendet die Anzeige aus
+
+diagBox.addEventListener("click",()=>{
+
+    diagAn=false;
+
+    diagBox.style.display="none";
+
+});
+
+let diagFrames=0;
+
+let diagLetzteAusgabe=performance.now();
+
+function diagTick(){
+
+    if(!diagAn)return;
+
+    diagFrames++;
+
+    let jetzt=performance.now();
+
+    let dauer=jetzt-diagLetzteAusgabe;
+
+    // nur 2x pro Sekunde schreiben, damit die Messung selbst nichts kostet
+
+    if(dauer<500)return;
+
+    let fps=Math.round(diagFrames*1000/dauer);
+
+    diagFrames=0;
+
+    diagLetzteAusgabe=jetzt;
+
+    // Zeilenumbruch ueber den Zeichencode, damit keine
+    // Escape-Sequenz verloren gehen kann
+
+    let u=String.fromCharCode(10);
+
+    diagBox.textContent=
+    "FPS      "+fps+u+
+    "Level    "+level+u+
+    "Pflanzen "+pflanzen.length+u+
+    "Beeren   "+liegendeBeeren.length+u+
+    "Kisten   "+kisten.length+u+
+    "Blaetter "+document.getElementsByClassName("leaf").length+u+
+    "Pets     "+pets.length+u+
+    "DOM      "+document.getElementsByTagName("*").length;
+
+}
+
+requestAnimationFrame(update);
+
+
+// ============================================================
+// >>>>> AUSRUESTUNGS-SYSTEM (Anfang)
+// ============================================================
+
+// ============================================================
+// AUSRUESTUNGS- UND TRUHEN-SYSTEM
+//
+// Liegt in einer eigenen Kapsel, damit sich keine Namen mit
+// dem Rest von spiel.js in die Quere kommen. Greift auf
+// coins / juwelen / level weiter oben in dieser Datei zu.
+//
+// Zum Entfernen: alles ab der Zeile mit ">>>>> AUSRUESTUNGS-
+// SYSTEM" bis zum Dateiende loeschen.
+// ============================================================
+
+(function(){
+
+// ============================================================
+// BILDER - hier oben anpassen, wenn du eigene Grafiken hast.
+// Fehlt eine Datei, springt automatisch das Emoji ein.
+// ============================================================
+
+const BILD={
+
+    muenze   :{pfad:"GameCSS/coin.png",   ersatz:"🪙"},
+    juwel    :{pfad:"GameCSS/gems.png",   ersatz:"💎"},
+    schluessel:{pfad:"",                  ersatz:"🔑"},
+    truhe    :{pfad:"BushCSS/kiste.png",  ersatz:"📦"},
+
+    // Die drei Truhen im Shop
+
+    truheNormal :{pfad:"GameCSS/Chest_Medium_1_1_256.png",    ersatz:"📦"},
+    truhePremium:{pfad:"GameCSS/Chest_Large_2_Outline_256.png", ersatz:"🗝"},
+    truhePet    :{pfad:"GameCSS/Chest_Medium_2_Outline_256.png",ersatz:"🐾"},
+    shop     :{pfad:"GameCSS/Shopping_Basket_Purple_Outline_256.png", ersatz:"🧺"},
+    spieler  :{pfad:"GameCSS/npc.png",    ersatz:"🧑"},
+    pfote    :{pfad:"GameCSS/pet.svg",    ersatz:"🐾"},
+    schloss  :{pfad:"",                   ersatz:"🔒"}
+
+};
+
+// Bilder der einzelnen Ausruestungsteile
+
+const TEIL_BILD={
+
+    waffe  :{pfad:"GameCSS/ax.png", ersatz:"🪓"},
+    ruecken:{pfad:"",               ersatz:"🎒"},
+    brust  :{pfad:"",               ersatz:"👕"},
+    kopf   :{pfad:"",               ersatz:"🧢"},
+    fuesse :{pfad:"",               ersatz:"👟"},
+    ring   :{pfad:"",               ersatz:"💍"}
+
+};
+
+// Baut ein Bild-Element mit Emoji-Rueckfall
+
+function bild(eintrag,groesse){
+
+    // Sicherheitsnetz: unbekannter Eintrag darf nichts umwerfen
+
+    if(!eintrag){
+
+        return '<span style="font-size:'+groesse+'px;line-height:1">?</span>';
+
+    }
+
+    if(!eintrag.pfad){
+
+        return '<span style="font-size:'+groesse+'px;line-height:1">'+eintrag.ersatz+'</span>';
+
+    }
+
+    // Einfaches Anfuehrungszeichen ueber den Zeichencode, damit in
+    // dieser Datei kein einziger Backslash vorkommen muss
+
+    var hf=String.fromCharCode(39);
+
+    var ersatzHtml=
+    "<span style=&quot;font-size:"+groesse+"px;line-height:1&quot;>"+
+    eintrag.ersatz+"</span>";
+
+    return '<img src="'+eintrag.pfad+'" alt="" '+
+    'style="width:'+groesse+'px;height:'+groesse+'px;object-fit:contain" '+
+    'onerror="this.outerHTML='+hf+ersatzHtml+hf+'">';
+
+}
+
+function teilBild(slot,groesse){
+
+    return bild(TEIL_BILD[slot],groesse);
+
+}
+
+// Slime-Grafiken: erst GameCSS, dann BushCSS, sonst Emoji.
+// So ist es egal, in welchem der beiden Ordner die Dateien liegen.
+
+function slimeBild(datei,groesse){
+
+    var hf=String.fromCharCode(39);
+
+    // Rueckfall ohne Bild: ein farbiger Punkt statt eines fremden Tiers
+
+    var ersatz="<span style=&quot;font-size:"+groesse+
+    "px;line-height:1;color:#ffffff&quot;>&#9679;</span>";
+
+    var zweiter="this.src="+hf+"BushCSS/"+datei+hf;
+
+    var aufgeben="this.outerHTML="+hf+ersatz+hf;
+
+    return '<img src="GameCSS/'+datei+'" alt="" '+
+    'style="width:'+groesse+'px;height:'+groesse+'px;object-fit:contain" '+
+    'onerror="if(!this.dataset.zweit){this.dataset.zweit=1;'+zweiter+';}else{'+aufgeben+';}">';
+
+}
+
+// ============================================================
+// HAUSTIER-ARTEN
+//
+// Pro Seltenheitsstufe eine Slime-Sorte. Willst du eine andere
+// Zuordnung, aendere hier einfach den Dateinamen.
+// ============================================================
+
+const PET_ARTEN={
+
+    grau :{name:"Lila Slime",  datei:"slime-purple-small_OL_L.png"},
+    gruen:{name:"Gruener Slime",datei:"Slime_Green_Outline_256.png"},
+    blau :{name:"Blauer Slime", datei:"Slime_Blue_Outline_256.png"},
+    gold :{name:"Goldener Slime",datei:"Slime_Red_Outline_256.png"}
+
+};
+
+const PET_RANG=["grau","gruen","blau","gold"];
+
+const PREIS_PET_JUWELEN=40;
+
+const PET_MAX_STUFE=10;
+
+// Was jede Stufe kann. Der Helfer arbeitet vom Lager aus nach
+// aussen: er erntet eine Pflanze in seinem Umkreis und sammelt
+// die Fruechte gleich mit ein.
+//
+// radius   = Umkreis in Feldern auf Stufe 1, pro Level +1
+// sekunden = Abstand zwischen zwei Ernten auf Stufe 1
+// bonus    = zusaetzlicher Ertrag auf das, was er einsammelt
+
+const PET_WERTE={
+
+    grau :{radius:1.0, sekunden:6.0, bonus:0.00},
+    gruen:{radius:1.2, sekunden:5.0, bonus:0.05},
+    blau :{radius:1.5, sekunden:4.0, bonus:0.10},
+    gold :{radius:1.8, sekunden:3.0, bonus:0.18}
+
+};
+
+// Pro Stufe nur ein Zehntel Feld mehr. Die Insel ist im Endausbau
+// 5x5 Felder gross - ein Umkreis von 3 Feldern wuerde bereits alles
+// abdecken und jede weitere Stufe waere wertlos.
+
+function petRadiusFelder(pet){
+
+    return Math.round(
+        (PET_WERTE[pet.seltenheit].radius+(pet.stufe-1)*0.1)*10
+    )/10;
+
+}
+
+function petIntervall(pet){
+
+    // Pro Stufe 7% schneller, aber nie unter einer halben Sekunde
+
+    let s=PET_WERTE[pet.seltenheit].sekunden*Math.pow(0.95,pet.stufe-1);
+
+    return Math.max(500,Math.round(s*1000));
+
+}
+
+function petErtragBonus(pet){
+
+    return PET_WERTE[pet.seltenheit].bonus;
+
+}
+
+function petUpgradeKosten(pet){
+
+    return Math.round(250*Math.pow(1.55,pet.stufe)*SELTENHEIT[pet.seltenheit].faktor);
+
+}
+
+// Id des angelegten Haustiers, null wenn keins aktiv ist
+
+let angelegtesPetId=null;
+
+function angelegtesPet(){
+
+    if(angelegtesPetId===null)return null;
+
+    return meinePets.find(p=>p.id===angelegtesPetId)||null;
+
+}
+
+// ============================================================
+// DATEN
+// ============================================================
+
+const SELTENHEIT={
+
+    grau :{name:"Grau", farbe:"linear-gradient(180deg,#c9c9c9,#8e8e8e)",punkt:"#a8a8a8",chance:60,faktor:1.0},
+    gruen:{name:"Grün", farbe:"linear-gradient(180deg,#8ce86a,#4bb02c)",punkt:"#5cd23c",chance:25,faktor:1.3},
+    blau :{name:"Blau", farbe:"linear-gradient(180deg,#6fd0f5,#2f8fd0)",punkt:"#3a9fdd",chance:10,faktor:1.6},
+    lila :{name:"Lila", farbe:"linear-gradient(180deg,#d07cf0,#9b25d4)",punkt:"#a83ce0",chance: 4,faktor:2.0},
+    gold :{name:"Gold", farbe:"linear-gradient(180deg,#ffe066,#e8a013)",punkt:"#f0b41c",chance: 1,faktor:2.6}
+
+};
+
+const RANG=["grau","gruen","blau","lila","gold"];
+
+const BUFFS={
+
+    erntebereich:{name:"Erntebereich",   einheit:" Felder",komma:1},
+    sammelradius:{name:"Sammelradius",   einheit:" px",    komma:0},
+    ertrag      :{name:"Ertrag",         einheit:"%",      komma:0},
+    tempo       :{name:"Geschwindigkeit",einheit:"%",      komma:0},
+    bauplan     :{name:"Bauplan-Chance", einheit:"%",      komma:1}
+
+};
+
+const TEILE={
+
+    waffe:{name:"Erntehacke",buff:"erntebereich",basis:1,stufig:0.35,
+        text:"Eine handliche Hacke fürs Feld.",
+        effekte:{gruen:"Erntebereich +0,2 Felder",blau:"Erntebereich +0,4 Felder",
+                 lila:"Ertrag +5%",gold:"Bauplan-Chance +3%"}},
+
+    ruecken:{name:"Arbeitsrucksack",buff:"sammelradius",basis:6,stufig:2.5,
+        text:"Ein schöner Arbeitsrucksack.",
+        effekte:{gruen:"Sammelradius +2 px",blau:"Sammelradius +4 px",
+                 lila:"Ertrag +5%",gold:"Bauplan-Chance +3%"}},
+
+    brust:{name:"Feldhemd",buff:"ertrag",basis:5,stufig:2,
+        text:"Leicht, luftig, robust.",
+        effekte:{gruen:"Ertrag +3%",blau:"Ertrag +6%",
+                 lila:"Sammelradius +3 px",gold:"Bauplan-Chance +3%"}},
+
+    kopf:{name:"Bauernmütze",buff:"ertrag",basis:4,stufig:1.5,
+        text:"Schützt vor der Mittagssonne.",
+        effekte:{gruen:"Ertrag +3%",blau:"Ertrag +6%",
+                 lila:"Erntebereich +0,2 Felder",gold:"Bauplan-Chance +3%"}},
+
+    fuesse:{name:"Feldschuhe",buff:"tempo",basis:4,stufig:1.5,
+        text:"Ein Paar flinke Feldschuhe.",
+        effekte:{gruen:"Geschwindigkeit +2%",blau:"Geschwindigkeit +4%",
+                 lila:"Sammelradius +3 px",gold:"Bauplan-Chance +3%"}},
+
+    ring:{name:"Arbeitsring",buff:"bauplan",basis:1,stufig:0.4,
+        text:"Ein schlichter Arbeitsring.",
+        effekte:{gruen:"Bauplan-Chance +1%",blau:"Bauplan-Chance +2%",
+                 lila:"Bauplan-Chance +3%",gold:"Bauplan-Chance +5%"}}
+
+};
+
+const MAX_STUFE=10;
+const PREIS_MUENZEN=500;
+const PREIS_JUWELEN=50;
+const PITY_ZIEL=10;
+
+const SPEICHER="inselAbenteuerAusruestung";
+
+// ============================================================
+// EIGENER SPIELSTAND
+//
+// Muenzen und Juwelen kommen aus spiel.js (coins / juwelen),
+// hier wird nur gespeichert, was es dort noch nicht gibt.
+// ============================================================
+
+let schluessel=0;
+let pity=0;
+let idZaehler=1;
+let sortLevel=false;
+let inventar=[];
+let angelegt={waffe:null,kopf:null,ruecken:null,brust:null,fuesse:null,ring:null};
+
+let offenesOverlay=null;
+let gewaehltesItem=null;
+
+// ---- Haustiere -------------------------------------------
+//
+// Vorerst nur die Oberflaeche: das Raster laesst sich antippen
+// und merkt sich die Auswahl. Welche Tiere es gibt und was sie
+// bewirken, kommt spaeter.
+
+const PET_FELDER=9;          // freie Plaetze im Raster
+const PET_GESPERRT=3;        // Plaetze mit Schloss darunter
+const PET_FREI_AB_LEVEL=28;  // Level, ab dem die Schloesser aufgehen
+
+let gewaehltesPetFeld=null;
+
+// Eigene Haustiere. Noch leer - kommen spaeter aus den Truhen.
+
+let meinePets=[];
+
+// ---- Brueckenfunktionen zu spiel.js ------------------------
+
+function holeMuenzen(){ return typeof coins==="number"?coins:0; }
+function holeJuwelen(){ return typeof juwelen==="number"?juwelen:0; }
+
+function zahleMuenzen(betrag){
+
+    if(typeof coins!=="number")return;
+
+    coins-=betrag;
+
+    if(typeof aktualisiereAnzeige==="function")aktualisiereAnzeige();
+
+}
+
+function zahleJuwelen(betrag){
+
+    if(typeof juwelen!=="number")return;
+
+    juwelen-=betrag;
+
+    if(typeof aktualisiereAnzeige==="function")aktualisiereAnzeige();
+
+}
+
+function schenkeJuwelen(betrag){
+
+    if(typeof juwelen!=="number")return;
+
+    juwelen+=betrag;
+
+    if(typeof aktualisiereAnzeige==="function")aktualisiereAnzeige();
+
+}
+
+function holeLevel(){ return typeof level==="number"?level:1; }
+
+// ============================================================
+// SPEICHERN
+// ============================================================
+
+function speichern(){
+
+    try{
+
+        localStorage.setItem(SPEICHER,JSON.stringify({
+
+            schluessel:schluessel,
+            pity:pity,
+            idZaehler:idZaehler,
+            inventar:inventar,
+            meinePets:meinePets,
+            angelegtesPetId:angelegtesPetId,
+            angelegtIds:Object.fromEntries(
+                Object.keys(angelegt).map(k=>[k,angelegt[k]?angelegt[k].id:null])
+            )
+
+        }));
+
+    }catch(e){}
+
+}
+
+function laden(){
+
+    try{
+
+        let roh=localStorage.getItem(SPEICHER);
+
+        if(!roh)return;
+
+        let d=JSON.parse(roh);
+
+        if(typeof d.schluessel==="number")schluessel=d.schluessel;
+
+        if(typeof d.pity==="number")pity=d.pity;
+
+        if(typeof d.idZaehler==="number")idZaehler=d.idZaehler;
+
+        if(Array.isArray(d.inventar))inventar=d.inventar;
+
+        if(Array.isArray(d.meinePets))meinePets=d.meinePets;
+
+        if(typeof d.angelegtesPetId==="number")angelegtesPetId=d.angelegtesPetId;
+
+        if(d.angelegtIds){
+
+            Object.keys(angelegt).forEach(slot=>{
+
+                let id=d.angelegtIds[slot];
+
+                angelegt[slot]=id?inventar.find(i=>i.id===id)||null:null;
+
+            });
+
+        }
+
+    }catch(e){}
+
+}
+
+// ============================================================
+// ITEMS
+// ============================================================
+
+function baueItem(slot,seltenheit,stufe){
+
+    const t=TEILE[slot];
+
+    return {
+
+        id:idZaehler++,
+        slot:slot,
+        seltenheit:seltenheit,
+        stufe:stufe,
+        buff:t.buff,
+        staerke:Math.round((t.basis+t.stufig*(stufe-1))*SELTENHEIT[seltenheit].faktor*10)/10
+
+    };
+
+}
+
+function neuBerechnen(item){
+
+    const t=TEILE[item.slot];
+
+    item.staerke=Math.round(
+        (t.basis+t.stufig*(item.stufe-1))*SELTENHEIT[item.seltenheit].faktor*10
+    )/10;
+
+}
+
+function buffText(buff,menge){
+
+    const b=BUFFS[buff];
+
+    return b.name+" +"+menge.toFixed(b.komma)+b.einheit;
+
+}
+
+function ziehe(auswahl){
+
+    const summe=auswahl.reduce((s,k)=>s+SELTENHEIT[k].chance,0);
+
+    let wurf=Math.random()*summe;
+
+    for(const k of auswahl){
+
+        wurf-=SELTENHEIT[k].chance;
+
+        if(wurf<=0)return k;
+
+    }
+
+    return auswahl[0];
+
+}
+
+function zufallsSlot(){
+
+    const alle=Object.keys(TEILE);
+
+    return alle[Math.floor(Math.random()*alle.length)];
+
+}
+
+function istAngelegt(item){
+
+    return angelegt[item.slot] && angelegt[item.slot].id===item.id;
+
+}
+
+function upgradeKosten(item){
+
+    return Math.round(60*Math.pow(1.6,item.stufe)*SELTENHEIT[item.seltenheit].faktor);
+
+}
+
+// ============================================================
+// BUFF-SUMMEN - koennen spaeter im Spiel ausgelesen werden
+// ============================================================
+
+function buffSummen(){
+
+    const summe={};
+
+    Object.keys(BUFFS).forEach(k=>summe[k]=0);
+
+    Object.values(angelegt).forEach(i=>{
+
+        if(i)summe[i.buff]+=i.staerke;
+
+    });
+
+    return summe;
+
+}
+
+// ============================================================
+// CSS
+// ============================================================
+
+const CSS=`
+
+#ausrShopIcon{position:fixed;left:16px;top:32%;
+width:42px;cursor:pointer;z-index:60;
+display:flex;flex-direction:column;align-items:center;gap:2px;
+filter:drop-shadow(0 4px 6px rgba(0,0,0,.35))}
+#ausrShopIcon span.beschriftung{font-size:9px;font-weight:bold;color:#fff;letter-spacing:1px;
+text-shadow:-2px -2px 0 #4a1a70,2px -2px 0 #4a1a70,-2px 2px 0 #4a1a70,2px 2px 0 #4a1a70,
+0 3px 4px rgba(0,0,0,.4)}
+#ausrShopIcon *{pointer-events:none}
+#ausrShopIcon:active{transform:translateY(3px)}
+
+.ausrOverlay{position:fixed;inset:0;background:rgba(0,15,28,.78);display:none;
+flex-direction:column;align-items:center;justify-content:center;z-index:300;padding:14px}
+.ausrOverlay.offen{display:flex}
+.ausrOverlay *{touch-action:pan-y}
+
+.ausrKopf{width:100%;max-width:430px;display:flex;align-items:center;gap:10px;margin-bottom:-16px;z-index:2}
+/* Kopfzeile genau wie im Verbessern-Fenster */
+
+.ausrKopfTitel{flex:1;border-radius:40px;padding:10px 30px;text-align:center;
+font-size:26px;font-weight:900;color:#fff;
+background:linear-gradient(180deg,#3ec8ff 0%,#0f8fe0 55%,#0b74c4 100%);
+border:4px solid #fff;
+text-shadow:0 3px 0 rgba(6,60,100,.55);
+box-shadow:0 5px 0 rgba(7,60,100,.35),inset 0 3px 0 rgba(255,255,255,.35)}
+
+.ausrX{width:46px;height:46px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+font-size:24px;font-weight:900;color:#fff;cursor:pointer;
+background:linear-gradient(180deg,#ff7b3d 0%,#f5401f 60%,#d62b12 100%);
+border:3px solid #fff;border-radius:14px;
+box-shadow:0 4px 0 rgba(120,25,10,.4),inset 0 2px 0 rgba(255,255,255,.3)}
+.ausrX:active{transform:translateY(2px);box-shadow:0 2px 0 rgba(120,25,10,.4)}
+
+.ausrBox{width:100%;max-width:430px;max-height:82vh;overflow-y:auto;background:#f6eeda;
+border:5px solid #fff;border-radius:24px;box-shadow:0 12px 34px rgba(0,0,0,.6);
+overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.ausrBox::-webkit-scrollbar{width:6px}
+.ausrBox::-webkit-scrollbar-thumb{background:#c9b892;border-radius:8px}
+
+.ausrShopInhalt{padding:18px 16px 16px}
+.ausrWaehrung{display:flex;justify-content:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.ausrPille{display:flex;align-items:center;gap:6px;background:#e6dbc0;border:2px solid #d8b98a;
+border-radius:30px;padding:5px 14px;color:#5a4d33;font-size:15px;font-weight:bold}
+
+.ausrKisten{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ausrKarte{border-radius:18px;padding:14px 10px;text-align:center;display:flex;flex-direction:column;
+align-items:center;gap:9px;border:3px solid rgba(255,255,255,.5)}
+.ausrKarte.normal{background:linear-gradient(180deg,#38d0f0,#1585c4)}
+.ausrKarte.premium{background:linear-gradient(180deg,#b23ce0,#e03c9c)}
+.ausrKarte.tiere{background:linear-gradient(180deg,#5ad38f,#1f8f56);grid-column:1/-1}
+.tiere .ausrKTitel{color:#d8ffe8}
+.ausrKTitel{font-size:19px;font-weight:bold;line-height:1.1;
+text-shadow:-2px -2px 0 #23232b,2px -2px 0 #23232b,-2px 2px 0 #23232b,2px 2px 0 #23232b}
+.normal .ausrKTitel{color:#a6f4ff}
+.premium .ausrKTitel{color:#ffe066}
+.ausrKText{font-size:11px;font-weight:bold;color:#fff;line-height:1.55;text-shadow:0 2px 3px rgba(0,0,0,.55)}
+.ausrKBild{filter:drop-shadow(0 5px 9px rgba(0,0,0,.5));display:flex;align-items:center;justify-content:center;height:82px}
+.ausrKaufBtn{width:100%;border-radius:12px;padding:9px 5px;font-size:14px;font-weight:bold;color:#fff;
+text-shadow:0 2px 3px rgba(0,0,0,.45);cursor:pointer;display:flex;align-items:center;
+justify-content:center;gap:6px;border:3px solid rgba(0,0,0,.25)}
+.ausrKaufBtn.gold{background:linear-gradient(180deg,#ffd24a,#e0940d)}
+.ausrKaufBtn.gruen{background:linear-gradient(180deg,#7ad35c,#43a028)}
+.ausrKaufBtn.cyan{background:linear-gradient(180deg,#4ad8e8,#1a90b8)}
+.ausrKaufBtn:active{transform:scale(.96)}
+.ausrKaufBtn.aus{background:linear-gradient(180deg,#b4b4b4,#828282);opacity:.75}
+
+.ausrCharBereich{background:linear-gradient(180deg,#8adcf8,#2f8fd0);padding:16px 14px 12px}
+.ausrCharRaster{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:10px;align-items:center}
+.ausrSpalte{display:flex;flex-direction:column;gap:10px}
+.ausrSlot{aspect-ratio:1;background:linear-gradient(180deg,#4e94c4,#255b86);border-radius:13px;
+display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;
+box-shadow:inset 0 3px 7px rgba(0,0,0,.35)}
+.ausrSlot.leer{opacity:.45}
+.ausrSlot.belegt{box-shadow:inset 0 2px 5px rgba(0,0,0,.2),0 0 0 3px #ffd94a}
+.ausrSlotStufe{position:absolute;bottom:3px;right:4px;background:rgba(0,0,0,.7);color:#fff;
+font-size:10px;font-weight:bold;padding:1px 5px;border-radius:5px}
+.ausrCharMitte{display:flex;align-items:center;justify-content:center;
+filter:drop-shadow(0 6px 9px rgba(0,0,0,.45))}
+
+/* Mittelspalte: Spieler oben, Haustier-Feld darunter */
+
+.ausrMitteSpalte{display:flex;flex-direction:column;align-items:center;gap:10px}
+.ausrPetSlot{width:100%;max-width:96px;aspect-ratio:1;font-size:34px;line-height:1}
+.ausrPetSlot.belegt{box-shadow:inset 0 2px 5px rgba(0,0,0,.2),0 0 0 3px #ffd94a}
+
+/* Haustier-Fenster */
+
+.ausrPetInhalt{padding:14px}
+.ausrPetRaster{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
+background:#e6dbc0;border:3px solid #d8b98a;border-radius:18px;padding:12px}
+.ausrPetFeld{aspect-ratio:1;background:#d9c6a3;border-radius:13px;position:relative;
+display:flex;align-items:center;justify-content:center;font-size:32px;cursor:pointer;
+box-shadow:inset 0 3px 6px rgba(120,90,50,.28)}
+.ausrPetFeld:active{transform:scale(.96)}
+.ausrPetFeld.gewaehlt{box-shadow:inset 0 2px 5px rgba(0,0,0,.15),0 0 0 3px #ffd94a}
+.ausrPetFeld.gesperrt{cursor:default;opacity:.85;flex-direction:column;gap:2px}
+.ausrPetFeld.gesperrt .stufe{font-size:12px;font-weight:bold;color:#6b5433;
+text-shadow:0 1px 0 rgba(255,255,255,.6)}
+.ausrPetLeer{opacity:.45}
+
+/* Sammlung der eigenen Haustiere */
+
+.ausrPetSammlung{padding:11px;display:grid;grid-template-columns:repeat(5,1fr);
+gap:9px;min-height:130px}
+.ausrPetKarte{aspect-ratio:1;border:3px solid #fff;border-radius:12px;position:relative;
+display:flex;align-items:center;justify-content:center;font-size:26px;cursor:pointer;
+box-shadow:0 3px 7px rgba(0,0,0,.3)}
+.ausrPetKarte:active{transform:scale(.96)}
+.petHelfer{position:absolute;width:22px;height:22px;z-index:5;pointer-events:none;
+filter:drop-shadow(0 3px 4px rgba(0,0,0,.3));animation:petWippen 2.4s ease-in-out infinite}
+.petHelfer img{width:100%;height:100%;object-fit:contain;display:block}
+@keyframes petWippen{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+.ausrPetKarte.angelegtesPet{box-shadow:0 0 0 3px #ffd94a,0 3px 7px rgba(0,0,0,.3)}
+.ausrPetLeerBlock{grid-column:1/-1;text-align:center;padding:26px 10px 22px}
+.ausrPetLeerText{color:#8a7a5d;font-size:14px;font-weight:bold;line-height:1.5;
+margin-bottom:14px}
+.ausrZuTruhenBtn{display:inline-flex;align-items:center;gap:8px;
+background:linear-gradient(180deg,#ffd24a,#e0940d);border:3px solid #fff;border-radius:14px;
+padding:11px 20px;font-size:15px;font-weight:bold;color:#fff;
+text-shadow:0 2px 3px rgba(0,0,0,.4);box-shadow:0 4px 0 rgba(140,90,10,.45);cursor:pointer}
+.ausrZuTruhenBtn:active{transform:translateY(2px);box-shadow:0 2px 0 rgba(140,90,10,.45)}
+
+.ausrBuffListe{margin-top:12px;background:rgba(0,0,0,.28);border:2px solid rgba(255,255,255,.5);
+border-radius:12px;padding:9px 11px;display:grid;grid-template-columns:1fr 1fr;gap:3px 10px}
+.ausrBuffZeile{color:#fff;font-size:11px;font-weight:bold;text-shadow:0 1px 2px rgba(0,0,0,.55);
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ausrBuffZeile.aus{opacity:.38;font-weight:normal}
+
+.ausrLeiste{background:#2f4a75;border-top:3px solid #fff;border-bottom:3px solid #fff;
+display:flex;align-items:center;gap:8px;padding:9px}
+.ausrLeisteBtn{background:linear-gradient(180deg,#ffd24a,#e0940d);border:3px solid #fff;border-radius:12px;
+padding:8px 12px;font-size:14px;font-weight:bold;color:#fff;text-shadow:0 2px 2px rgba(0,0,0,.35);cursor:pointer}
+.ausrLeisteBtn:active{transform:scale(.95)}
+.ausrLeisteTitel{flex:1;text-align:center;font-size:20px;font-weight:bold;color:#fff;
+text-shadow:0 2px 3px rgba(0,0,0,.4)}
+
+.ausrInventar{padding:11px;display:grid;grid-template-columns:repeat(5,1fr);gap:9px;min-height:150px}
+.ausrInvItem{aspect-ratio:1;border:3px solid #fff;border-radius:12px;position:relative;
+display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 3px 7px rgba(0,0,0,.3)}
+.ausrInvItem.angelegt{box-shadow:0 0 0 3px #ffd94a,0 3px 7px rgba(0,0,0,.3)}
+.ausrStufeBadge{position:absolute;top:-6px;right:-3px;background:#fff;color:#3a3a3a;font-size:11px;
+font-weight:bold;padding:1px 5px;border-radius:6px;box-shadow:0 2px 3px rgba(0,0,0,.3)}
+.ausrLeerHinweis{grid-column:1/-1;text-align:center;padding:34px 10px;color:#8a7a5d;font-size:14px;font-weight:bold}
+
+.ausrDetailInhalt{padding:16px}
+.ausrDOben{display:grid;grid-template-columns:112px 1fr;gap:12px;margin-bottom:12px}
+.ausrDRahmen{width:112px;height:112px;border:4px solid #3a3a3a;border-radius:15px;display:flex;
+align-items:center;justify-content:center;box-shadow:inset 0 -7px 13px rgba(0,0,0,.28)}
+.ausrDRechts{display:flex;flex-direction:column;gap:8px}
+.ausrBuffPille{display:flex;align-items:center;background:#e6dbc0;border-radius:22px;overflow:hidden;font-weight:bold}
+.ausrBuffPille b{background:#5c6470;color:#fff;padding:7px 12px;font-size:14px;border-radius:22px;
+text-shadow:0 2px 2px rgba(0,0,0,.4)}
+.ausrBuffPille i{padding:7px 14px;font-size:17px;color:#4a4030;font-style:normal}
+.ausrDText{flex:1;background:#e6dbc0;border-radius:12px;padding:10px 12px;font-size:15px;font-weight:bold;color:#5a4d33}
+.ausrLevelPille{display:inline-flex;align-items:center;background:#e6dbc0;border-radius:12px;overflow:hidden;margin-bottom:12px}
+.ausrLevelPille i{width:10px;align-self:stretch;background:#2f8fd0}
+.ausrLevelPille b{padding:8px 16px;font-size:16px;color:#4a4030}
+.ausrEffektBox{background:#e6dbc0;border-radius:14px;padding:12px;margin-bottom:12px}
+.ausrEffektBox h3{font-size:17px;color:#5a4d33;margin-bottom:8px}
+.ausrEffektZeile{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:bold;color:#a2977f;padding:3px 0}
+.ausrEffektZeile.frei{color:#4a4030}
+.ausrPunkt{width:22px;height:22px;border-radius:50%;border:3px solid #3a3a3a;flex-shrink:0}
+.ausrKostenZeile{background:#e6dbc0;border-radius:12px;padding:10px;text-align:center;font-size:16px;
+font-weight:bold;color:#4a4030;margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:6px}
+.ausrDKnoepfe{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.ausrDBtn{border:3px solid #fff;border-radius:12px;padding:12px 4px;font-size:15px;font-weight:bold;
+color:#fff;text-shadow:0 2px 3px rgba(0,0,0,.4);cursor:pointer;text-align:center}
+.ausrDBtn:active{transform:scale(.96)}
+.ausrDBtn.b1{background:linear-gradient(180deg,#4aa8e8,#2b7cc0)}
+.ausrDBtn.b2{background:linear-gradient(180deg,#7ad35c,#43a028)}
+.ausrDBtn.b3{background:linear-gradient(180deg,#ffd24a,#e0940d)}
+.ausrDBtn.aus{background:linear-gradient(180deg,#b4b4b4,#828282);opacity:.75}
+
+.ausrBelohnung{position:fixed;width:80px;height:80px;border-radius:16px;border:4px solid #fff;
+display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:900;
+box-shadow:0 6px 16px rgba(0,0,0,.55)}
+@keyframes ausrFliegen{
+0%{opacity:0;transform:translate(-50%,-50%) scale(.3)}
+20%{opacity:1;transform:translate(-50%,-165%) scale(1.15)}
+80%{opacity:1;transform:translate(-50%,-165%) scale(1.15)}
+100%{opacity:0;transform:translate(-50%,-205%) scale(.6)}}
+.ausrBelohnung.aktiv{animation:ausrFliegen 1.5s ease-out forwards}
+
+`;
+
+// ============================================================
+// HTML
+// ============================================================
+
+const HTML=`
+
+<div id="ausrShopIcon"></div>
+
+<div class="ausrOverlay" id="ausrShop">
+<div class="ausrKopf">
+<div class="ausrKopfTitel">Truhen</div>
+<div class="ausrX" data-zu="ausrShop">✖</div>
+</div>
+<div class="ausrBox"><div class="ausrShopInhalt">
+
+<div class="ausrWaehrung" id="ausrWaehrung"></div>
+
+<div class="ausrKisten">
+
+<div class="ausrKarte normal">
+<div class="ausrKTitel">Artikelkasten</div>
+<div class="ausrKText">
+Enthält ein <span style="color:#e0e0e0">Graues</span>
+oder <span style="color:#a6f77f">Grünes</span> Teil
+</div>
+<div class="ausrKBild" id="ausrBildTruhe1"></div>
+<div class="ausrKaufBtn gold" id="ausrBtnMuenzen"></div>
+<div class="ausrKaufBtn gruen" id="ausrBtnSchluessel"></div>
+</div>
+
+<div class="ausrKarte premium">
+<div class="ausrKTitel">Premium Box</div>
+<div class="ausrKText">
+<span style="color:#a6f77f">Grünes</span>,
+<span style="color:#8fdcff">Blaues</span> oder
+<span style="color:#e0a6ff">Lila</span> Teil<br>
+<span style="color:#e0a6ff">Lila</span> in
+<span style="color:#ffe066"><span id="ausrPityRest">10</span></span> Öffnungen
+</div>
+<div class="ausrKBild" id="ausrBildTruhe2"></div>
+<div class="ausrKaufBtn cyan" id="ausrBtnPremium"></div>
+</div>
+
+<div class="ausrKarte tiere">
+<div class="ausrKTitel">Haustier-Truhe</div>
+<div class="ausrKText">
+Enth&auml;lt einen Slime in
+<span style="color:#d8d8d8">Grau</span>,
+<span style="color:#a6f77f">Gr&uuml;n</span>,
+<span style="color:#8fdcff">Blau</span> oder
+<span style="color:#ffe066">Gold</span>
+</div>
+<div class="ausrKBild" id="ausrBildTruhe3"></div>
+<div class="ausrKaufBtn cyan" id="ausrBtnPet"></div>
+</div>
+
+</div>
+
+</div></div>
+</div>
+
+
+<div class="ausrOverlay" id="ausrHub">
+<div class="ausrKopf">
+<div class="ausrKopfTitel blau">Ausrüstung</div>
+<div class="ausrX" data-zu="ausrHub">✖</div>
+</div>
+<div class="ausrBox">
+
+<div class="ausrCharBereich">
+<div class="ausrCharRaster">
+<div class="ausrSpalte">
+<div class="ausrSlot" data-slot="waffe"></div>
+<div class="ausrSlot" data-slot="ruecken"></div>
+<div class="ausrSlot" data-slot="brust"></div>
+</div>
+<div class="ausrMitteSpalte">
+<div class="ausrCharMitte" id="ausrSpielerBild"></div>
+<div class="ausrSlot ausrPetSlot" id="ausrPetSlot"></div>
+</div>
+<div class="ausrSpalte">
+<div class="ausrSlot" data-slot="kopf"></div>
+<div class="ausrSlot" data-slot="fuesse"></div>
+<div class="ausrSlot" data-slot="ring"></div>
+</div>
+</div>
+<div class="ausrBuffListe" id="ausrBuffListe"></div>
+</div>
+
+<div class="ausrLeiste">
+<div class="ausrLeisteBtn" id="ausrSortBtn">Nach Level</div>
+<div class="ausrLeisteTitel">Sammlung</div>
+<div class="ausrLeisteBtn" id="ausrKombiBtn">Kombinieren</div>
+</div>
+
+<div class="ausrInventar" id="ausrInventar"></div>
+
+</div>
+</div>
+
+
+<div class="ausrOverlay" id="ausrPets" style="z-index:400">
+<div class="ausrKopf">
+<div class="ausrKopfTitel blau">Haustiere</div>
+<div class="ausrX" data-zu="ausrPets">&#10005;</div>
+</div>
+<div class="ausrBox">
+<div class="ausrPetInhalt">
+<div class="ausrPetRaster" id="ausrPetRaster"></div>
+</div>
+<div class="ausrLeiste">
+<div class="ausrLeisteTitel">Meine Haustiere</div>
+</div>
+<div class="ausrPetSammlung" id="ausrPetSammlung"></div>
+</div>
+</div>
+
+
+<div class="ausrOverlay" id="ausrPetDetail" style="z-index:500">
+<div class="ausrKopf">
+<div class="ausrKopfTitel blau" id="ausrPDTitel">Slime</div>
+<div class="ausrX" data-zu="ausrPetDetail">&#10005;</div>
+</div>
+<div class="ausrBox"><div class="ausrDetailInhalt">
+
+<div class="ausrDOben">
+<div class="ausrDRahmen" id="ausrPDRahmen"></div>
+<div class="ausrDRechts">
+<div class="ausrBuffPille"><b>Umkreis</b><i id="ausrPDRadius">0</i></div>
+<div class="ausrDText" id="ausrPDText">Erntet und sammelt vom Lager aus.</div>
+</div>
+</div>
+
+<div class="ausrLevelPille"><i></i><b id="ausrPDLevel">Level: 1/10</b></div>
+
+<div class="ausrEffektBox">
+<h3>Was er kann</h3>
+<div id="ausrPDWerte"></div>
+</div>
+
+<div class="ausrKostenZeile" id="ausrPDKosten"></div>
+
+<div class="ausrDKnoepfe">
+<div class="ausrDBtn b1" id="ausrPDAnlegen">Ausr&uuml;sten</div>
+<div class="ausrDBtn b2" id="ausrPDUpgrade">Upgrade</div>
+<div class="ausrDBtn b3" id="ausrPDMax">Max. Level</div>
+</div>
+
+</div></div>
+</div>
+
+
+<div class="ausrOverlay" id="ausrDetail" style="z-index:500">
+<div class="ausrKopf">
+<div class="ausrKopfTitel blau" id="ausrDTitel">Item</div>
+<div class="ausrX" data-zu="ausrDetail">✖</div>
+</div>
+<div class="ausrBox"><div class="ausrDetailInhalt">
+
+<div class="ausrDOben">
+<div class="ausrDRahmen" id="ausrDRahmen"></div>
+<div class="ausrDRechts">
+<div class="ausrBuffPille"><b id="ausrDBuffName">Buff</b><i id="ausrDBuffWert">+0</i></div>
+<div class="ausrDText" id="ausrDText">Beschreibung</div>
+</div>
+</div>
+
+<div class="ausrLevelPille"><i></i><b id="ausrDLevel">Level: 1/10</b></div>
+
+<div class="ausrEffektBox">
+<h3>Seltenheitseffekte</h3>
+<div id="ausrDEffekte"></div>
+</div>
+
+<div class="ausrKostenZeile" id="ausrDKosten"></div>
+
+<div class="ausrDKnoepfe">
+<div class="ausrDBtn b1" id="ausrBtnAusruesten">Ausrüsten</div>
+<div class="ausrDBtn b2" id="ausrBtnUpgrade">Upgrade</div>
+<div class="ausrDBtn b3" id="ausrBtnMax">Max. Level</div>
+</div>
+
+</div></div>
+</div>
+
+`;
+
+// ============================================================
+// AUFBAU
+// ============================================================
+
+const $=id=>document.getElementById(id);
+
+function baueOberflaeche(){
+
+    let stil=document.createElement("style");
+
+    stil.textContent=CSS;
+
+    document.head.appendChild(stil);
+
+    let huelle=document.createElement("div");
+
+    huelle.innerHTML=HTML;
+
+    while(huelle.firstElementChild){
+
+        document.body.appendChild(huelle.firstElementChild);
+
+    }
+
+}
+
+// ============================================================
+// OVERLAYS
+// ============================================================
+
+function zeigeOverlay(id){
+
+    if(offenesOverlay && offenesOverlay!==id){
+
+        $(offenesOverlay).classList.remove("offen");
+
+    }
+
+    offenesOverlay=id;
+
+    $(id).classList.add("offen");
+
+}
+
+function schliesse(id){
+
+    $(id).classList.remove("offen");
+
+    if(offenesOverlay===id)offenesOverlay=null;
+
+    speichern();
+
+}
+
+// ============================================================
+// SHOP
+// ============================================================
+
+function zeichneShop(){
+
+    $("ausrWaehrung").innerHTML=
+
+    '<div class="ausrPille">'+bild(BILD.muenze,22)+'<span>'+
+    holeMuenzen().toLocaleString("de-DE")+'</span></div>'+
+
+    '<div class="ausrPille">'+bild(BILD.juwel,22)+'<span>'+
+    holeJuwelen().toLocaleString("de-DE")+'</span></div>'+
+
+    '<div class="ausrPille">'+bild(BILD.schluessel,22)+'<span>'+
+    schluessel+'</span></div>';
+
+    $("ausrBildTruhe1").innerHTML=bild(BILD.truheNormal,82);
+
+    $("ausrBildTruhe2").innerHTML=bild(BILD.truhePremium,82);
+
+    $("ausrPityRest").textContent=PITY_ZIEL-pity;
+
+    $("ausrBtnMuenzen").innerHTML=bild(BILD.muenze,22)+"<span>"+PREIS_MUENZEN+"</span>";
+
+    $("ausrBtnSchluessel").innerHTML=bild(BILD.schluessel,22)+"<span>1</span>";
+
+    $("ausrBtnPremium").innerHTML=bild(BILD.juwel,22)+"<span>"+PREIS_JUWELEN+"</span>";
+
+    schalte("ausrBtnMuenzen","gold",holeMuenzen()>=PREIS_MUENZEN);
+
+    schalte("ausrBtnSchluessel","gruen",schluessel>=1);
+
+    schalte("ausrBtnPremium","cyan",holeJuwelen()>=PREIS_JUWELEN);
+
+    $("ausrBildTruhe3").innerHTML=bild(BILD.truhePet,82);
+
+    $("ausrBtnPet").innerHTML=
+    bild(BILD.juwel,22)+"<span>"+PREIS_PET_JUWELEN+"</span>";
+
+    schalte("ausrBtnPet","cyan",holeJuwelen()>=PREIS_PET_JUWELEN);
+
+}
+
+function schalte(id,farbe,anAn){
+
+    $(id).className="ausrKaufBtn "+farbe+(anAn?"":" aus");
+
+}
+
+function oeffneTruhe(seltenheit,element){
+
+    const item=baueItem(
+
+        zufallsSlot(),
+        seltenheit,
+        1+Math.floor(Math.random()*10)
+
+    );
+
+    inventar.push(item);
+
+    if(typeof questFortschritt==="function"){
+
+        questFortschritt("truhen",1);
+
+    }
+
+    flugAnimation(item,element);
+
+    zeichneShop();
+
+    speichern();
+
+}
+
+function oeffnePetTruhe(element){
+
+    const seltenheit=ziehe(PET_RANG);
+
+    const art=PET_ARTEN[seltenheit];
+
+    const pet={
+
+        id:idZaehler++,
+        seltenheit:seltenheit,
+        name:art.name,
+        datei:art.datei,
+        stufe:1
+
+    };
+
+    meinePets.push(pet);
+
+    if(typeof questFortschritt==="function"){
+
+        questFortschritt("truhen",1);
+
+    }
+
+    petFlugAnimation(pet,element);
+
+    zeichnePetSammlung();
+
+    // Wie beim Ausruestungs-Kauf: Anzeige im Shop auffrischen,
+    // sonst stehen dort noch die alten Juwelen
+
+    zeichneShop();
+
+    speichern();
+
+}
+
+function petFlugAnimation(pet,element){
+
+    const el=document.createElement("div");
+
+    el.className="ausrBelohnung";
+
+    el.style.background=SELTENHEIT[pet.seltenheit].farbe;
+
+    el.innerHTML=slimeBild(pet.datei,52);
+
+    const box=element.getBoundingClientRect();
+
+    el.style.left=(box.left+box.width/2)+"px";
+
+    el.style.top=(box.top+box.height/2)+"px";
+
+    document.body.appendChild(el);
+
+    requestAnimationFrame(()=>el.classList.add("aktiv"));
+
+    setTimeout(()=>el.remove(),1600);
+
+}
+
+function flugAnimation(item,element){
+
+    const el=document.createElement("div");
+
+    el.className="ausrBelohnung";
+
+    el.style.background=SELTENHEIT[item.seltenheit].farbe;
+
+    el.innerHTML=teilBild(item.slot,52);
+
+    const box=element.getBoundingClientRect();
+
+    el.style.left=(box.left+box.width/2)+"px";
+
+    el.style.top=(box.top+box.height/2)+"px";
+
+    document.body.appendChild(el);
+
+    requestAnimationFrame(()=>el.classList.add("aktiv"));
+
+    setTimeout(()=>el.remove(),1600);
+
+}
+
+// ============================================================
+// HUB
+// ============================================================
+
+function zeichneHub(){
+
+    zeichneSlots();
+
+    zeichnePetSlot();
+
+    zeichneBuffs();
+
+    zeichneInventar();
+
+    $("ausrSpielerBild").innerHTML=bild(BILD.spieler,110);
+
+}
+
+function zeichneSlots(){
+
+    // Nur die sechs echten Teile-Slots. Der Pfoten-Slot traegt
+    // dieselbe Klasse fuers Aussehen, hat aber kein data-slot.
+
+    document.querySelectorAll(".ausrSlot[data-slot]").forEach(el=>{
+
+        const slot=el.dataset.slot;
+
+        const item=angelegt[slot];
+
+        if(item){
+
+            el.className="ausrSlot belegt";
+
+            el.style.background=SELTENHEIT[item.seltenheit].farbe;
+
+            el.innerHTML=teilBild(slot,34)+
+            '<span class="ausrSlotStufe">'+item.stufe+'</span>';
+
+            el.onclick=()=>zeigeDetail(item);
+
+        }else{
+
+            el.className="ausrSlot leer";
+
+            el.style.background="";
+
+            el.innerHTML=teilBild(slot,34);
+
+            el.onclick=null;
+
+        }
+
+    });
+
+}
+
+function zeichneBuffs(){
+
+    const summe=buffSummen();
+
+    $("ausrBuffListe").innerHTML=Object.keys(BUFFS).map(k=>
+
+        '<div class="ausrBuffZeile'+(summe[k]>0?"":" aus")+'">'+
+        buffText(k,summe[k])+'</div>'
+
+    ).join("");
+
+}
+
+function zeichneInventar(){
+
+    const box=$("ausrInventar");
+
+    if(!inventar.length){
+
+        box.innerHTML='<div class="ausrLeerHinweis">Noch nichts da –<br>hol dir was aus den Truhen!</div>';
+
+        return;
+
+    }
+
+    const liste=inventar.slice().sort((a,b)=>
+
+        sortLevel
+        ? b.stufe-a.stufe
+        : RANG.indexOf(b.seltenheit)-RANG.indexOf(a.seltenheit)
+
+    );
+
+    box.innerHTML="";
+
+    liste.forEach(item=>{
+
+        const el=document.createElement("div");
+
+        el.className="ausrInvItem"+(istAngelegt(item)?" angelegt":"");
+
+        el.style.background=SELTENHEIT[item.seltenheit].farbe;
+
+        el.innerHTML='<span class="ausrStufeBadge">Lv.'+item.stufe+'</span>'+
+        teilBild(item.slot,30);
+
+        el.onclick=()=>zeigeDetail(item);
+
+        box.appendChild(el);
+
+    });
+
+}
+
+// ============================================================
+// HAUSTIERE
+// ============================================================
+
+function petFeldFrei(nummer){
+
+    // Die ersten Felder sind offen, die letzten haengen am Level
+
+    if(nummer<PET_FELDER)return true;
+
+    return holeLevel()>=PET_FREI_AB_LEVEL;
+
+}
+
+function zeichnePets(){
+
+    const raster=$("ausrPetRaster");
+
+    if(!raster)return;
+
+    let html="";
+
+    for(let i=0;i<PET_FELDER+PET_GESPERRT;i++){
+
+        if(petFeldFrei(i)){
+
+            let gewaehlt=gewaehltesPetFeld===i?" gewaehlt":"";
+
+            html+='<div class="ausrPetFeld ausrPetLeer'+gewaehlt+'" data-pet="'+i+'">'+
+                  bild(BILD.pfote,32)+'</div>';
+
+        }else{
+
+            html+='<div class="ausrPetFeld gesperrt">'+
+                  bild(BILD.schloss,26)+
+                  '<span class="stufe">Level '+PET_FREI_AB_LEVEL+'</span></div>';
+
+        }
+
+    }
+
+    raster.innerHTML=html;
+
+    raster.querySelectorAll("[data-pet]").forEach(feld=>{
+
+        feld.onclick=()=>{
+
+            let nummer=Number(feld.dataset.pet);
+
+            gewaehltesPetFeld=gewaehltesPetFeld===nummer?null:nummer;
+
+            zeichnePets();
+
+            zeichnePetSlot();
+
+        };
+
+    });
+
+}
+
+function zeichnePetSammlung(){
+
+    const box=$("ausrPetSammlung");
+
+    if(!box)return;
+
+    if(meinePets.length===0){
+
+        box.innerHTML=
+
+        '<div class="ausrPetLeerBlock">'+
+        '<div class="ausrPetLeerText">Noch nichts da</div>'+
+        '<div class="ausrZuTruhenBtn" id="ausrZuTruhen">'+
+        bild(BILD.truhe,22)+'<span>Zu Truhen wechseln</span></div>'+
+        '</div>';
+
+        let knopf=$("ausrZuTruhen");
+
+        if(knopf){
+
+            knopf.onclick=()=>{ zeichneShop(); zeigeOverlay("ausrShop"); };
+
+        }
+
+        return;
+
+    }
+
+    box.innerHTML=meinePets.map((pet,i)=>
+
+        '<div class="ausrPetKarte'+(angelegtesPetId===pet.id?" angelegtesPet":"")+
+        '" data-meinpet="'+i+'" '+
+        'style="background:'+SELTENHEIT[pet.seltenheit].farbe+'">'+
+        slimeBild(pet.datei,34)+'</div>'
+
+    ).join("");
+
+    box.querySelectorAll("[data-meinpet]").forEach(karte=>{
+
+        karte.onclick=()=>{
+
+            zeigePetDetail(meinePets[Number(karte.dataset.meinpet)]);
+
+        };
+
+    });
+
+}
+
+let gewaehltesPet=null;
+
+function zeigePetDetail(pet){
+
+    gewaehltesPet=pet;
+
+    zeichnePetDetail();
+
+    zeigeOverlay("ausrPetDetail");
+
+}
+
+function zeichnePetDetail(){
+
+    const pet=gewaehltesPet;
+
+    if(!pet)return;
+
+    const angelegt=angelegtesPetId===pet.id;
+
+    $("ausrPDTitel").textContent=pet.name;
+
+    $("ausrPDRahmen").style.background=SELTENHEIT[pet.seltenheit].farbe;
+
+    $("ausrPDRahmen").innerHTML=slimeBild(pet.datei,70);
+
+    $("ausrPDRadius").textContent=String(petRadiusFelder(pet)).replace(".",",")+" Felder";
+
+    $("ausrPDLevel").textContent="Level: "+pet.stufe+"/"+PET_MAX_STUFE;
+
+    let sekunden=(petIntervall(pet)/1000).toFixed(1).replace(".",",");
+
+    let bonus=Math.round(petErtragBonus(pet)*100);
+
+    $("ausrPDWerte").innerHTML=
+
+    '<div class="ausrEffektZeile frei">'+
+    '<span class="ausrPunkt" style="background:'+SELTENHEIT[pet.seltenheit].punkt+'"></span>'+
+    'Stufe '+SELTENHEIT[pet.seltenheit].name+'</div>'+
+
+    '<div class="ausrEffektZeile frei">'+
+    '<span class="ausrPunkt" style="background:#5cd23c"></span>'+
+    'Erntet im Umkreis von '+String(petRadiusFelder(pet)).replace(".",",")+' Feldern</div>'+
+
+    '<div class="ausrEffektZeile frei">'+
+    '<span class="ausrPunkt" style="background:#3a9fdd"></span>'+
+    'Alle '+sekunden+' Sekunden eine Pflanze</div>'+
+
+    '<div class="ausrEffektZeile'+(bonus>0?" frei":"")+'">'+
+    '<span class="ausrPunkt" style="background:#f0b41c"></span>'+
+    'Bonus-Ertrag +'+bonus+'%</div>';
+
+    const kosten=petUpgradeKosten(pet);
+
+    const max=pet.stufe>=PET_MAX_STUFE;
+
+    $("ausrPDKosten").innerHTML = max
+    ? "Maximale Stufe erreicht"
+    : bild(BILD.muenze,22)+holeMuenzen().toLocaleString("de-DE")+
+      " / "+kosten.toLocaleString("de-DE");
+
+    $("ausrPDAnlegen").textContent=angelegt?"Ablegen":"Ausruesten";
+
+    $("ausrPDUpgrade").className="ausrDBtn b2"+((max||holeMuenzen()<kosten)?" aus":"");
+
+    $("ausrPDMax").className="ausrDBtn b3"+(max?" aus":"");
+
+}
+
+function zeichnePetSlot(){
+
+    const slot=$("ausrPetSlot");
+
+    if(!slot)return;
+
+    const pet=angelegtesPet();
+
+    if(pet){
+
+        slot.className="ausrSlot ausrPetSlot belegt";
+
+        slot.style.background=SELTENHEIT[pet.seltenheit].farbe;
+
+        slot.innerHTML=slimeBild(pet.datei,38)+
+        '<span class="ausrSlotStufe">'+pet.stufe+'</span>';
+
+    }else{
+
+        slot.className="ausrSlot ausrPetSlot leer";
+
+        slot.style.background="";
+
+        slot.innerHTML=bild(BILD.pfote,34);
+
+    }
+
+}
+
+// ============================================================
+// DETAIL
+// ============================================================
+
+function zeigeDetail(item){
+
+    gewaehltesItem=item;
+
+    zeichneDetail();
+
+    zeigeOverlay("ausrDetail");
+
+}
+
+function zeichneDetail(){
+
+    const item=gewaehltesItem;
+
+    if(!item)return;
+
+    const t=TEILE[item.slot];
+
+    const b=BUFFS[item.buff];
+
+    $("ausrDTitel").textContent=t.name;
+
+    $("ausrDRahmen").style.background=SELTENHEIT[item.seltenheit].farbe;
+
+    $("ausrDRahmen").innerHTML=teilBild(item.slot,70);
+
+    $("ausrDText").textContent=t.text;
+
+    $("ausrDBuffName").textContent=b.name;
+
+    $("ausrDBuffWert").textContent="+"+item.staerke.toFixed(b.komma)+b.einheit;
+
+    $("ausrDLevel").textContent="Level: "+item.stufe+"/"+MAX_STUFE;
+
+    const eigen=RANG.indexOf(item.seltenheit);
+
+    $("ausrDEffekte").innerHTML=["gruen","blau","lila","gold"].map(s=>
+
+        '<div class="ausrEffektZeile'+(RANG.indexOf(s)<=eigen?" frei":"")+'">'+
+        '<span class="ausrPunkt" style="background:'+SELTENHEIT[s].punkt+'"></span>'+
+        t.effekte[s]+'</div>'
+
+    ).join("");
+
+    const kosten=upgradeKosten(item);
+
+    const max=item.stufe>=MAX_STUFE;
+
+    $("ausrDKosten").innerHTML = max
+    ? "Maximale Stufe erreicht"
+    : bild(BILD.muenze,22)+holeMuenzen().toLocaleString("de-DE")+
+      " / "+kosten.toLocaleString("de-DE");
+
+    $("ausrBtnAusruesten").textContent=istAngelegt(item)?"Ablegen":"Ausrüsten";
+
+    $("ausrBtnUpgrade").className="ausrDBtn b2"+((max||holeMuenzen()<kosten)?" aus":"");
+
+    $("ausrBtnMax").className="ausrDBtn b3"+(max?" aus":"");
+
+}
+
+// ============================================================
+// KOMBINIEREN
+// ============================================================
+
+function kombiniere(){
+
+    const gruppen={};
+
+    inventar.forEach(i=>{
+
+        if(i.seltenheit==="gold")return;
+
+        const k=i.slot+"_"+i.seltenheit;
+
+        if(!gruppen[k])gruppen[k]=[];
+
+        gruppen[k].push(i);
+
+    });
+
+    let gemacht=false;
+
+    for(const k in gruppen){
+
+        const liste=gruppen[k];
+
+        while(liste.length>=3){
+
+            const drei=liste.splice(0,3);
+
+            drei.forEach(i=>{
+
+                if(istAngelegt(i))angelegt[i.slot]=null;
+
+                inventar=inventar.filter(x=>x.id!==i.id);
+
+            });
+
+            const v=drei[0];
+
+            inventar.push(
+                baueItem(v.slot,RANG[RANG.indexOf(v.seltenheit)+1],v.stufe)
+            );
+
+            gemacht=true;
+
+        }
+
+    }
+
+    if(!gemacht){
+
+        alert("Du brauchst 3 gleiche Teile derselben Farbe.");
+
+    }
+
+    zeichneHub();
+
+    speichern();
+
+}
+
+// ============================================================
+// LEVEL-UP-BELOHNUNG
+//
+// spiel.js wird nicht angefasst - stattdessen wird das Level
+// einmal pro Sekunde beobachtet.
+// ============================================================
+
+let letztesLevel=holeLevel();
+
+setInterval(()=>{
+
+    let jetzt=holeLevel();
+
+    if(jetzt>letztesLevel){
+
+        let stufen=jetzt-letztesLevel;
+
+        schluessel+=1*stufen;
+
+        schenkeJuwelen(25*stufen);
+
+        letztesLevel=jetzt;
+
+        speichern();
+
+        if(offenesOverlay==="ausrShop")zeichneShop();
+
+    }else if(jetzt<letztesLevel){
+
+        letztesLevel=jetzt;
+
+    }
+
+},1000);
+
+// ============================================================
+// KNOEPFE
+// ============================================================
+
+function verdrahte(){
+
+    document.querySelectorAll(".ausrX").forEach(b=>{
+
+        b.onclick=()=>schliesse(b.dataset.zu);
+
+    });
+
+    document.querySelectorAll(".ausrOverlay").forEach(o=>{
+
+        o.onclick=e=>{ if(e.target===o)schliesse(o.id); };
+
+    });
+
+    let shopSymbol=$("ausrShopIcon");
+
+    shopSymbol.innerHTML=
+    bild(BILD.shop,34)+'<span class="beschriftung">SHOP</span>';
+
+    shopSymbol.onclick=()=>{ zeichneShop(); zeigeOverlay("ausrShop"); };
+
+    // Pfoten-Feld unter dem Spieler oeffnet das Haustier-Fenster
+
+    let petSlot=$("ausrPetSlot");
+
+    if(petSlot){
+
+        petSlot.onclick=()=>{ zeichnePets(); zeichnePetSammlung(); zeigeOverlay("ausrPets"); };
+
+    }
+
+    $("ausrSortBtn").onclick=()=>{ sortLevel=!sortLevel; zeichneInventar(); };
+
+    $("ausrKombiBtn").onclick=kombiniere;
+
+    $("ausrBtnMuenzen").onclick=function(){
+
+        if(holeMuenzen()<PREIS_MUENZEN)return;
+
+        zahleMuenzen(PREIS_MUENZEN);
+
+        oeffneTruhe(ziehe(["grau","gruen"]),this);
+
+    };
+
+    $("ausrBtnSchluessel").onclick=function(){
+
+        if(schluessel<1)return;
+
+        schluessel--;
+
+        oeffneTruhe(ziehe(["grau","gruen"]),this);
+
+    };
+
+    $("ausrBtnPremium").onclick=function(){
+
+        if(holeJuwelen()<PREIS_JUWELEN)return;
+
+        zahleJuwelen(PREIS_JUWELEN);
+
+        pity++;
+
+        let seltenheit;
+
+        if(pity>=PITY_ZIEL){
+
+            seltenheit="lila";
+
+            pity=0;
+
+        }else{
+
+            seltenheit=ziehe(["gruen","blau","lila"]);
+
+            if(seltenheit==="lila")pity=0;
+
+        }
+
+        oeffneTruhe(seltenheit,this);
+
+    };
+
+    $("ausrBtnPet").onclick=function(){
+
+        if(holeJuwelen()<PREIS_PET_JUWELEN)return;
+
+        zahleJuwelen(PREIS_PET_JUWELEN);
+
+        oeffnePetTruhe(this);
+
+    };
+
+    $("ausrPDAnlegen").onclick=()=>{
+
+        if(!gewaehltesPet)return;
+
+        angelegtesPetId=
+        angelegtesPetId===gewaehltesPet.id?null:gewaehltesPet.id;
+
+        zeichnePetDetail();
+
+        zeichnePetSammlung();
+
+        zeichnePetSlot();
+
+        speichern();
+
+    };
+
+    $("ausrPDUpgrade").onclick=()=>{
+
+        if(!gewaehltesPet || gewaehltesPet.stufe>=PET_MAX_STUFE)return;
+
+        const kosten=petUpgradeKosten(gewaehltesPet);
+
+        if(holeMuenzen()<kosten)return;
+
+        zahleMuenzen(kosten);
+
+        gewaehltesPet.stufe++;
+
+        zeichnePetDetail();
+
+        zeichnePetSammlung();
+
+        zeichnePetSlot();
+
+        speichern();
+
+    };
+
+    $("ausrPDMax").onclick=()=>{
+
+        if(!gewaehltesPet)return;
+
+        while(gewaehltesPet.stufe<PET_MAX_STUFE){
+
+            const kosten=petUpgradeKosten(gewaehltesPet);
+
+            if(holeMuenzen()<kosten)break;
+
+            zahleMuenzen(kosten);
+
+            gewaehltesPet.stufe++;
+
+        }
+
+        zeichnePetDetail();
+
+        zeichnePetSammlung();
+
+        zeichnePetSlot();
+
+        speichern();
+
+    };
+
+    $("ausrBtnAusruesten").onclick=()=>{
+
+        if(!gewaehltesItem)return;
+
+        angelegt[gewaehltesItem.slot]=
+        istAngelegt(gewaehltesItem)?null:gewaehltesItem;
+
+        zeichneHub();
+
+        zeichneDetail();
+
+        speichern();
+
+    };
+
+    $("ausrBtnUpgrade").onclick=()=>{
+
+        if(!gewaehltesItem || gewaehltesItem.stufe>=MAX_STUFE)return;
+
+        const kosten=upgradeKosten(gewaehltesItem);
+
+        if(holeMuenzen()<kosten)return;
+
+        zahleMuenzen(kosten);
+
+        gewaehltesItem.stufe++;
+
+        if(typeof questFortschritt==="function"){
+
+            questFortschritt("ausbau",1);
+
+        }
+
+        neuBerechnen(gewaehltesItem);
+
+        zeichneHub();
+
+        zeichneDetail();
+
+        speichern();
+
+    };
+
+    $("ausrBtnMax").onclick=()=>{
+
+        if(!gewaehltesItem)return;
+
+        while(gewaehltesItem.stufe<MAX_STUFE){
+
+            const kosten=upgradeKosten(gewaehltesItem);
+
+            if(holeMuenzen()<kosten)break;
+
+            zahleMuenzen(kosten);
+
+            gewaehltesItem.stufe++;
+
+        }
+
+        neuBerechnen(gewaehltesItem);
+
+        zeichneHub();
+
+        zeichneDetail();
+
+        speichern();
+
+    };
+
+    // Axt-Knopf in der Hotbar oeffnet ab jetzt dieses Fenster.
+    // Das alte Ausruestungs-Panel aus spiel.js bleibt unberuehrt,
+    // wird aber nicht mehr geoeffnet.
+
+    // Das alte Panel ist aus spiel.js entfernt, also haengt am
+    // Axt-Knopf kein zweiter Listener mehr - direkt anhaengen reicht.
+
+    let axtKnopf=document.getElementById("ausruestung");
+
+    if(axtKnopf){
+
+        axtKnopf.addEventListener("click",()=>{
+
+            zeichneHub();
+
+            zeigeOverlay("ausrHub");
+
+        });
+
+    }
+
+}
+
+// ============================================================
+// START
+// ============================================================
+
+function start(){
+
+    baueOberflaeche();
+
+    laden();
+
+    verdrahte();
+
+    zeichneHub();
+
+    letztesLevel=holeLevel();
+
+}
+
+if(document.readyState==="loading"){
+
+    document.addEventListener("DOMContentLoaded",start);
+
+}else{
+
+    start();
+
+}
+
+// Nach aussen sichtbar, damit spiel.js spaeter die Werte
+// auslesen kann - z.B. Ausruestung.buffs().tempo
+
+// Fertige Werte fuer spiel.js. Gibt null zurueck, wenn kein
+// Haustier angelegt ist.
+
+function aktivesPetInfo(){
+
+    const pet=angelegtesPet();
+
+    if(!pet)return null;
+
+    return {
+
+        radiusFelder:petRadiusFelder(pet),
+        intervall:petIntervall(pet),
+        ertragBonus:petErtragBonus(pet),
+        bildHtml:slimeBild(pet.datei,22),
+        stufe:pet.stufe,
+        seltenheit:pet.seltenheit
+
+    };
+
+}
+
+// Damit die Tagesaufgaben Schluessel auszahlen koennen
+
+function schenkeSchluessel(anzahl){
+
+    schluessel+=anzahl;
+
+    speichern();
+
+    if(offenesOverlay==="ausrShop")zeichneShop();
+
+}
+
+window.Ausruestung={
+
+    gibSchluessel:schenkeSchluessel,
+    aktivesPet:aktivesPetInfo,
+    buffs:buffSummen,
+    inventar:()=>inventar,
+    angelegt:()=>angelegt,
+    speichern:speichern
+
+};
+
+})();
+
+// ============================================================
+// <<<<< AUSRUESTUNGS-SYSTEM (Ende)
+// ============================================================
+
+// ============================================================
+// >>>>> TAGESAUFGABEN (Anfang)
+//
+// Eigene Kapsel, damit sich keine Namen mit dem Rest von
+// spiel.js beissen. Zaehlt ueber die globale Funktion
+// questFortschritt(kennung,menge), die an mehreren Stellen im
+// Spiel aufgerufen wird.
+//
+// Zum Entfernen: alles ab dieser Zeile bis zum Dateiende weg.
+// ============================================================
+
+(function(){
+
+// ---- Bilder ------------------------------------------------
+
+const Q_BILD={
+
+    quest :{pfad:"GameCSS/Clipboard_Outline_256.png",  ersatz:"📋"},
+    truhe :{pfad:"GameCSS/Chest_Medium_1_1_256.png",   ersatz:"📦"},
+    muenze:{pfad:"GameCSS/coin.png",                   ersatz:"🪙"}
+
+};
+
+function qBild(eintrag,groesse){
+
+    if(!eintrag || !eintrag.pfad){
+
+        return '<span style="font-size:'+groesse+'px;line-height:1">'+
+        (eintrag?eintrag.ersatz:"?")+'</span>';
+
+    }
+
+    var hf=String.fromCharCode(39);
+
+    var ersatz="<span style=&quot;font-size:"+groesse+"px&quot;>"+eintrag.ersatz+"</span>";
+
+    return '<img src="'+eintrag.pfad+'" alt="" '+
+    'style="width:'+groesse+'px;height:'+groesse+'px;object-fit:contain" '+
+    'onerror="this.outerHTML='+hf+ersatz+hf+'">';
+
+}
+
+// ============================================================
+// DIE ZEHN TAGESAUFGABEN
+//
+// Jeden Tag dieselben zehn. Nach 24 Stunden faengt alles von
+// vorn an - Fortschritt, Trophaeen und die fuenf Truhen.
+// ============================================================
+
+const TAGESAUFGABEN=[
+
+    {kennung:"beeren",    ziel:300, trophaeen:10, text:"300 Beeren einsammeln"},
+    {kennung:"pflanzen",  ziel:40,  trophaeen:10, text:"40 Pflanzen ernten"},
+    {kennung:"kisten",    ziel:10,  trophaeen:10, text:"10 Wasserkisten öffnen"},
+    {kennung:"petbeeren", ziel:150, trophaeen:10, text:"150 Beeren vom Haustier ernten lassen"},
+    {kennung:"auftraege", ziel:5,   trophaeen:15, text:"5 Aufträge abschließen"},
+    {kennung:"ertrag",    ziel:3,   trophaeen:15, text:"3 Ertragsstufen verbessern"},
+    {kennung:"truhen",    ziel:2,   trophaeen:15, text:"2 Truhen im Shop öffnen"},
+    {kennung:"ausbau",    ziel:1,   trophaeen:15, text:"1 Ausrüstungsteil verbessern"},
+    {kennung:"knoten",    ziel:1,   trophaeen:20, text:"1 Charakter-Knoten freischalten"},
+    {kennung:"level",     ziel:1,   trophaeen:20, text:"1 Level aufsteigen"}
+
+];
+
+// Fuenf Truhen auf dem Balken oben
+
+const TAGESTRUHEN=[
+
+    {marke:20,  muenzen:500,   schluessel:0},
+    {marke:40,  muenzen:0,     schluessel:1},
+    {marke:60,  muenzen:1500,  schluessel:0},
+    {marke:80,  muenzen:0,     schluessel:2},
+    {marke:100, muenzen:5000,  schluessel:3}
+
+];
+
+const Q_SPEICHER="inselAbenteuerTagesaufgaben";
+
+// ---- Zustand -----------------------------------------------
+
+let fortschritt={};
+let abgeholt={};
+let truhenAbgeholt={};
+let trophaeen=0;
+let tagesStempel="";
+let questOffen=false;
+
+function heutigerTag(){
+
+    let d=new Date();
+
+    return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate();
+
+}
+
+function restZeitText(){
+
+    let jetzt=new Date();
+
+    let morgen=new Date(
+        jetzt.getFullYear(),
+        jetzt.getMonth(),
+        jetzt.getDate()+1
+    );
+
+    let ms=morgen-jetzt;
+
+    let stunden=Math.floor(ms/3600000);
+
+    let minuten=Math.floor((ms%3600000)/60000);
+
+    return stunden+"h "+minuten+"m";
+
+}
+
+function setzeZurueck(){
+
+    fortschritt={};
+
+    abgeholt={};
+
+    truhenAbgeholt={};
+
+    trophaeen=0;
+
+    tagesStempel=heutigerTag();
+
+    TAGESAUFGABEN.forEach(a=>{
+
+        fortschritt[a.kennung]=0;
+
+        abgeholt[a.kennung]=false;
+
+    });
+
+    TAGESTRUHEN.forEach((t,i)=>{
+
+        truhenAbgeholt[i]=false;
+
+    });
+
+}
+
+function pruefeTagwechsel(){
+
+    if(tagesStempel!==heutigerTag()){
+
+        setzeZurueck();
+
+        speichere();
+
+        return true;
+
+    }
+
+    return false;
+
+}
+
+// ---- Speichern ---------------------------------------------
+
+function speichere(){
+
+    try{
+
+        localStorage.setItem(Q_SPEICHER,JSON.stringify({
+
+            tag:tagesStempel,
+            fortschritt:fortschritt,
+            abgeholt:abgeholt,
+            truhenAbgeholt:truhenAbgeholt,
+            trophaeen:trophaeen
+
+        }));
+
+    }catch(e){}
+
+}
+
+function lade(){
+
+    setzeZurueck();
+
+    try{
+
+        let roh=localStorage.getItem(Q_SPEICHER);
+
+        if(!roh)return;
+
+        let d=JSON.parse(roh);
+
+        if(d.tag!==heutigerTag())return;
+
+        tagesStempel=d.tag;
+
+        if(d.fortschritt)Object.assign(fortschritt,d.fortschritt);
+
+        if(d.abgeholt)Object.assign(abgeholt,d.abgeholt);
+
+        if(d.truhenAbgeholt)Object.assign(truhenAbgeholt,d.truhenAbgeholt);
+
+        if(typeof d.trophaeen==="number")trophaeen=d.trophaeen;
+
+    }catch(e){}
+
+}
+
+// ---- Zaehlen -----------------------------------------------
+//
+// Wird aus dem Spiel heraus aufgerufen. Nach aussen sichtbar,
+// damit spiel.js drankommt.
+
+// Diese Funktion laeuft bei jeder eingesammelten Beere. Sie darf
+// deshalb nichts Teures tun. Frueher wurde hier jedes Mal der
+// komplette Tagesstand nach localStorage geschrieben - ein
+// synchroner Schreibvorgang mitten im Spiel, der genau das
+// Ruckeln verursacht hat.
+//
+// Jetzt wird nur gemerkt, dass sich etwas geaendert hat.
+// Gespeichert und neu gezeichnet wird gebuendelt, hoechstens
+// zweimal pro Sekunde.
+
+let musSpeichern=false;
+
+let letzteAuffrischung=0;
+
+function zaehle(kennung,menge){
+
+    if(!fortschritt.hasOwnProperty(kennung))return;
+
+    let eintrag=TAGESAUFGABEN.find(a=>a.kennung===kennung);
+
+    if(!eintrag)return;
+
+    let vorher=fortschritt[kennung];
+
+    fortschritt[kennung]=Math.min(
+
+        eintrag.ziel,
+        vorher+(menge||1)
+
+    );
+
+    if(fortschritt[kennung]===vorher)return;
+
+    musSpeichern=true;
+
+    let jetzt=Date.now();
+
+    if(jetzt-letzteAuffrischung<500)return;
+
+    letzteAuffrischung=jetzt;
+
+    sichereJetzt();
+
+}
+
+function sichereJetzt(){
+
+    if(!musSpeichern)return;
+
+    musSpeichern=false;
+
+    speichere();
+
+    if(questOffen)zeichne();
+
+    aktualisiereHinweis();
+
+}
+
+window.questFortschritt=zaehle;
+
+// ---- Belohnungen -------------------------------------------
+
+function gibMuenzen(betrag){
+
+    if(typeof coins!=="number")return;
+
+    coins+=betrag;
+
+    if(typeof aktualisiereAnzeige==="function")aktualisiereAnzeige();
+
+}
+
+function gibSchluessel(anzahl){
+
+    if(typeof window.Ausruestung==="undefined")return;
+
+    if(typeof window.Ausruestung.gibSchluessel!=="function")return;
+
+    window.Ausruestung.gibSchluessel(anzahl);
+
+}
+
+function holeAufgabe(kennung){
+
+    let eintrag=TAGESAUFGABEN.find(a=>a.kennung===kennung);
+
+    if(!eintrag)return;
+
+    if(abgeholt[kennung])return;
+
+    if(fortschritt[kennung]<eintrag.ziel)return;
+
+    abgeholt[kennung]=true;
+
+    trophaeen+=eintrag.trophaeen;
+
+    speichere();
+
+    zeichne();
+
+    aktualisiereHinweis();
+
+}
+
+function holeTruhe(index){
+
+    let truhe=TAGESTRUHEN[index];
+
+    if(!truhe)return;
+
+    if(truhenAbgeholt[index])return;
+
+    if(trophaeen<truhe.marke)return;
+
+    truhenAbgeholt[index]=true;
+
+    if(truhe.muenzen>0)gibMuenzen(truhe.muenzen);
+
+    if(truhe.schluessel>0)gibSchluessel(truhe.schluessel);
+
+    speichere();
+
+    zeichne();
+
+    aktualisiereHinweis();
+
+}
+
+// Gibt es gerade etwas abzuholen?
+
+function etwasOffen(){
+
+    let da=false;
+
+    TAGESAUFGABEN.forEach(a=>{
+
+        if(!abgeholt[a.kennung] && fortschritt[a.kennung]>=a.ziel)da=true;
+
+    });
+
+    TAGESTRUHEN.forEach((t,i)=>{
+
+        if(!truhenAbgeholt[i] && trophaeen>=t.marke)da=true;
+
+    });
+
+    return da;
+
+}
+
+function aktualisiereHinweis(){
+
+    let knopf=document.getElementById("questKnopf");
+
+    if(!knopf)return;
+
+    let punkt=knopf.querySelector(".questHinweis");
+
+    if(etwasOffen()){
+
+        if(!punkt){
+
+            punkt=document.createElement("div");
+
+            punkt.className="questHinweis";
+
+            punkt.textContent="!";
+
+            knopf.appendChild(punkt);
+
+        }
+
+    }else if(punkt){
+
+        punkt.remove();
+
+    }
+
+}
+
+// ============================================================
+// CSS
+// ============================================================
+
+const Q_CSS=`
+
+#questKnopf{position:fixed;left:16px;top:calc(32% + 74px);
+width:42px;cursor:pointer;z-index:60;
+display:flex;flex-direction:column;align-items:center;gap:2px;
+filter:drop-shadow(0 4px 6px rgba(0,0,0,.35))}
+#questKnopf span.beschriftung{font-size:9px;font-weight:bold;color:#fff;letter-spacing:1px;
+text-shadow:-2px -2px 0 #7a4a12,2px -2px 0 #7a4a12,-2px 2px 0 #7a4a12,2px 2px 0 #7a4a12,
+0 3px 4px rgba(0,0,0,.4)}
+#questKnopf *{pointer-events:none}
+#questKnopf:active{transform:translateY(3px)}
+.questHinweis{position:absolute;right:-4px;top:-4px;width:20px;height:20px;
+background:linear-gradient(180deg,#ff6a4d,#e02414);border:2px solid #fff;border-radius:50%;
+color:#fff;font-size:13px;font-weight:900;display:flex;align-items:center;justify-content:center;
+box-shadow:0 2px 4px rgba(0,0,0,.4)}
+
+.questOverlay{position:fixed;inset:0;background:rgba(0,15,28,.78);display:none;
+flex-direction:column;align-items:center;justify-content:center;z-index:320;padding:14px}
+.questOverlay.offen{display:flex}
+.questOverlay *{touch-action:pan-y}
+
+.questKopf{width:100%;max-width:430px;display:flex;align-items:center;gap:10px;
+margin-bottom:-16px;z-index:2}
+.questTitel{flex:1;border-radius:40px;padding:10px 30px;text-align:center;
+font-size:26px;font-weight:900;color:#fff;
+background:linear-gradient(180deg,#3ec8ff 0%,#0f8fe0 55%,#0b74c4 100%);
+border:4px solid #fff;text-shadow:0 3px 0 rgba(6,60,100,.55);
+box-shadow:0 5px 0 rgba(7,60,100,.35),inset 0 3px 0 rgba(255,255,255,.35)}
+.questX{width:46px;height:46px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+font-size:24px;font-weight:900;color:#fff;cursor:pointer;
+background:linear-gradient(180deg,#ff7b3d 0%,#f5401f 60%,#d62b12 100%);
+border:3px solid #fff;border-radius:14px;
+box-shadow:0 4px 0 rgba(120,25,10,.4),inset 0 2px 0 rgba(255,255,255,.3)}
+.questX:active{transform:translateY(2px);box-shadow:0 2px 0 rgba(120,25,10,.4)}
+
+.questBox{width:100%;max-width:430px;max-height:82vh;overflow-y:auto;
+background:linear-gradient(180deg,#ffeed2 0%,#f7dcb4 100%);
+border:5px solid #fff;border-radius:24px;padding:22px 12px 14px;
+overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+box-shadow:0 12px 34px rgba(0,0,0,.6)}
+.questBox::-webkit-scrollbar{width:6px}
+.questBox::-webkit-scrollbar-thumb{background:#c9b892;border-radius:8px}
+
+/* Balken mit den fuenf Truhen */
+
+.questBalkenBox{background:linear-gradient(180deg,#3ec8ff,#0f8fe0);
+border-radius:16px;padding:12px 10px 10px;margin-bottom:12px;
+box-shadow:inset 0 3px 0 rgba(255,255,255,.3)}
+.questBalkenReihe{position:relative;display:flex;align-items:center;gap:0;height:58px}
+.questPokal{width:52px;height:52px;flex-shrink:0;border-radius:50%;
+background:linear-gradient(180deg,#fff,#ffe6bd);border:3px solid #fff;
+display:flex;align-items:center;justify-content:center;flex-direction:column;
+font-size:15px;font-weight:900;color:#8a4a1a;z-index:3;
+box-shadow:0 3px 6px rgba(0,0,0,.3)}
+.questSchiene{position:absolute;left:44px;right:8px;top:34px;height:14px;
+background:#26333f;border-radius:7px;overflow:hidden}
+.questSchieneVoll{height:100%;background:linear-gradient(90deg,#ffd24a,#f0a81c);
+border-radius:7px;width:0%}
+.questMarken{position:absolute;left:44px;right:8px;top:0;height:58px;
+display:flex;justify-content:space-between;align-items:flex-start}
+.questMarke{width:46px;display:flex;flex-direction:column;align-items:center;gap:2px;
+cursor:pointer;z-index:4}
+.questMarkeBild{width:34px;height:34px;display:flex;align-items:center;justify-content:center}
+.questMarke.gesperrt .questMarkeBild{filter:grayscale(.8);opacity:.6}
+.questMarke.bereit .questMarkeBild{animation:questWippen 1s ease-in-out infinite}
+.questMarke.geholt .questMarkeBild{opacity:.35}
+.questMarkeZahl{width:26px;height:20px;border-radius:10px;background:#26333f;
+color:#fff;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center}
+.questMarke.bereit .questMarkeZahl{background:#3fa41c}
+@keyframes questWippen{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+
+.questNeustart{margin:10px auto 0;width:fit-content;background:#8fdcff;
+border:2px solid #fff;border-radius:20px;padding:4px 16px;
+color:#0b4a70;font-size:12px;font-weight:900}
+
+/* Die zehn Zeilen */
+
+.questZeile{display:flex;align-items:center;gap:10px;background:#f7e6c8;
+border:3px solid #e2c496;border-radius:16px;padding:9px;margin-bottom:9px}
+.questZeilePokal{width:52px;height:52px;flex-shrink:0;border-radius:13px;
+display:flex;align-items:center;justify-content:center;flex-direction:column;
+font-size:13px;font-weight:900;color:#8a4a1a;background:#d8d0c0;border:3px solid #fff}
+.questZeile.fertig .questZeilePokal{background:linear-gradient(180deg,#9bef52,#4aab22);color:#1e4a08}
+.questZeileMitte{flex:1;min-width:0}
+.questZeileText{font-size:12px;font-weight:800;color:#6b4a22;margin-bottom:5px;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.questZeileBalken{position:relative;height:20px;background:#26333f;border-radius:10px;overflow:hidden}
+.questZeileVoll{height:100%;background:linear-gradient(180deg,#9bef52,#4aab22);
+border-radius:10px;width:0%}
+.questZeileZahl{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+color:#fff;font-size:11px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.questHolBtn{flex-shrink:0;min-width:96px;text-align:center;border-radius:12px;
+padding:10px 8px;font-size:13px;font-weight:900;color:#fff;cursor:pointer;
+background:linear-gradient(180deg,#9bef52 0%,#5fc42e 55%,#3fa41c 100%);
+border:3px solid #2f7d16;text-shadow:0 2px 0 rgba(20,70,10,.55);
+box-shadow:0 3px 0 rgba(30,80,15,.45)}
+.questHolBtn:active{transform:translateY(2px);box-shadow:0 1px 0 rgba(30,80,15,.45)}
+.questHolBtn.aus{background:linear-gradient(180deg,#8d97a6,#666f7c);
+border-color:#4d545e;box-shadow:0 3px 0 rgba(40,45,52,.45)}
+
+`;
+
+// ============================================================
+// HTML
+// ============================================================
+
+const Q_HTML=`
+
+<div id="questKnopf"></div>
+
+<div class="questOverlay" id="questFenster">
+<div class="questKopf">
+<div class="questTitel">Aufgaben</div>
+<div class="questX" id="questSchliessen">&#10005;</div>
+</div>
+<div class="questBox" id="questInhalt"></div>
+</div>
+
+`;
+
+// ============================================================
+// ZEICHNEN
+// ============================================================
+
+function zeichne(){
+
+    const box=document.getElementById("questInhalt");
+
+    if(!box)return;
+
+    pruefeTagwechsel();
+
+    let hoechste=TAGESTRUHEN[TAGESTRUHEN.length-1].marke;
+
+    let anteil=Math.min(100,(trophaeen/hoechste)*100);
+
+    let html="";
+
+    // ---- Balken mit Truhen ----
+
+    html+='<div class="questBalkenBox"><div class="questBalkenReihe">';
+
+    html+='<div class="questPokal">🏆<span>'+trophaeen+'</span></div>';
+
+    html+='<div class="questSchiene"><div class="questSchieneVoll" '+
+    'style="width:'+anteil+'%"></div></div>';
+
+    html+='<div class="questMarken">';
+
+    TAGESTRUHEN.forEach((t,i)=>{
+
+        let geholt=truhenAbgeholt[i];
+
+        let bereit=!geholt && trophaeen>=t.marke;
+
+        let klasse=geholt?"geholt":(bereit?"bereit":"gesperrt");
+
+        html+='<div class="questMarke '+klasse+'" data-truhe="'+i+'">'+
+        '<div class="questMarkeBild">'+qBild(Q_BILD.truhe,34)+'</div>'+
+        '<div class="questMarkeZahl">'+t.marke+'</div>'+
+        '</div>';
+
+    });
+
+    html+='</div></div>';
+
+    html+='<div class="questNeustart">Neustart in: '+restZeitText()+'</div>';
+
+    html+='</div>';
+
+    // ---- Die zehn Zeilen ----
+
+    TAGESAUFGABEN.forEach(a=>{
+
+        let wert=fortschritt[a.kennung]||0;
+
+        let fertig=wert>=a.ziel;
+
+        let geholt=abgeholt[a.kennung];
+
+        let anteilZeile=Math.min(100,(wert/a.ziel)*100);
+
+        let knopf=geholt
+
+            ? '<div class="questHolBtn aus">Erhalten</div>'
+
+            : (fertig
+               ? '<div class="questHolBtn" data-hol="'+a.kennung+'">Beanspruchen</div>'
+               : '<div class="questHolBtn aus">Beanspruchen</div>');
+
+        html+=
+
+        '<div class="questZeile'+(fertig&&!geholt?" fertig":"")+'">'+
+
+        '<div class="questZeilePokal">🏆<span>'+a.trophaeen+'</span></div>'+
+
+        '<div class="questZeileMitte">'+
+        '<div class="questZeileText">'+a.text+'</div>'+
+        '<div class="questZeileBalken">'+
+        '<div class="questZeileVoll" style="width:'+anteilZeile+'%"></div>'+
+        '<div class="questZeileZahl">'+wert+'/'+a.ziel+'</div>'+
+        '</div>'+
+        '</div>'+
+
+        knopf+
+
+        '</div>';
+
+    });
+
+    box.innerHTML=html;
+
+    box.querySelectorAll("[data-hol]").forEach(el=>{
+
+        el.onclick=()=>holeAufgabe(el.dataset.hol);
+
+    });
+
+    box.querySelectorAll("[data-truhe]").forEach(el=>{
+
+        el.onclick=()=>holeTruhe(Number(el.dataset.truhe));
+
+    });
+
+}
+
+// ============================================================
+// AUFBAU
+// ============================================================
+
+function baueAuf(){
+
+    let stil=document.createElement("style");
+
+    stil.textContent=Q_CSS;
+
+    document.head.appendChild(stil);
+
+    let huelle=document.createElement("div");
+
+    huelle.innerHTML=Q_HTML;
+
+    while(huelle.firstElementChild){
+
+        document.body.appendChild(huelle.firstElementChild);
+
+    }
+
+    let knopf=document.getElementById("questKnopf");
+
+    if(knopf){
+
+        knopf.innerHTML=qBild(Q_BILD.quest,34)+
+        '<span class="beschriftung">QUEST</span>';
+
+        knopf.onclick=()=>{
+
+            questOffen=true;
+
+            zeichne();
+
+            document.getElementById("questFenster").classList.add("offen");
+
+        };
+
+    }
+
+    let zu=document.getElementById("questSchliessen");
+
+    if(zu){
+
+        zu.onclick=()=>{
+
+            questOffen=false;
+
+            document.getElementById("questFenster").classList.remove("offen");
+
+        };
+
+    }
+
+    let fenster=document.getElementById("questFenster");
+
+    if(fenster){
+
+        fenster.onclick=e=>{
+
+            if(e.target===fenster){
+
+                questOffen=false;
+
+                fenster.classList.remove("offen");
+
+            }
+
+        };
+
+    }
+
+}
+
+function start(){
+
+    baueAuf();
+
+    lade();
+
+    aktualisiereHinweis();
+
+    // Einmal pro Minute die Restzeit auffrischen und den
+    // Tageswechsel bemerken
+
+    // Restzeit auffrischen und Tageswechsel bemerken
+
+    setInterval(()=>{
+
+        if(pruefeTagwechsel())aktualisiereHinweis();
+
+        if(questOffen)zeichne();
+
+    },60000);
+
+    // Aufgesammelte Aenderungen wegschreiben
+
+    setInterval(sichereJetzt,2000);
+
+    window.addEventListener("pagehide",sichereJetzt);
+
+}
+
+if(document.readyState==="loading"){
+
+    document.addEventListener("DOMContentLoaded",start);
+
+}else{
+
+    start();
+
+}
+
+})();
+
+// ============================================================
+// <<<<< TAGESAUFGABEN (Ende)
+// ============================================================
