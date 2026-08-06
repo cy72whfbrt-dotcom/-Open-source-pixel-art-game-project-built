@@ -1,0 +1,191 @@
+// ============================================================
+// PFLANZEN UND AUFGABEN
+//
+// Diese Datei wird VOR spiel.js geladen und liefert dort die
+// Pflanzenliste und die Level-Aufgaben.
+//
+// Freischaltung: die ersten beiden Sorten ab Level 1, danach
+// alle zwei Level eine weitere. Die letzte kommt bei Level 89.
+// ============================================================
+
+const MAX_LEVEL=100;
+
+// typ    - Schluessel, gilt zugleich fuer die Frucht:
+//          BushCSS/<typ>-outline-256.png
+// bild   - Datei der Pflanze in BushCSS
+// name   - Anzeigename im Verbessern-Fenster
+
+const PFLANZEN=[
+
+    {typ:"acorn", name:"Eichel", bild:"plant-acorn_4.png", abLevel:1},
+    {typ:"apple", name:"Apfel", bild:"plant-apple_4.png", abLevel:1},
+    {typ:"avocado", name:"Avocado", bild:"plant-avocado_4.png", abLevel:3},
+    {typ:"banana", name:"Banane", bild:"plant-banana_4.png", abLevel:5},
+    {typ:"bell-pepper-red", name:"Rote Paprika", bild:"plant-bell-pepper-red_4.png", abLevel:7},
+    {typ:"bell-pepper-yellow", name:"Gelbe Paprika", bild:"plant-bell-pepper-yellow_4.png", abLevel:9},
+    {typ:"blueberry", name:"Blaubeere", bild:"plant-blueberry_4.png", abLevel:11},
+    {typ:"broccoli", name:"Brokkoli", bild:"plant-broccoli_4.png", abLevel:13},
+    {typ:"beet", name:"Rote Bete", bild:"plant-beet_3.png", abLevel:15},
+    {typ:"carrot", name:"Karotte", bild:"blume_mit_karotte.png", abLevel:17},
+    {typ:"chestnut", name:"Kastanie", bild:"01_blume_mit_kastanie.png", abLevel:19},
+    {typ:"coconut", name:"Kokosnuss", bild:"02_blume_mit_kokosnuss.png", abLevel:21},
+    {typ:"cucumber", name:"Gurke", bild:"03_blume_mit_gurke.png", abLevel:23},
+    {typ:"eggplant", name:"Aubergine", bild:"04_blume_mit_aubergine.png", abLevel:25},
+    {typ:"ginger", name:"Ingwer", bild:"05_blume_mit_ingwer.png", abLevel:27},
+    {typ:"kiwi", name:"Kiwi", bild:"06_blume_mit_kiwi.png", abLevel:29},
+    {typ:"lemon", name:"Zitrone", bild:"07_blume_mit_zitrone.png", abLevel:31},
+    {typ:"mango", name:"Mango", bild:"08_blume_mit_mango.png", abLevel:33},
+    {typ:"cherry", name:"Kirsche", bild:"10_blume_mit_kirsche.png", abLevel:35},
+    {typ:"chilli-pepper", name:"Chili", bild:"11_blume_mit_chili.png", abLevel:37},
+    {typ:"corn", name:"Mais", bild:"12_blume_mit_mais.png", abLevel:39},
+    {typ:"dragonfruit", name:"Drachenfrucht", bild:"13_blume_mit_drachenfrucht.png", abLevel:41},
+    {typ:"garlic", name:"Knoblauch", bild:"14_blume_mit_knoblauch.png", abLevel:43},
+    {typ:"grapes", name:"Trauben", bild:"15_blume_mit_trauben.png", abLevel:45},
+    {typ:"leek", name:"Lauch", bild:"16_blume_mit_lauch.png", abLevel:47},
+    {typ:"lime", name:"Limette", bild:"17_blume_mit_limette.png", abLevel:49},
+    {typ:"mushroom", name:"Pilz", bild:"18_blume_mit_pilz.png", abLevel:51},
+    {typ:"pineapple", name:"Ananas", bild:"19_blume_mit_ananas.png", abLevel:53},
+    {typ:"pumpkin", name:"Kuerbis", bild:"20_blume_mit_kuerbis.png", abLevel:55},
+    {typ:"raspberry", name:"Himbeere", bild:"21_blume_mit_himbeere.png", abLevel:57},
+    {typ:"sushi", name:"Sushi", bild:"22_blume_mit_sushi.png", abLevel:59},
+    {typ:"tomato", name:"Tomate", bild:"23_blume_mit_tomate.png", abLevel:61},
+    {typ:"watermelon", name:"Wassermelone", bild:"24_blume_mit_wassermelone.png", abLevel:63},
+    {typ:"olive-green", name:"Olive", bild:"25_blume_mit_olive.png", abLevel:65},
+    {typ:"orange", name:"Orange", bild:"26_blume_mit_orange.png", abLevel:67},
+    {typ:"peach", name:"Pfirsich", bild:"27_blume_mit_pfirsich.png", abLevel:69},
+    {typ:"pickle", name:"Essiggurke", bild:"28_blume_mit_essiggurke.png", abLevel:71},
+    {typ:"potato", name:"Kartoffel", bild:"29_blume_mit_kartoffel.png", abLevel:73},
+    {typ:"radish", name:"Rettich", bild:"30_blume_mit_rettich.png", abLevel:75},
+    {typ:"strawberry", name:"Erdbeere", bild:"31_blume_mit_erdbeere.png", abLevel:77},
+    {typ:"sweet-potato", name:"Suesskartoffel", bild:"32_blume_mit_suesskartoffel.png", abLevel:79},
+    {typ:"turnip", name:"Ruebe", bild:"33_blume_mit_ruebe.png", abLevel:81},
+    {typ:"zucchini", name:"Zucchini", bild:"34_blume_mit_zucchini.png", abLevel:83},
+    {typ:"onion", name:"Zwiebel", bild:"35_blume_mit_zwiebel.png", abLevel:85},
+    {typ:"pea-pod", name:"Erbsenschoten", bild:"36_blume_mit_erbsenschoten.png", abLevel:87},
+    {typ:"pear", name:"Birne", bild:"37_blume_mit_birne.png", abLevel:89}
+
+];
+
+// Schneller Zugriff auf die Pflanzen-Bilddatei
+
+const PFLANZEN_BILD={};
+
+PFLANZEN.forEach(p=>{ PFLANZEN_BILD[p.typ]=p.bild; });
+
+// Welche Sorten auf einem Level bereits wachsen
+
+function sortenAbLevel(lvl){
+
+    return PFLANZEN.filter(p=>lvl>=p.abLevel).map(p=>p.typ);
+
+}
+
+function sortenName(typ){
+
+    let p=PFLANZEN.find(x=>x.typ===typ);
+
+    return p?p.name:typ;
+
+}
+
+// ============================================================
+// AUFGABEN
+//
+// Pro Level zwei normale Aufgaben plus die Lager-Aufgabe.
+// Die Ziele wachsen mit dem Level, die Sorten stammen immer
+// aus dem, was gerade freigeschaltet ist - die jeweils neueste
+// Sorte kommt dabei bevorzugt dran.
+// ============================================================
+
+const aufgabenListe={};
+
+let globalId=1000;
+
+for(let lvl=1;lvl<=MAX_LEVEL;lvl++){
+
+    let offen=sortenAbLevel(lvl);
+
+    let neueste=offen[offen.length-1];
+
+    // Zweite Sorte rotiert durch die aelteren, damit sich nichts
+    // zu schnell wiederholt
+
+    let zweite=offen[(lvl*3)%offen.length];
+
+    if(zweite===neueste && offen.length>1){
+
+        zweite=offen[(lvl*3+1)%offen.length];
+
+    }
+
+    let grundZiel=12+Math.round(lvl*1.6);
+
+    let belohnung=20+lvl*3;
+
+    aufgabenListe[lvl]=[];
+
+    // Erste Aufgabe: immer die neueste Sorte
+
+    aufgabenListe[lvl].push({
+
+        id:globalId++,
+        name:sortenName(neueste)+" ernten ("+grundZiel+")",
+        anforderungen:[{typ:neueste,ziel:grundZiel,fortschritt:0}],
+        belohnung:belohnung,
+        xp:10+lvl,
+        isLagerUpgrade:false
+
+    });
+
+    // Zweite Aufgabe: jedes dritte Level eine Doppelaufgabe
+
+    if(lvl%3===0 && offen.length>1){
+
+        let a=Math.round(grundZiel*0.6);
+
+        let b=Math.round(grundZiel*0.5);
+
+        aufgabenListe[lvl].push({
+
+            id:globalId++,
+            name:sortenName(zweite)+" und "+sortenName(neueste)+
+                 " sammeln ("+a+"+"+b+")",
+            anforderungen:[
+                {typ:zweite,ziel:a,fortschritt:0},
+                {typ:neueste,ziel:b,fortschritt:0}
+            ],
+            belohnung:Math.round(belohnung*1.3),
+            xp:12+lvl,
+            isLagerUpgrade:false
+
+        });
+
+    }else{
+
+        aufgabenListe[lvl].push({
+
+            id:globalId++,
+            name:sortenName(zweite)+" ernten ("+Math.round(grundZiel*1.1)+")",
+            anforderungen:[{typ:zweite,ziel:Math.round(grundZiel*1.1),fortschritt:0}],
+            belohnung:belohnung,
+            xp:10+lvl,
+            isLagerUpgrade:false
+
+        });
+
+    }
+
+    // Lager-Aufgabe
+
+    aufgabenListe[lvl].push({
+
+        id:globalId++,
+        name:"Lager Level "+(lvl+1),
+        anforderungen:[{typ:"lager",ziel:lvl+1,fortschritt:0}],
+        belohnung:50+lvl*5,
+        xp:30+lvl*3,
+        isLagerUpgrade:true
+
+    });
+
+}
