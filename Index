@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Insel Abenteuer</title>
+<link rel="stylesheet" href="style.css">
+
+<!-- ========== App Einstellungen ========== -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#12aee8">
+
+<!-- ========== iPhone ========== -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="GameCSS/icon.png">
+
+</head>
+<body>
+
+<div id="spiel">
+
+<!-- ==================================================
+     KARTE + SPIELER
+     Insel-Grid und die Spielfigur (bewegt sich per Joystick/WASD)
+     ================================================== -->
+<div id="karte"></div>
+<div id="spieler"></div>
+
+
+<!-- ==================================================
+     HUD OBEN
+     Zahnrad, Level/XP, Coins, Juwelen (+ versteckte Zähler)
+     ================================================== -->
+<div id="anzeige">
+
+<div class="settings-icon">
+<img src="GameCSS/gear.png" alt="Settings" class="settings-image">
+</div>
+
+<div class="mail-icon" id="mailKnopf">
+<img src="GameCSS/Mailbox_Outline_256.png" alt="Post" class="mail-image">
+</div>
+
+<div class="hud-bar">
+<div class="xp-star-icon">
+<img src="GameCSS/star.png" alt="Stern" class="xp-star-image">
+</div>
+<div class="xp-bar-container">
+<div class="xp-bar-fill">
+<span class="bar-number" id="level">1</span>
+</div>
+</div>
+</div>
+
+<div class="hud-bar">
+<div class="coin-star-icon">
+<img src="GameCSS/coin.png" alt="Coin" class="coin-star-image">
+</div>
+<div class="coin-bar-container">
+<div class="coin-bar-fill">
+<span class="bar-number" id="coins">200</span>
+</div>
+</div>
+</div>
+
+<div class="hud-bar">
+<div class="gem-star-icon">
+<img src="GameCSS/gems.png" alt="Gems" class="gem-star-image">
+</div>
+<div class="gem-bar-container">
+<div class="gem-bar-fill">
+<span class="bar-number" id="juwelen">12</span>
+</div>
+</div>
+</div>
+
+<!-- versteckte Zähler, nur intern von spiel.js genutzt -->
+<span id="sterne" style="display:none;">0</span>
+<span id="berryCount" style="display:none;">0</span>
+
+</div>
+
+
+<!-- ==================================================
+     AUFGABEN-LISTE
+     3 Karten mit aktiven Aufgaben, wird von spiel.js befüllt
+     ================================================== -->
+<div id="aufgabenBox">
+<div id="aufgabenListe"></div>
+</div>
+
+
+<!-- ==================================================
+     PANEL: VERBESSERN (Ertrag-Upgrades)
+     ================================================== -->
+<div id="aufwertenPanel" class="versteckt">
+
+<div class="hubKopf">
+<div class="hubTitel">Verbessern</div>
+<div class="hubSchliessen" id="aufwertenSchliessen">✕</div>
+</div>
+
+<div class="hubBox">
+<div id="aufwertenListe" class="hubRaster"></div>
+<div class="hubFuss">
+<div class="hubFussTitel">Günstigstes Upgrade</div>
+<div id="bestesUpgrade" class="bestesUpgrade"></div>
+</div>
+</div>
+
+</div>
+
+
+<!-- ==================================================
+     PANEL: CHARAKTER (Skill-Baum)
+     ================================================== -->
+<div id="charakterPanel" class="versteckt">
+<div class="aufwertenBox">
+<div class="aufwertenTitel">
+👤 Charakter
+<span id="charakterSchliessen">✖</span>
+</div>
+<div id="charakterListe"></div>
+</div>
+</div>
+
+
+<!-- ==================================================
+     PANEL: HAUSTIERE
+     ================================================== -->
+<div id="haustierePanel" class="versteckt">
+<div class="aufwertenBox">
+<div class="aufwertenTitel">
+🐾 Haustier
+<span id="haustiereSchliessen">✖</span>
+</div>
+<div id="haustiereListe"></div>
+</div>
+</div>
+
+
+<!-- ==================================================
+     HOTBAR UNTEN
+     Scheune, Pets, Joystick+Busch-Mitte, Axt, Charakter
+     ================================================== -->
+<div id="hotbar">
+
+<button id="verbessern">
+<img src="GameCSS/barn.png" alt="Scheune">
+</button>
+
+<button id="haustiere">
+<img src="GameCSS/pet.svg" alt="Pets">
+</button>
+
+<div class="centerStack">
+
+<div id="joystick">
+<div id="knopf"></div>
+</div>
+
+<div class="centerBusch">
+<svg viewBox="0 0 429.543 429.543">
+<path fill="#2d8c2d" d="M405.478,218.71c0.337-2.672,0.53-5.389,0.53-8.152c0-28.077-17.909-51.963-42.923-60.882c-8.049-21.407-28.703-36.643-52.922-36.643c-7.446,0-14.548,1.453-21.059,4.069c-6.51-2.616-13.612-4.069-21.058-4.069c-11.52,0-22.229,3.453-31.164,9.37c-10.16-15.028-27.359-24.908-46.865-24.908c-28.641,0-52.289,21.303-56.007,48.924c-27.751,3.601-49.191,27.309-49.191,56.042c0,1.725,0.09,3.43,0.241,5.115c-26.254,7.813-45.405,32.121-45.405,60.914c0,35.103,28.456,63.558,63.558,63.558h262.771c35.102,0,63.559-28.455,63.559-63.558C429.543,248.317,420.134,230.354,405.478,218.71z"/>
+<path fill="#4ab84a" d="M279.436,187.909c-3.556,0-7.049,0.268-10.467,0.766c-12.647-20.774-35.504-34.648-61.604-34.648c-9.735,0-19.015,1.941-27.486,5.44c-13.123-13.733-31.605-22.302-52.1-22.302c-32.845,0-60.538,21.98-69.224,52.027C25.215,195.52,0,224.797,0,259.978c0,39.803,32.266,72.069,72.069,72.069h207.366c39.803,0,72.069-32.267,72.069-72.069C351.505,220.176,319.238,187.909,279.436,187.909z"/>
+<circle fill="#e8192c" cx="334.125" cy="189.275" r="31.81"/>
+<circle fill="#e8192c" cx="281.097" cy="262.156" r="31.81"/>
+<circle fill="#e8192c" cx="69.809" cy="264.191" r="31.81"/>
+<circle fill="#e8192c" cx="175.753" cy="221.082" r="31.81"/>
+</svg>
+</div>
+
+<div class="centerBox" id="feldAnzeige">0/8</div>
+
+</div>
+
+<button id="ausruestung">
+<img src="GameCSS/ax.png" alt="Axt">
+</button>
+
+<button id="charakter">
+<img src="GameCSS/upgrade.png" alt="Upgrade">
+</button>
+
+</div>
+
+</div>
+
+
+<!-- ==================================================
+     SCRIPTE
+     ================================================== -->
+<script>
+// Faengt auch Fehler ab, die beim Einlesen von spiel.js entstehen.
+// Muss VOR den Skripten stehen, sonst ist es zu spaet.
+(function(){
+    function zeige(text){
+        var box=document.getElementById("startFehler");
+        if(!box){
+            box=document.createElement("div");
+            box.id="startFehler";
+            box.style.cssText=
+            "position:fixed;left:0;right:0;top:0;z-index:99999;"+
+            "background:#b00020;color:#fff;font:12px/1.45 monospace;"+
+            "padding:10px;white-space:pre-wrap;max-height:60vh;overflow:auto;";
+            (document.body||document.documentElement).appendChild(box);
+        }
+        box.textContent+=text+String.fromCharCode(10,10);
+    }
+    window.addEventListener("error",function(e){
+        var u=String.fromCharCode(10);
+
+        // Fehlgeschlagene Bilder und andere Dateien haben keine
+        // Meldung - die getrennt und verstaendlich anzeigen
+        if(!e.message && e.target && e.target.src){
+            zeige("DATEI FEHLT: "+e.target.src.split("/").slice(-2).join("/"));
+            return;
+        }
+
+        // Sonstige Ereignisse ohne Meldung ignorieren
+        if(!e.message)return;
+
+        zeige("FEHLER: "+e.message+
+              u+"Datei: "+((e.filename||"?").split("/").pop())+
+              u+"Zeile: "+e.lineno+":"+e.colno);
+    },true);
+
+    // Nach dem Laden pruefen, ob spiel.js wirklich durchgelaufen ist
+    window.addEventListener("load",function(){
+        setTimeout(function(){
+            if(typeof aktualisiereAnzeige!=="function"){
+                zeige("spiel.js wurde NICHT ausgefuehrt."+
+                      String.fromCharCode(10)+
+                      "Datei fehlt, ist unvollstaendig oder hat einen Syntaxfehler.");
+            }
+        },500);
+    });
+})();
+</script>
+
+<script src="aufgaben.js"></script>
+<script src="spiel.js"></script>
+<script>
+if("serviceWorker" in navigator){
+navigator.serviceWorker.register("service-worker.js");
+}
+</script>
+
+</body>
+</html>
