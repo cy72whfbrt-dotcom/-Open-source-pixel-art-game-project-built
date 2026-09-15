@@ -1294,22 +1294,28 @@ function drawInGameHud(){
   ctx.fillStyle="rgba(8,14,20,0.0)";
   const barY = 12;
 
-  // Alles in EINER Zeile nebeneinander, nichts gestapelt: Profil, Kraft,
-  // Holz, Stein, Gems, Coins, Level - alle im selben kompakten Chip-Stil.
-  const s = 32, iconR = 14, pillW = 38, pillH = 26, gap = 4;
-  drawProfileSquare(12, barY, s);
+  // Grosse Haupt-Leiste genau wie im Referenzbild: 3 grosse Chips
+  // (Level/Coins/Gems), Icon deutlich groesser als die Pille und weit
+  // ueberlappend, viel Abstand zwischen den Chips.
+  const bigR = 22, bigPillW = 78, bigPillH = 34, bigGap = 10;
+  const bigTotal = 3*(bigPillW+bigR*0.7) + 2*bigGap;
+  let bx = Math.max(12, W/2 - bigTotal/2 - bigR*0.3);
+  bx = drawOverlapResourceChip(bx, barY, bigR, bigPillW, bigPillH, ()=>drawStarIcon(bigR), "Lv "+state.basisLevel) + bigGap;
+  bx = drawOverlapResourceChip(bx, barY, bigR, bigPillW, bigPillH, ()=>drawCoinIcon(bigR), state.resources.coins) + bigGap;
+  bx = drawOverlapResourceChip(bx, barY, bigR, bigPillW, bigPillH, ()=>drawGemIcon(bigR), state.resources.gems);
 
+  // Kleinere Zweitzeile darunter fuer Profil, Kraft, Holz, Stein - die
+  // Kernressourcen dieses Spiels, aber nicht Teil der grossen Vorlage.
+  const rowY = barY + bigR*2 + 14;
+  const s = 26, iconR = 12, pillW = 34, pillH = 22, gap = 4;
+  drawProfileSquare(12, rowY, s);
   let nx = 12+s+gap;
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawKraftIcon(iconR), computeKraft()) + gap;
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawLogIcon(iconR), state.resources.holz) + gap;
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawStoneIcon(iconR), state.resources.stein) + gap;
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawGemIcon(iconR), state.resources.gems) + gap;
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawCoinIcon(iconR), state.resources.coins) + gap;
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawStarIcon(iconR), "Lv "+state.basisLevel);
+  nx = drawOverlapResourceChip(nx, rowY-2, iconR, pillW, pillH, ()=>drawKraftIcon(iconR), computeKraft()) + gap;
+  nx = drawOverlapResourceChip(nx, rowY-2, iconR, pillW, pillH, ()=>drawLogIcon(iconR), state.resources.holz) + gap;
+  nx = drawOverlapResourceChip(nx, rowY-2, iconR, pillW, pillH, ()=>drawStoneIcon(iconR), state.resources.stein);
 
-  // Wellen-Status jetzt in einer eigenen Zeile darunter - oben war fuer
-  // die komplette Chip-Reihe kein Platz mehr uebrig.
-  const statusY = barY + s + 10;
+  // Wellen-Status in einer dritten Zeile darunter.
+  const statusY = rowY + s + 10;
   const chipW = 108;
   if(!state.tutorialDone){
     drawChip(W/2-chipW/2, statusY, chipW, "rgba(74,140,60,0.6)", ()=>{
