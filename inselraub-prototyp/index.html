@@ -46,6 +46,15 @@
   .slot.filled { background:rgba(106,212,106,0.15); border-color:#6ad46a; color:#6ad46a; }
   .slot.empty { background:rgba(255,255,255,0.04); color:#8b96a5; cursor:pointer; }
   .slot.empty.disabled { opacity:.4; cursor:default; }
+
+  #joystick {
+    position:absolute; left:14px; bottom:14px; width:104px; height:104px; border-radius:50%;
+    background:rgba(10,16,22,0.35); border:1px solid rgba(255,255,255,0.22); touch-action:none;
+  }
+  #joystickKnob {
+    position:absolute; left:50%; top:50%; width:42px; height:42px; margin:-21px;
+    border-radius:50%; background:rgba(255,255,255,0.4); border:1px solid rgba(255,255,255,0.6);
+  }
 </style>
 </head>
 <body>
@@ -58,6 +67,7 @@
       <button id="centerBtn">◎</button>
       <button id="zoomOut">−</button>
     </div>
+    <div id="joystick"><div id="joystickKnob"></div></div>
   </div>
 </div>
 
@@ -879,6 +889,46 @@ document.getElementById("zoomIn").addEventListener("click", ()=>{ camera.scale*=
 document.getElementById("zoomOut").addEventListener("click", ()=>{ camera.scale*=0.83; clampCamera(); render(); });
 document.getElementById("centerBtn").addEventListener("click", ()=>{ camera.x=0; camera.y=0; camera.scale=1; render(); });
 
+// ================= Joystick (Spieler-Steuerung) =================
+// Eigene, ungespeicherte Richtung - solange sie aktiv ist, uebersteuert sie
+// ein per Tap gesetztes moveTarget (manuelle Kontrolle geht vor Auto-Lauf).
+const joystickEl = document.getElementById("joystick");
+const joystickKnob = document.getElementById("joystickKnob");
+const JOYSTICK_MAX = 40; // px, wie weit der Knopf aus der Mitte wandern kann
+let joystickDir = {x:0,y:0}; // normiert, Laenge 0..1
+let joystickPointerId = null;
+
+function setJoystickFromEvent(e){
+  const rect = joystickEl.getBoundingClientRect();
+  const cx = rect.left+rect.width/2, cy = rect.top+rect.height/2;
+  let dx = e.clientX-cx, dy = e.clientY-cy;
+  const dist = Math.hypot(dx,dy);
+  if(dist>JOYSTICK_MAX){ dx = dx/dist*JOYSTICK_MAX; dy = dy/dist*JOYSTICK_MAX; }
+  joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  joystickDir = { x: dx/JOYSTICK_MAX, y: dy/JOYSTICK_MAX };
+}
+function resetJoystick(){
+  joystickDir = {x:0,y:0};
+  joystickKnob.style.transform = "translate(0,0)";
+}
+joystickEl.addEventListener("pointerdown", e=>{
+  e.stopPropagation();
+  joystickPointerId = e.pointerId;
+  joystickEl.setPointerCapture(e.pointerId);
+  setJoystickFromEvent(e);
+});
+joystickEl.addEventListener("pointermove", e=>{
+  if(e.pointerId!==joystickPointerId) return;
+  setJoystickFromEvent(e);
+});
+function joystickEnd(e){
+  if(e.pointerId!==joystickPointerId) return;
+  joystickPointerId = null;
+  resetJoystick();
+}
+joystickEl.addEventListener("pointerup", joystickEnd);
+joystickEl.addEventListener("pointercancel", joystickEnd);
+
 // ================= Rendern =================
 
 function drawRoundRect(x,y,w,h,r,fill){
@@ -1090,6 +1140,34 @@ function drawPlayerSprite(){
   ctx.fillStyle="#2a1f18";
   ctx.beginPath(); ctx.arc(x-2.5,y-13,1,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(x+2.5,y-13,1,0,Math.PI*2); ctx.fill();
+
+  // Rucksack-Kapazitaet als x/x ueber dem Kopf
+  ctx.font = "bold 10px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  const capLabel = total+"/"+BACKPACK_CAPACITY;
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+  ctx.strokeText(capLabel, x, y-24);
+  ctx.fillStyle = fillRatio>=1 ? "#e04a4a" : "#fff";
+  ctx.fillText(capLabel, x, y-24);
+  ctx.textAlign = "left";
+}
+
+function drawDepositFx(){
+  if(!depositFx) return;
+  const elapsed = performance.now()-depositFx.startedAt;
+  if(elapsed>=DEPOSIT_FX_DURATION){ depositFx = null; return; }
+  const t = elapsed/DEPOSIT_FX_DURATION;
+  const rise = t*26, alpha = 1-t;
+  const label = "+"+depositFx.holz+" 🌳  +"+depositFx.stein+" 🪨";
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = "bold 12px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+  ctx.strokeText(label, 0, -40-rise);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, 0, -40-rise);
+  ctx.restore();
 }
 
 function drawEnemy(e){
@@ -1844,6 +1922,7 @@ function render(){
   drawAngreiferUnits(gridSize);
   drawRepairIndicator(gridSize);
   drawPlayerSprite();
+  drawDepositFx();
 
   projectiles.forEach(drawProjectile);
   enemies.forEach(drawEnemy);
@@ -1932,9 +2011,52 @@ const BASE_DEPOSIT_RADIUS = 40;
 
 function backpackTotal(){ return state.player.backpack.holz + state.player.backpack.stein; }
 
+const JOYSTICK_DEADZONE = 0.15; // kleine Ausschläge ignorieren, damit er nicht zittert
+
+// Beim manuellen Steuern per Joystick gibt es kein "Tap-Ziel" mit fester
+// Knoten-ID mehr - stattdessen wird im Vorbeilaufen eingesammelt, sobald
+// der Spieler nah genug an einem Knoten mit Inhalt ist.
+function collectNearbyNode(pl){
+  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS;
+  state.nodes.forEach(n=>{
+    if(n.amount<=0) return;
+    const p = nodeWorldPos(n);
+    const d = Math.hypot(p.x-pl.x, p.y-pl.y);
+    if(d<closestDist){ closestDist=d; closest=n; }
+  });
+  if(!closest) return;
+  const def = WATER_NODE_DEFS.find(d=>d.id===closest.id);
+  const room = BACKPACK_CAPACITY - backpackTotal();
+  const take = Math.min(closest.amount, room);
+  if(take>0){
+    pl.backpack[def.type] += take;
+    closest.amount -= take;
+    if(closest.amount<=0){
+      relocateNode(closest);
+      state.tutorialCollected = true;
+      checkTutorial();
+    }
+    save();
+  }
+}
+
+// Kurzer visueller Effekt beim Entleeren an der Base - keine Spielmechanik,
+// darum nicht in state/save, sondern nur lokal fuers Rendern.
+let depositFx = null;
+const DEPOSIT_FX_DURATION = 900;
+
 function updatePlayer(dt){
   const pl = state.player;
-  if(pl.moveTarget){
+  const joyLen = Math.hypot(joystickDir.x, joystickDir.y);
+  if(joyLen>JOYSTICK_DEADZONE){
+    // Manuelle Steuerung per Joystick geht vor - bricht ein per Tap gesetztes
+    // Auto-Ziel ab, der Spieler bestimmt direkt die Richtung.
+    pl.moveTarget = null;
+    const speedMult = Math.min(1, joyLen);
+    pl.x += (joystickDir.x/joyLen)*PLAYER_SPEED*speedMult*dt;
+    pl.y += (joystickDir.y/joyLen)*PLAYER_SPEED*speedMult*dt;
+    collectNearbyNode(pl);
+  } else if(pl.moveTarget){
     const dx = pl.moveTarget.x-pl.x, dy = pl.moveTarget.y-pl.y;
     const dist = Math.hypot(dx,dy);
     if(dist>PLAYER_ARRIVE_RADIUS){
@@ -1972,6 +2094,7 @@ function updatePlayer(dt){
     const cap = storageCap();
     state.resources.holz = Math.min(cap, state.resources.holz+pl.backpack.holz);
     state.resources.stein = Math.min(cap, state.resources.stein+pl.backpack.stein);
+    depositFx = { holz: pl.backpack.holz, stein: pl.backpack.stein, startedAt: performance.now() };
     pl.backpack.holz = 0; pl.backpack.stein = 0;
     save();
   }
