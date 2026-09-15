@@ -1,0 +1,3019 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Basis-Raster-Prototyp</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html,body {
+    margin:0; padding:0; background:#0d1620; color:#eee;
+    font-family: system-ui, sans-serif; user-select:none;
+    height:100%; overflow:hidden;
+  }
+  [hidden] { display:none !important; }
+  #app {
+    width:100%; max-width:480px; height:100vh; margin:0 auto;
+    display:flex; flex-direction:column; align-items:center;
+  }
+
+  #stage { position:relative; width:100%; flex:1; min-height:0; }
+  /* Color-Grading direkt auf dem Canvas: leicht entsaettigt, mehr Kontrast,
+     minimal waermer - derselbe Trick, mit dem Spiele ihren "Look" bekommen.
+     Kostet keine Rechenzeit im Zeichencode. */
+  canvas {
+    background:#0b1e28; display:block; touch-action:none; width:100%; height:100%;
+    filter: saturate(0.86) contrast(1.1) brightness(1.02);
+  }
+
+  #ctrlBar { position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:6px; }
+  #ctrlBar button {
+    width:34px; height:34px; border-radius:50%; border:1px solid rgba(255,255,255,0.18);
+    background:rgba(10,16,22,0.55); color:#eee; font-size:15px; cursor:pointer; line-height:1;
+  }
+
+  .buildmenu {
+    position:fixed; inset:0; background:rgba(0,0,0,.65); display:flex; align-items:center; justify-content:center; z-index:20;
+  }
+  .buildmenu .box { background:#1c2b3a; border:1px solid #3a5570; border-radius:8px; padding:16px; width:300px; max-width:88vw; }
+  .buildmenu h3 { margin:0 0 4px; font-size:15px; }
+  .buildmenu .hint2 { color:#8b96a5; font-size:11.5px; margin-bottom:10px; }
+  .buildopt {
+    display:flex; justify-content:space-between; align-items:center; padding:9px; border:1px solid #2e4358;
+    border-radius:5px; margin-bottom:7px; cursor:pointer; font-size:12.5px; gap:8px;
+  }
+  .buildopt.disabled { opacity:.4; }
+  .buildopt small { display:block; color:#8b96a5; margin-top:2px; }
+  .slotRow { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .slot {
+    width:34px; height:34px; border-radius:6px; border:1px solid #2e4358;
+    display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:600;
+  }
+  .slot.filled { background:rgba(106,212,106,0.15); border-color:#6ad46a; color:#6ad46a; }
+  .slot.empty { background:rgba(255,255,255,0.04); color:#8b96a5; cursor:pointer; }
+  .slot.empty.disabled { opacity:.4; cursor:default; }
+
+  #joystick {
+    position:absolute; left:14px; bottom:14px; width:104px; height:104px; border-radius:50%;
+    background:rgba(10,16,22,0.35); border:1px solid rgba(255,255,255,0.22); touch-action:none;
+  }
+  #joystickKnob {
+    position:absolute; left:50%; top:50%; width:42px; height:42px; margin:-21px;
+    border-radius:50%; background:rgba(255,255,255,0.4); border:1px solid rgba(255,255,255,0.6);
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="stage">
+    <canvas id="c" width="400" height="620"></canvas>
+    <div id="ctrlBar">
+      <button id="zoomIn">+</button>
+      <button id="centerBtn">◎</button>
+      <button id="zoomOut">−</button>
+    </div>
+    <div id="joystick"><div id="joystickKnob"></div></div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+const CELL = 62;
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let W = 400, H = 620;
+
+function resizeCanvas(){
+  const rect = canvas.parentElement.getBoundingClientRect();
+  W = Math.max(1, Math.round(rect.width));
+  H = Math.max(1, Math.round(rect.height));
+  canvas.width = W;
+  canvas.height = H;
+  if(typeof render === "function") render();
+}
+window.addEventListener("resize", resizeCanvas);
+window.addEventListener("orientationchange", resizeCanvas);
+
+const WATER_RADIUS = 700;
+const UNLOCK_BATCH = 4;      // pro Basis-Level werden 4 neue Felder frei
+// Das Raster waechst in mehreren Stufen ueber die Basis-Level verteilt (bis
+// Level 20 angelegt), nicht nur einmal - je hoeher das Level, desto mehr
+// Platz zum Bauen und desto mehr Raum fuer echte Pfad-Entscheidungen.
+const GRID_GROWTH_STEPS = [ {level:1,size:5}, {level:7,size:7}, {level:14,size:9} ];
+
+// ================= Raster-Geometrie (Groesse haengt vom Basis-Level ab) =================
+
+function gridSizeForLevel(level){
+  let size = GRID_GROWTH_STEPS[0].size;
+  for(const step of GRID_GROWTH_STEPS){ if(level>=step.level) size = step.size; }
+  return size;
+}
+function centerOf(gridSize){ return Math.floor(gridSize/2); }
+
+// Alle Felder ausser der Mitte, sortiert nach Abstand zur Mitte (naeher zuerst) -
+// so wachsen neue Freischaltungen immer ringfoermig von innen nach aussen.
+function cellList(gridSize){
+  const c0 = centerOf(gridSize);
+  const all = [];
+  for(let r=0;r<gridSize;r++) for(let c=0;c<gridSize;c++){
+    if(c===c0 && r===c0) continue;
+    all.push([c,r]);
+  }
+  all.sort((a,b)=>{
+    const da = Math.max(Math.abs(a[0]-c0),Math.abs(a[1]-c0));
+    const db = Math.max(Math.abs(b[0]-c0),Math.abs(b[1]-c0));
+    return da-db;
+  });
+  return all;
+}
+function cellCenter(c,r,gridSize){ const c0=centerOf(gridSize); return { x:(c-c0)*CELL, y:(r-c0)*CELL }; }
+
+// ================= Zustand =================
+
+const SAVE_KEY = "basis_raster_proto_v14";
+const TUTORIAL_START_UNLOCK = 8; // das ganze 3x3-Feld um die Base ist von Anfang an frei
+const MIN_WAVE_GAP = 30; // Sekunden Mindestabstand zwischen zwei Wellen
+const PLAYER_MAX_HP = 60;
+const HAFEN_UNLOCK_LEVEL = 7;
+// Die 8 Nachbarfelder: 4 gerade (Turm-Plaetze im Tutorial), 4 diagonal (Mauer-Plaetze)
+const TUTORIAL_TOWER_IDX = [1,3,4,6];
+const TUTORIAL_WALL_IDX  = [0,2,5,7];
+
+const WATER_NODE_DEFS = [
+  { id:"holz1", type:"holz", angle:20,  capacity:20, regenMs:1600 },
+  { id:"holz2", type:"holz", angle:160, capacity:20, regenMs:1600 },
+  { id:"holz3", type:"holz", angle:220, capacity:20, regenMs:1600 },
+  { id:"holz4", type:"holz", angle:340, capacity:20, regenMs:1600 },
+  { id:"stein1", type:"stein", angle:80,  capacity:16, regenMs:2200 },
+  { id:"stein2", type:"stein", angle:135, capacity:16, regenMs:2200 },
+  { id:"stein3", type:"stein", angle:270, capacity:16, regenMs:2200 },
+  { id:"stein4", type:"stein", angle:305, capacity:16, regenMs:2200 }
+];
+const NODE_WATER_MARGIN = 65; // Abstand der Ressourcen-Punkte zum Rastrand, immer im Wasser
+function gridHalfExtent(gridSize){ return centerOf(gridSize)*CELL + CELL/2; }
+
+function defaultState(){
+  return {
+    playerName: "Kommandant",
+    playerLevel: 1,
+    playerXp: 0,
+    resources: { holz: 60, stein: 30, gems: 0, coins: 0 },
+    basisLevel: 1,
+    baseHp: 100,
+    waveTimer: 15,
+    cellsByCoord: {},
+    nodes: WATER_NODE_DEFS.map(n=>({ id:n.id, amount:n.capacity, angle:n.angle })),
+    tutorialDone: false,
+    tutorialIntroShown: false,
+    tutorialCollected: false,
+    npc: { reparaturCount: 0, angreifer: [], training: null },
+    repairJob: null,
+    nextWaveComposition: null,
+    player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0 }
+  };
+}
+let state = load();
+
+// Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
+// anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
+// dann einmal neu laden - setzt Holz/Stein auf 100000.
+if(new URLSearchParams(location.search).get("cheat")==="1"){
+  state.resources.holz = 100000;
+  state.resources.stein = 100000;
+  save();
+}
+function load(){
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(d.resources && typeof d.resources.holz==="number" && d.cellsByCoord) return d;
+    }
+  } catch(e){}
+  return defaultState();
+}
+function save(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch(e){} }
+
+function canAfford(cost){ return state.resources.holz>=cost.holz && state.resources.stein>=cost.stein; }
+function payCost(cost){ state.resources.holz-=cost.holz; state.resources.stein-=cost.stein; }
+function scaleCost(cost, factor){ return { holz: Math.round(cost.holz*factor), stein: Math.round(cost.stein*factor) }; }
+function formatCost(cost){
+  const parts=[];
+  if(cost.holz) parts.push(cost.holz+" Holz");
+  if(cost.stein) parts.push(cost.stein+" Stein");
+  return parts.join(" · ") || "kostenlos";
+}
+
+const BUILDABLE_TYPES = {
+  turm:         { name:"Turm",         desc:"Verteidigungsturm, greift Angreifer an.", cost:{holz:20,stein:30}, baseHp:100, hpPerLevel:25 },
+  mauer:        { name:"Mauer",        desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", cost:{holz:16,stein:8}, baseHp:150, hpPerLevel:35 },
+  kaserne:      { name:"Kaserne",      desc:"Bildet Reparatur- und Angreifer-Trupps aus.", cost:{holz:50,stein:70}, baseHp:110, hpPerLevel:20 },
+  krankenhaus:  { name:"Krankenhaus",  desc:"Pflegeplätze für verletzte Angreifer, verkürzt die Heilzeit.", cost:{holz:45,stein:60}, baseHp:100, hpPerLevel:15 },
+  lager:        { name:"Lager",        desc:"Erhöht die maximale Lagerkapazität für Holz und Stein.", cost:{holz:40,stein:40}, baseHp:90, hpPerLevel:15 },
+  wachturm:     { name:"Wachturm",     desc:"Zeigt die Zusammensetzung der nächsten Welle vorher an.", cost:{holz:35,stein:45}, baseHp:80, hpPerLevel:10 },
+  handelsposten:{ name:"Handelsposten",desc:"Tauscht Holz und Stein gegeneinander (mit Verlust).", cost:{holz:40,stein:40}, baseHp:80, hpPerLevel:10 }
+};
+function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)); }
+function maxHpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp+(level-1)*d.hpPerLevel; }
+function sellRefund(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, 0.5*level); }
+function repairCost(type, b){
+  const max = maxHpFor(type,b.level);
+  const missing = Math.max(0, max-b.hp);
+  return scaleCost(BUILDABLE_TYPES[type].cost, (missing/max)*0.7);
+}
+
+// ================= NPCs: Reparatur-Trupp und Angreifer (aus der Kaserne) =================
+
+const KASERNE_UNLOCK_LEVEL = 4;
+const REPAIR_NPC_CAP = 1;      // bewusst klein - siehe CLAUDE.md, keine endlose Truppenmasse
+const ANGREIFER_CAP = 4;
+const REPAIR_NPC_BASE_TIME = 25;
+const ANGREIFER_STATS = { hp:35, dmg:5, range:190, rate:0.7 }; // Reichweite > jeder Turm, faengt Laeufer vorher ab
+const NPC_TRAIN_DEFS = {
+  reparatur: { name:"Reparatur-Trupp", cost:{holz:40,stein:25}, baseTime:20, desc:"Repariert automatisch beschädigte Gebäude über Zeit (niedrigste HP zuerst)." },
+  angreifer: { name:"Angreifer",       cost:{holz:55,stein:35}, baseTime:28, desc:"Fängt schnelle Läufer ab, bevor sie deine Türme erreichen." }
+};
+
+function findBuildingByType(type){
+  for(const slot of Object.values(state.cellsByCoord)){
+    if(slot.building && slot.building.type===type) return slot.building;
+  }
+  return null;
+}
+function findKaserne(){ return findBuildingByType("kaserne"); }
+function hasKaserne(){ return !!findKaserne(); }
+function findKrankenhaus(){ return findBuildingByType("krankenhaus"); }
+function hasKrankenhaus(){ return !!findKrankenhaus(); }
+// Krankenhaus ist ein eigenes Gebaeude, getrennt von der Kaserne - seine
+// Kapazitaet/Heilzeit haengt an SEINEM Level. Ist es weg oder die
+// Kapazitaet voll, ist ein besiegter Angreifer permanent verloren.
+function hospitalCapacity(){ const k=findKrankenhaus(); return k ? k.level : 0; }
+function healTimeFor(){ const k=findKrankenhaus(); const lvl=k?k.level:1; return Math.max(8, 30-(lvl-1)*4); }
+function activeAngreiferCount(){ return state.npc.angreifer.filter(a=>a.status==="aktiv").length; }
+
+// ================= Lager, Wachturm, Handelsposten =================
+
+const LAGER_UNLOCK_LEVEL = 2;
+const WACHTURM_UNLOCK_LEVEL = 3;
+const HANDEL_UNLOCK_LEVEL = 4;
+const BASE_STORAGE_CAP = 150; // Kapazitaet pro Rohstoff, auch ganz ohne Lager
+
+function findLager(){ return findBuildingByType("lager"); }
+function hasLager(){ return !!findLager(); }
+// Ressourcen sind ohne Lager knapp gedeckelt - Ueberschuss beim Sammeln geht
+// verloren, das erzwingt aktives Ausgeben statt endlosem Horten.
+function storageCap(){ const l=findLager(); return BASE_STORAGE_CAP + (l ? l.level*80 : 0); }
+
+function findWachturm(){ return findBuildingByType("wachturm"); }
+function hasWachturm(){ return !!findWachturm(); }
+
+function findHandelsposten(){ return findBuildingByType("handelsposten"); }
+function hasHandelsposten(){ return !!findHandelsposten(); }
+// Tauschkurs bleibt immer schlechter als 1:1 - kein Ersatz fuers Sammeln,
+// nur eine Notloesung bei Engpass.
+function tradeRate(level){ return Math.min(0.75, 0.5+level*0.05); }
+
+// unlockLevel gilt fuer BEIDE Bedingungen zugleich: Basis-Level (genereller
+// Spielfortschritt) UND das Level des einzelnen Turms (Investition in genau
+// diesen Turm). Nur eins davon zu pruefen erlaubt jeweils einen Exploit:
+// nur Basis-Level -> Kanone quasi geschenkt sobald die Basis hoch genug ist;
+// nur Turm-Level -> ein einzelner Turm laesst sich unabhaengig vom
+// Spielfortschritt hochkaufen.
+const WEAPONS = {
+  bogen:   { name:"Bogen",   desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
+  kanone:  { name:"Kanone",  desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 },
+  moerser: { name:"Mörser",  desc:"Flächenschaden, aber Mindestreichweite - trifft nichts direkt daneben.", unlockLevel:6 }
+};
+
+function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,level-1)), stein: Math.round(45*Math.pow(1.55,level-1)) }; }
+
+// ================= Spieler-Level/EXP - eigenstaendig von Basis-Level =================
+// Kommt aus zwei echten Quellen: Wellen ueberstehen und irgendwas verbessern
+// (Basis-Level oder Gebaeude-Level) - keine Deko-Zahl ohne Bedeutung.
+
+function xpForLevel(level){ return Math.round(60*Math.pow(1.22,level-1)); }
+function waveXpReward(){ return 18+state.basisLevel*5; }
+function basisUpgradeXp(newLevel){ return 25+newLevel*8; }
+function buildingUpgradeXp(newLevel){ return 6+newLevel*3; }
+
+function addPlayerXp(amount){
+  state.playerXp += amount;
+  let leveledUp = false;
+  while(state.playerXp >= xpForLevel(state.playerLevel)){
+    state.playerXp -= xpForLevel(state.playerLevel);
+    state.playerLevel++;
+    leveledUp = true;
+  }
+  if(leveledUp) playerLevelUpFx = { level: state.playerLevel, startedAt: performance.now() };
+  save();
+}
+
+// ================= Basis-Level: schaltet Felder frei, laesst das Raster wachsen =================
+
+function unlockCountForLevel(level){ return TUTORIAL_START_UNLOCK + (level-1)*UNLOCK_BATCH; }
+
+function applyUnlocksForCurrentLevel(){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const list = cellList(gridSize);
+  const unlockCount = Math.min(unlockCountForLevel(state.basisLevel), list.length);
+  list.forEach(([c,r],i)=>{
+    const key=c+","+r;
+    if(!state.cellsByCoord[key]) state.cellsByCoord[key]={unlocked:false,building:null};
+    if(i<unlockCount) state.cellsByCoord[key].unlocked = true;
+  });
+}
+applyUnlocksForCurrentLevel();
+
+function upgradeBasis(){
+  const cost = basisUpgradeCost(state.basisLevel);
+  if(!canAfford(cost)) return false;
+  payCost(cost);
+  const oldSize = gridSizeForLevel(state.basisLevel);
+  state.basisLevel++;
+  const newSize = gridSizeForLevel(state.basisLevel);
+  if(newSize>oldSize){
+    const shift = centerOf(newSize)-centerOf(oldSize);
+    const remapped = {};
+    Object.entries(state.cellsByCoord).forEach(([key,val])=>{
+      const [c,r] = key.split(",").map(Number);
+      remapped[(c+shift)+","+(r+shift)] = val;
+    });
+    state.cellsByCoord = remapped;
+    // Ein laufender Reparatur-Auftrag zeigt sonst nach dem Raster-Umzug auf
+    // ein falsches/nicht mehr existierendes Feld.
+    if(state.repairJob){
+      const [c,r] = state.repairJob.key.split(",").map(Number);
+      state.repairJob.key = (c+shift)+","+(r+shift);
+    }
+  }
+  applyUnlocksForCurrentLevel();
+  addPlayerXp(basisUpgradeXp(state.basisLevel));
+  save();
+  return true;
+}
+
+function nextLevelDescription(){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const list = cellList(gridSize);
+  const currentUnlocked = Math.min(unlockCountForLevel(state.basisLevel), list.length);
+  const newSize = gridSizeForLevel(state.basisLevel+1);
+  if(newSize>gridSize) return "Vergrößert das Raster auf "+newSize+"x"+newSize+"!";
+  const nextUnlocked = Math.min(unlockCountForLevel(state.basisLevel+1), list.length);
+  return "+"+(nextUnlocked-currentUnlocked)+" neue Bauplätze";
+}
+
+// ================= Tutorial: erste Verteidigung vor der ersten Welle =================
+
+function tutorialTargets(){
+  const list = cellList(gridSizeForLevel(state.basisLevel));
+  return {
+    towers: TUTORIAL_TOWER_IDX.map(i=>list[i]),
+    walls: TUTORIAL_WALL_IDX.map(i=>list[i])
+  };
+}
+
+function checkTutorial(){
+  if(state.tutorialDone) return;
+  const t = tutorialTargets();
+  const towersOk = t.towers.every(([c,r])=>{
+    const slot = state.cellsByCoord[c+","+r];
+    return slot && slot.building && slot.building.type==="turm";
+  });
+  const wallsOk = t.walls.every(([c,r])=>{
+    const slot = state.cellsByCoord[c+","+r];
+    return slot && slot.building && slot.building.type==="mauer";
+  });
+  if(towersOk && wallsOk && state.tutorialCollected){
+    state.tutorialDone = true;
+    state.waveTimer = 15;
+    save();
+  }
+}
+
+function tutorialProgressText(){
+  const t = tutorialTargets();
+  const towersDone = t.towers.filter(([c,r])=>{
+    const slot = state.cellsByCoord[c+","+r]; return slot && slot.building && slot.building.type==="turm";
+  }).length;
+  const wallsDone = t.walls.filter(([c,r])=>{
+    const slot = state.cellsByCoord[c+","+r]; return slot && slot.building && slot.building.type==="mauer";
+  }).length;
+  const done = towersDone+wallsDone+(state.tutorialCollected?1:0);
+  return done+"/9";
+}
+
+// Naechstes Tutorial-Ziel: welches Feld/Element muss der Spieler als Naechstes antippen?
+function nodeForResource(resType){
+  return state.nodes
+    .filter(n=>WATER_NODE_DEFS.find(d=>d.id===n.id).type===resType)
+    .sort((a,b)=>b.amount-a.amount)[0];
+}
+
+// Wenn das naechste Pflichtgebaeude gerade nicht bezahlbar ist, zeigt die
+// Markierung stattdessen auf den Rohstoff, der noch fehlt - bis es reicht.
+function targetForBuilding(type, c, r, label){
+  const cost = BUILDABLE_TYPES[type].cost;
+  if(canAfford(cost)) return {kind:"cell", c, r, label};
+  const missingHolz = Math.max(0, cost.holz-state.resources.holz);
+  const missingStein = Math.max(0, cost.stein-state.resources.stein);
+  const resType = missingStein>missingHolz ? "stein" : "holz";
+  return {kind:"node", node:nodeForResource(resType), label:(resType==="holz"?"Holz":"Stein")+" sammeln"};
+}
+
+function nextTutorialTarget(){
+  if(state.tutorialDone) return null;
+  const t = tutorialTargets();
+  for(const [c,r] of t.towers){
+    const slot = state.cellsByCoord[c+","+r];
+    if(!(slot && slot.building && slot.building.type==="turm")) return targetForBuilding("turm", c, r, "Turm bauen");
+  }
+  for(const [c,r] of t.walls){
+    const slot = state.cellsByCoord[c+","+r];
+    if(!(slot && slot.building && slot.building.type==="mauer")) return targetForBuilding("mauer", c, r, "Mauer bauen");
+  }
+  if(!state.tutorialCollected) return {kind:"node", label:"Rohstoffe sammeln"};
+  return null;
+}
+
+// ================= Ressourcen-Knoten im Wasser =================
+
+setInterval(()=>{
+  let changed=false;
+  state.nodes.forEach(n=>{
+    const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
+    if(n.amount<def.capacity){ n.amount++; changed=true; }
+  });
+  if(changed){ save(); render(); }
+}, 900);
+
+function nodeWorldPos(node){
+  const radius = gridHalfExtent(gridSizeForLevel(state.basisLevel)) + NODE_WATER_MARGIN;
+  const rad = node.angle*Math.PI/180;
+  return { x: Math.cos(rad)*radius, y: Math.sin(rad)*radius };
+}
+
+// ================= Wellen: Gegner spawnen, Tuerme feuern =================
+
+const WEAPON_STATS = {
+  bogen:   { dmg: 6,  range: 130, rate: 0.9,  pierce:false },
+  kanone:  { dmg: 14, range: 150, rate: 1.6,  pierce:true  },
+  // Moerser: Flaechenschaden statt Einzelziel, aber mit Mindestreichweite
+  // (kann nichts direkt neben sich treffen) und langsamer Feuerrate - stark
+  // gegen mehrere Laeufer auf einmal, schwach gegen ein einzelnes Ziel.
+  moerser: { dmg: 8,  range: 190, minRange: 55, rate: 2.4, pierce:false, splash: 42 }
+};
+function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return w.dmg + (b.level-1)*2; }
+function maxBaseHp(){ return 100 + (state.basisLevel-1)*20; }
+
+// "Kraft" ist reine Anzeige (Machtwert) - fasst zusammen, was man insgesamt
+// aufgebaut hat. Aktuell ohne eigene Funktion im Spiel, spaeter Basis fuer
+// Vergleiche beim Online-Angreifen (wer ist staerker als wer).
+function computeKraft(){
+  let kraft = state.basisLevel*10;
+  Object.values(state.cellsByCoord).forEach(slot=>{
+    if(slot.building) kraft += slot.building.level*5;
+  });
+  kraft += state.npc.reparaturCount*8;
+  kraft += state.npc.angreifer.length*8;
+  return kraft;
+}
+
+// Zwei Gegnertypen mit echten Gegenspielern statt nur unterschiedlicher Zahlen:
+// Laeufer ist schnell/schwach -> stirbt an der schnellen Feuerrate vom Bogen.
+// Brecher ist langsam/zaeh und traegt Ruestung, die Bogen-Treffer stark
+// abschwaecht - nur die durchschlagende Kanone macht bei ihm vollen Schaden.
+const ENEMY_TYPES = {
+  laeufer: { name:"Läufer", hpMult:0.55, speedMult:1.7, dmgMult:0.6, r:8,  armor:0, color:"#c9843a" },
+  brecher: { name:"Brecher", hpMult:2.6, speedMult:0.55, dmgMult:1.8, r:13, armor:5, color:"#5a3a6a" }
+};
+
+let enemies = [];
+let projectiles = [];
+let waveActive = false;
+
+// Nur wer bereits eine Kanone gebaut hat, kann Bruecher ueberhaupt kontern -
+// deshalb tauchen sie nicht einfach ab einem festen Basis-Level auf, sondern
+// erst, wenn der Spieler die Kanone tatsaechlich freigeschaltet hat.
+function hasKanoneTower(){
+  return Object.values(state.cellsByCoord).some(slot=>
+    slot.building && slot.building.type==="turm" && slot.building.weapon==="kanone"
+  );
+}
+
+// HP/Schaden wachsen nur bis zu diesem Level linear mit - danach wird die
+// Schwierigkeit ueber neue Gegnertypen/Zusammensetzung geloest, nicht ueber
+// endlos steigende Zahlen (sonst wird's bei einem sehr lang angelegten Spiel
+// irgendwann absurd).
+const STAT_SCALING_CAP_LEVEL = 15;
+
+function pickWaveComposition(){
+  const level = state.basisLevel;
+  const count = Math.min(3+Math.floor(level/2), 10);
+  const canFaceBrecher = hasKanoneTower();
+  const brecherChance = canFaceBrecher ? Math.min(0.45, 0.1+level*0.03) : 0;
+  const types = [];
+  for(let i=0;i<count;i++){
+    types.push(Math.random()<brecherChance ? "brecher" : "laeufer");
+  }
+  return types;
+}
+
+function spawnWave(){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const spawnRadius = gridHalfExtent(gridSize) + NODE_WATER_MARGIN + 40;
+  const scalingLevel = Math.min(state.basisLevel, STAT_SCALING_CAP_LEVEL);
+  const baseHp = 26+scalingLevel*6;
+  const baseDmg = 5+Math.floor(scalingLevel/2);
+  const composition = state.nextWaveComposition || pickWaveComposition();
+  state.nextWaveComposition = null;
+  composition.forEach(typeKey=>{
+    const type = ENEMY_TYPES[typeKey];
+    const angle = Math.random()*Math.PI*2;
+    const hp = Math.round(baseHp*type.hpMult);
+    const enemy = {
+      x: Math.cos(angle)*spawnRadius, y: Math.sin(angle)*spawnRadius,
+      hp, maxHp: hp, typeKey, armor: type.armor, r: type.r,
+      dmg: Math.round(baseDmg*type.dmgMult) || 1,
+      speed: (24+Math.random()*8)*type.speedMult,
+      attackCd: 0,
+      pathIndex: 0
+    };
+    // Weg wird einmal beim Spawn berechnet (nicht live neu geplant, wenn
+    // spaeter noch etwas gebaut wird) - reicht fuer eine einzelne Welle.
+    enemy.path = buildEnemyPath(enemy, gridSize);
+    enemies.push(enemy);
+  });
+  waveActive = true;
+}
+
+function waveLoot(){
+  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3 };
+}
+
+// ================= Wegfindung: Gegner suchen sich einen Weg zur Base statt =================
+// ================= wahllos das naechste Gebaeude anzugreifen =================
+
+function gridCellBlocked(c,r,gridSize){
+  const slot = state.cellsByCoord[c+","+r];
+  return !!(slot && slot.building && slot.building.hp>0);
+}
+
+// Dijkstra ueber das Raster: freie Zellen kosten 1, Zellen mit einem noch
+// lebenden Gebaeude kosten deutlich mehr - der Pfad weicht Gebaeuden also
+// aus, WENN es einen freien Weg gibt, und zerstoert nur das, was wirklich
+// im Weg steht (der guenstigste Weg durch, falls kein Umweg existiert).
+function computeGridPath(gridSize, startC, startR){
+  const c0 = centerOf(gridSize);
+  const key = (c,r)=>c+","+r;
+  const dist = {}, prev = {}, visited = {};
+  const startKey = key(startC,startR);
+  dist[startKey] = 0;
+  const queue = [[0,startC,startR]];
+  while(queue.length){
+    let bi=0; for(let i=1;i<queue.length;i++){ if(queue[i][0]<queue[bi][0]) bi=i; }
+    const [d,c,r] = queue.splice(bi,1)[0];
+    const k = key(c,r);
+    if(visited[k]) continue;
+    visited[k] = true;
+    if(c===c0 && r===c0) break;
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dc,dr])=>{
+      const nc=c+dc, nr=r+dr;
+      if(nc<0||nc>=gridSize||nr<0||nr>=gridSize) return;
+      const nk = key(nc,nr);
+      if(visited[nk]) return;
+      const isBase = (nc===c0 && nr===c0);
+      const cost = (!isBase && gridCellBlocked(nc,nr,gridSize)) ? 40 : 1;
+      const nd = d+cost;
+      if(dist[nk]===undefined || nd<dist[nk]){ dist[nk]=nd; prev[nk]=k; queue.push([nd,nc,nr]); }
+    });
+  }
+  const endKey = key(c0,c0);
+  if(dist[endKey]===undefined) return null;
+  const path = []; let cur = endKey;
+  while(cur){ const [cc,rr]=cur.split(",").map(Number); path.unshift({c:cc,r:rr}); cur = prev[cur]; }
+  return path;
+}
+
+function nearestEdgeCell(x,y,gridSize){
+  let best=null, bestD=Infinity;
+  for(let c=0;c<gridSize;c++) for(let r=0;r<gridSize;r++){
+    if(c!==0 && c!==gridSize-1 && r!==0 && r!==gridSize-1) continue;
+    const p = cellCenter(c,r,gridSize);
+    const d = Math.hypot(x-p.x,y-p.y);
+    if(d<bestD){ bestD=d; best={c,r}; }
+  }
+  return best;
+}
+
+function buildEnemyPath(e, gridSize){
+  const edge = nearestEdgeCell(e.x,e.y,gridSize);
+  const raw = computeGridPath(gridSize, edge.c, edge.r);
+  if(!raw) return [];
+  return raw.map(({c,r})=>({c,r,...cellCenter(c,r,gridSize)}));
+}
+
+function damageRandomAngreifer(dmg){
+  const active = state.npc.angreifer.filter(a=>a.status==="aktiv");
+  if(active.length===0) return;
+  const a = active[Math.floor(Math.random()*active.length)];
+  a.hp -= dmg;
+  if(a.hp<=0){
+    const healingCount = state.npc.angreifer.filter(x=>x.status==="verletzt").length;
+    if(healingCount < hospitalCapacity()){
+      a.status = "verletzt"; a.hp = 0; a.healLeft = healTimeFor();
+    } else {
+      state.npc.angreifer = state.npc.angreifer.filter(x=>x!==a); // Krankenhaus voll -> permanent verloren
+    }
+  }
+}
+
+const PLAYER_AGGRO_RADIUS = 90; // Gegner in dieser Naehe lassen kurz von ihrem Weg ab und greifen den Spieler an
+const PLAYER_COMBAT_RADIUS = 10;
+const PLAYER_INVULN_TIME = 1.5; // Sekunden Schonfrist nach einem K.o., damit man nicht sofort wieder erwischt wird
+
+function updateWave(dt){
+  if(!state.tutorialDone) return;
+
+  const pl = state.player;
+  if(pl.invulnCd>0) pl.invulnCd = Math.max(0, pl.invulnCd-dt);
+
+  if(enemies.length===0){
+    // Wachturm rollt die naechste Zusammensetzung vorab aus, damit man sich
+    // vorbereiten kann, statt von der Welle ueberrascht zu werden.
+    if(hasWachturm() && !state.nextWaveComposition) state.nextWaveComposition = pickWaveComposition();
+    state.waveTimer -= dt;
+    if(state.waveTimer<=0){
+      spawnWave();
+      state.waveTimer = MIN_WAVE_GAP + Math.random()*15;
+      save();
+    }
+  }
+
+  const gridSize = gridSizeForLevel(state.basisLevel);
+
+  const c0 = centerOf(gridSize);
+  enemies.forEach(e=>{
+    if(!e.path) e.path = [];
+    if(e.pathIndex===undefined) e.pathIndex = 0;
+
+    // Naechster Wegpunkt auf dem berechneten Pfad zur Base. Kein Pfad
+    // (Insel komplett zugebaut und unerreichbar) oder Pfad abgelaufen ->
+    // direkt auf die Base zuhalten als Rueckfallebene.
+    let waypoint = e.path[e.pathIndex];
+    if(!waypoint) waypoint = {c:c0, r:c0, x:0, y:0};
+
+    const isBaseCell = waypoint.c===c0 && waypoint.r===c0;
+    const slot = isBaseCell ? null : state.cellsByCoord[waypoint.c+","+waypoint.r];
+    const blockingBuilding = (slot && slot.building && slot.building.hp>0) ? slot.building : null;
+
+    let target;
+    // Kommt der Spieler einem Gegner zu nahe, laesst der kurz von seinem Weg
+    // ab und greift ihn an - der Pfad selbst (pathIndex) bleibt dabei
+    // unveraendert, sobald der Spieler wieder ausser Reichweite ist, geht's
+    // exakt da weiter, wo der Gegner stehengeblieben ist.
+    if(pl.invulnCd<=0 && Math.hypot(pl.x-e.x,pl.y-e.y)<=PLAYER_AGGRO_RADIUS){
+      target = {x:pl.x,y:pl.y,r:PLAYER_COMBAT_RADIUS,isPlayer:true};
+    } else if(e.typeKey==="laeufer" && activeAngreiferCount()>0 &&
+       Math.hypot(e.x,e.y) <= ANGREIFER_STATS.range){
+      target = {x:0,y:0,r:24,isAngreifer:true};
+    } else if(isBaseCell){
+      target = {x:0,y:0,r:29,isBase:true};
+    } else if(blockingBuilding){
+      // Dieses Gebaeude steht wirklich im Weg (guenstigster Pfad fuehrt
+      // durch seine Zelle) - nur DAS wird angegriffen, nicht alles auf der Insel.
+      target = {x:waypoint.x,y:waypoint.y,r:27,slot};
+    } else {
+      // Freies Durchgangsfeld auf dem Weg - hier wird nicht gekaempft,
+      // nur durchgelaufen.
+      target = {x:waypoint.x,y:waypoint.y,r:4,isWaypoint:true};
+    }
+
+    const dist = Math.hypot(target.x-e.x, target.y-e.y);
+    const stopDist = target.r+e.r+2;
+    if(dist>stopDist){
+      const ang = Math.atan2(target.y-e.y, target.x-e.x);
+      e.x += Math.cos(ang)*e.speed*dt;
+      e.y += Math.sin(ang)*e.speed*dt;
+    } else if(target.isWaypoint){
+      e.pathIndex++;
+    } else {
+      e.attackCd -= dt;
+      if(e.attackCd<=0){
+        e.attackCd = 1;
+        if(target.isBase){
+          const wasAlive = state.baseHp>0;
+          state.baseHp = Math.max(0, state.baseHp-e.dmg);
+          if(wasAlive && state.baseHp<=0){
+            // Base ueberrannt: alle Gebaeude gehen kaputt (nicht weg - muessen
+            // repariert werden) statt dass einfach nichts passiert, wenn man
+            // die Base sterben laesst hat das jetzt echte Konsequenzen.
+            Object.values(state.cellsByCoord).forEach(s=>{ if(s.building) s.building.hp = 0; });
+            state.baseHp = maxBaseHp();
+            enemies = [];
+            waveActive = false;
+          }
+        } else if(target.isAngreifer){
+          damageRandomAngreifer(e.dmg);
+        } else if(target.isPlayer){
+          pl.hp = Math.max(0, pl.hp-e.dmg);
+          if(pl.hp<=0){
+            // K.o.: der komplette Rucksack-Inhalt geht verloren (echtes Risiko
+            // beim Sammeln waehrend einer Welle), Respawn an der Base mit
+            // kurzer Unverwundbarkeit statt sofortigem erneuten Treffer.
+            pl.backpack.holz = 0; pl.backpack.stein = 0;
+            pl.x = 0; pl.y = 0;
+            pl.hp = PLAYER_MAX_HP;
+            pl.invulnCd = PLAYER_INVULN_TIME;
+            pl.moveTarget = null;
+            knockoutFx = { startedAt: performance.now() };
+          }
+        } else {
+          target.slot.building.hp = Math.max(0, target.slot.building.hp-e.dmg);
+          if(target.slot.building.hp<=0) e.pathIndex++; // Weg ist jetzt frei -> weiter Richtung Base
+        }
+        save();
+      }
+    }
+  });
+
+  Object.entries(state.cellsByCoord).forEach(([key,slot])=>{
+    if(!slot.building || slot.building.type!=="turm" || slot.building.hp<=0) return;
+    const [c,r] = key.split(",").map(Number);
+    const p = cellCenter(c,r,gridSize);
+    const b = slot.building;
+    const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen;
+    b.fireCd = (b.fireCd||0) - dt;
+    if(b.fireCd>0) return;
+    let nearest=null, nd=Infinity;
+    enemies.forEach(e=>{
+      const d = Math.hypot(e.x-p.x,e.y-p.y);
+      if(d<=w.range && (!w.minRange || d>=w.minRange) && d<nd){ nd=d; nearest=e; }
+    });
+    if(nearest){
+      b.fireCd = w.rate;
+      const ang = Math.atan2(nearest.y-p.y, nearest.x-p.x);
+      projectiles.push({x:p.x,y:p.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b),pierce:w.pierce,splash:w.splash});
+    }
+  });
+
+  // Angreifer stehen an der Base, haben mehr Reichweite als Tuerme und
+  // zielen nur auf Laeufer - sie fangen sie ab, bevor Tuerme reagieren.
+  state.npc.angreifer.forEach(a=>{
+    if(a.status!=="aktiv") return;
+    a.fireCd = (a.fireCd||0) - dt;
+    if(a.fireCd>0) return;
+    let nearest=null, nd=Infinity;
+    enemies.forEach(e=>{
+      if(e.typeKey!=="laeufer") return;
+      const d = Math.hypot(e.x,e.y);
+      if(d<=ANGREIFER_STATS.range && d<nd){ nd=d; nearest=e; }
+    });
+    if(nearest){
+      a.fireCd = ANGREIFER_STATS.rate;
+      const ang = Math.atan2(nearest.y,nearest.x);
+      projectiles.push({x:0,y:0,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.4,dmg:ANGREIFER_STATS.dmg,pierce:false});
+    }
+  });
+
+  projectiles.forEach(pr=>{ pr.x+=pr.vx*dt; pr.y+=pr.vy*dt; pr.life-=dt; });
+  for(let i=projectiles.length-1;i>=0;i--){
+    const pr = projectiles[i];
+    let hit = pr.life<=0;
+    enemies.forEach(e=>{
+      if(!hit && Math.hypot(pr.x-e.x,pr.y-e.y)<e.r+4){
+        if(pr.splash){
+          // Flaechenschaden: alle Gegner im Radius um den Einschlag treffen,
+          // nicht nur das eine Ziel
+          const ix=pr.x, iy=pr.y;
+          enemies.forEach(e2=>{
+            if(Math.hypot(ix-e2.x,iy-e2.y)<=pr.splash){
+              const d2 = (e2.armor && !pr.pierce) ? Math.max(1, pr.dmg-e2.armor) : pr.dmg;
+              e2.hp -= d2;
+            }
+          });
+        } else {
+          const dmg = (e.armor && !pr.pierce) ? Math.max(1, pr.dmg-e.armor) : pr.dmg;
+          e.hp -= dmg;
+        }
+        hit = true;
+      }
+    });
+    if(hit) projectiles.splice(i,1);
+  }
+  enemies = enemies.filter(e=>e.hp>0);
+
+  if(waveActive && enemies.length===0){
+    const loot = waveLoot();
+    const cap = storageCap();
+    state.resources.holz = Math.min(cap, state.resources.holz+loot.holz);
+    state.resources.stein = Math.min(cap, state.resources.stein+loot.stein);
+    waveActive = false;
+    addPlayerXp(waveXpReward());
+    save();
+  }
+}
+
+// ================= Reparatur-Trupp: repariert automatisch, niedrigste HP% zuerst =================
+
+function updateRepairJob(dt){
+  if(state.npc.reparaturCount<=0) return;
+  if(state.repairJob){
+    const slot = state.cellsByCoord[state.repairJob.key];
+    if(!slot || !slot.building){ state.repairJob = null; return; }
+    state.repairJob.timeLeft -= dt;
+    if(state.repairJob.timeLeft<=0){
+      slot.building.hp = maxHpFor(slot.building.type, slot.building.level);
+      state.repairJob = null;
+      save();
+    }
+    return;
+  }
+  let targetKey=null, worstRatio=1;
+  Object.entries(state.cellsByCoord).forEach(([key,slot])=>{
+    if(!slot.building) return;
+    const max = maxHpFor(slot.building.type, slot.building.level);
+    if(slot.building.hp<max){
+      const ratio = slot.building.hp/max;
+      if(ratio<worstRatio){ worstRatio=ratio; targetKey=key; }
+    }
+  });
+  if(!targetKey) return;
+  const b = state.cellsByCoord[targetKey].building;
+  const cost = repairCost(b.type,b);
+  if(!canAfford(cost)) return; // wartet, bis genug Ressourcen da sind
+  payCost(cost);
+  const k = findKaserne();
+  const totalTime = Math.max(4, REPAIR_NPC_BASE_TIME-((k?k.level:1)-1)*3);
+  state.repairJob = { key: targetKey, timeLeft: totalTime, totalTime };
+  save();
+}
+
+// ================= Ausbildung (Kaserne) und Krankenhaus-Heilung =================
+
+function updateTraining(dt){
+  if(!state.npc.training) return;
+  state.npc.training.timeLeft -= dt;
+  if(state.npc.training.timeLeft<=0){
+    if(state.npc.training.kind==="reparatur") state.npc.reparaturCount++;
+    else state.npc.angreifer.push({ hp:ANGREIFER_STATS.hp, maxHp:ANGREIFER_STATS.hp, status:"aktiv", healLeft:0, fireCd:0 });
+    state.npc.training = null;
+    save();
+  }
+}
+
+function updateHospital(dt){
+  state.npc.angreifer.forEach(a=>{
+    if(a.status!=="verletzt") return;
+    a.healLeft -= dt;
+    if(a.healLeft<=0){ a.status="aktiv"; a.hp=a.maxHp; save(); }
+  });
+}
+
+// ================= Kamera (Zoom & Verschieben) =================
+
+const camera = { x:0, y:0, scale:1 };
+function clampCamera(){
+  const d = Math.hypot(camera.x,camera.y);
+  const max = WATER_RADIUS-40;
+  if(d>max){ camera.x = camera.x/d*max; camera.y = camera.y/d*max; }
+  camera.scale = Math.max(0.5, Math.min(2.4, camera.scale));
+}
+function screenToWorld(sx,sy){
+  return { x:(sx-W/2)/camera.scale + camera.x, y:(sy-H/2)/camera.scale + camera.y };
+}
+
+const pointers = new Map();
+let dragTotal = 0;
+let pinchStartDist = 0, pinchStartScale = 1;
+
+function canvasPos(e){
+  const rect = canvas.getBoundingClientRect();
+  return { x:(e.clientX-rect.left)*(W/rect.width), y:(e.clientY-rect.top)*(H/rect.height) };
+}
+
+canvas.addEventListener("pointerdown", e=>{
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, canvasPos(e));
+  dragTotal = 0;
+  if(pointers.size===2){
+    const pts = [...pointers.values()];
+    pinchStartDist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+    pinchStartScale = camera.scale;
+  }
+});
+canvas.addEventListener("pointermove", e=>{
+  if(!pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId);
+  const cur = canvasPos(e);
+  pointers.set(e.pointerId, cur);
+
+  if(pointers.size===2){
+    const pts = [...pointers.values()];
+    const dist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+    if(pinchStartDist>10){ camera.scale = pinchStartScale * (dist/pinchStartDist); clampCamera(); render(); }
+  } else if(pointers.size===1){
+    const dx = cur.x-prev.x, dy = cur.y-prev.y;
+    dragTotal += Math.hypot(dx,dy);
+    camera.x -= dx/camera.scale;
+    camera.y -= dy/camera.scale;
+    clampCamera();
+    render();
+  }
+});
+function pointerEnd(e){
+  const wasSingle = pointers.size===1;
+  const pos = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  if(wasSingle && dragTotal<8 && pos){
+    const w = screenToWorld(pos.x,pos.y);
+    handleTap(w.x,w.y);
+  }
+  if(pointers.size<2) pinchStartDist=0;
+}
+canvas.addEventListener("pointerup", pointerEnd);
+canvas.addEventListener("pointercancel", pointerEnd);
+
+canvas.addEventListener("wheel", e=>{
+  e.preventDefault();
+  camera.scale *= (e.deltaY<0) ? 1.1 : 0.9;
+  clampCamera(); render();
+}, {passive:false});
+
+document.getElementById("zoomIn").addEventListener("click", ()=>{ camera.scale*=1.2; clampCamera(); render(); });
+document.getElementById("zoomOut").addEventListener("click", ()=>{ camera.scale*=0.83; clampCamera(); render(); });
+document.getElementById("centerBtn").addEventListener("click", ()=>{ camera.x=0; camera.y=0; camera.scale=1; render(); });
+
+// ================= Joystick (Spieler-Steuerung) =================
+// Eigene, ungespeicherte Richtung - solange sie aktiv ist, uebersteuert sie
+// ein per Tap gesetztes moveTarget (manuelle Kontrolle geht vor Auto-Lauf).
+const joystickEl = document.getElementById("joystick");
+const joystickKnob = document.getElementById("joystickKnob");
+const JOYSTICK_MAX = 40; // px, wie weit der Knopf aus der Mitte wandern kann
+let joystickDir = {x:0,y:0}; // normiert, Laenge 0..1
+let joystickPointerId = null;
+
+function setJoystickFromEvent(e){
+  const rect = joystickEl.getBoundingClientRect();
+  const cx = rect.left+rect.width/2, cy = rect.top+rect.height/2;
+  let dx = e.clientX-cx, dy = e.clientY-cy;
+  const dist = Math.hypot(dx,dy);
+  if(dist>JOYSTICK_MAX){ dx = dx/dist*JOYSTICK_MAX; dy = dy/dist*JOYSTICK_MAX; }
+  joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  joystickDir = { x: dx/JOYSTICK_MAX, y: dy/JOYSTICK_MAX };
+}
+function resetJoystick(){
+  joystickDir = {x:0,y:0};
+  joystickKnob.style.transform = "translate(0,0)";
+}
+joystickEl.addEventListener("pointerdown", e=>{
+  e.stopPropagation();
+  joystickPointerId = e.pointerId;
+  joystickEl.setPointerCapture(e.pointerId);
+  setJoystickFromEvent(e);
+});
+joystickEl.addEventListener("pointermove", e=>{
+  if(e.pointerId!==joystickPointerId) return;
+  setJoystickFromEvent(e);
+});
+function joystickEnd(e){
+  if(e.pointerId!==joystickPointerId) return;
+  joystickPointerId = null;
+  resetJoystick();
+}
+joystickEl.addEventListener("pointerup", joystickEnd);
+joystickEl.addEventListener("pointercancel", joystickEnd);
+
+// ================= Rendern =================
+
+function drawRoundRect(x,y,w,h,r,fill){
+  ctx.beginPath();
+  if(ctx.roundRect) ctx.roundRect(x,y,w,h,r); else ctx.rect(x,y,w,h);
+  ctx.fillStyle = fill; ctx.fill();
+}
+function hashRand(seed){ const x=Math.sin(seed*12.9898)*43758.5453; return x-Math.floor(x); }
+
+// ================= Prozedurale Texturen =================
+// Statt flacher Farbflaechen bekommen Gras/Stein/Holz/Wasser echte
+// Materialstruktur: Value-Noise (weiches Rauschen mit Interpolation, kein
+// hartes Bildrauschen) wird EINMAL beim Start in Offscreen-Canvases
+// gerendert und danach als Pattern wiederverwendet - kostet zur Laufzeit
+// also nichts. Bewusst ohne ctx.filter, weil das auf iOS-Safari lange
+// nicht unterstuetzt war.
+
+function noiseHash(x,y,seed){
+  const n = Math.sin(x*127.1+y*311.7+seed*74.7)*43758.5453;
+  return n-Math.floor(n);
+}
+
+function valueNoise(x,y,seed){
+  const xi=Math.floor(x), yi=Math.floor(y);
+  const xf=x-xi, yf=y-yi;
+  // Smoothstep, damit die Uebergaenge weich sind statt kantig
+  const sx=xf*xf*(3-2*xf), sy=yf*yf*(3-2*yf);
+  const n00=noiseHash(xi,yi,seed),   n10=noiseHash(xi+1,yi,seed);
+  const n01=noiseHash(xi,yi+1,seed), n11=noiseHash(xi+1,yi+1,seed);
+  return (n00*(1-sx)+n10*sx)*(1-sy) + (n01*(1-sx)+n11*sx)*sy;
+}
+
+// Fraktales Rauschen: mehrere Oktaven uebereinander = grobe Flecken PLUS
+// feine Koernung, so wie echte Oberflaechen aussehen.
+function fbm(x,y,seed,octaves){
+  let sum=0, amp=0.5, freq=1;
+  for(let o=0;o<octaves;o++){
+    sum += valueNoise(x*freq,y*freq,seed+o*13)*amp;
+    freq *= 2; amp *= 0.5;
+  }
+  return sum;
+}
+
+function makeTextureCanvas(size, pixelFn){
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = size;
+  const c = cv.getContext("2d");
+  const img = c.createImageData(size,size);
+  for(let y=0;y<size;y++) for(let x=0;x<size;x++){
+    const px = pixelFn(x,y,size);
+    const i = (y*size+x)*4;
+    img.data[i]=px[0]; img.data[i+1]=px[1]; img.data[i+2]=px[2]; img.data[i+3]=px[3];
+  }
+  c.putImageData(img,0,0);
+  return cv;
+}
+
+const TEX = {};
+function buildTextures(){
+  const S = 128;
+
+  // Gras: gedecktes Oliv/Salbei mit groben Flecken und feiner Koernung
+  TEX.grass = ctx.createPattern(makeTextureCanvas(S,(x,y)=>{
+    const n = fbm(x/26,y/26,3.1,4);
+    const fine = valueNoise(x/2.2,y/2.2,9.7);
+    const v = n*0.78 + fine*0.22;
+    const r = 70 + v*46, g = 92 + v*54, b = 52 + v*32;
+    return [r|0, g|0, b|0, 255];
+  }), "repeat");
+
+  // Stein: grauer Fels mit dunklen Rissen
+  TEX.stone = ctx.createPattern(makeTextureCanvas(S,(x,y)=>{
+    const n = fbm(x/18,y/18,17.3,4);
+    // Risse: scharfe dunkle Linien dort, wo das Rauschen einen Grat bildet
+    const ridge = Math.abs(fbm(x/34,y/34,41.9,3)-0.5);
+    const crack = ridge<0.035 ? 0.55 : 1;
+    const v = (0.55+n*0.45)*crack;
+    const g = 118*v;
+    return [(g*1.02)|0, (g*1.04)|0, (g*1.1)|0, 255];
+  }), "repeat");
+
+  // Holz: gerichtete Maserung (in Y gestreckt), plus Aeste/Knoten
+  TEX.wood = ctx.createPattern(makeTextureCanvas(S,(x,y)=>{
+    const grain = fbm(x/7, y/44, 5.5, 3);
+    const rings = Math.sin((x*0.35 + grain*9)) * 0.5 + 0.5;
+    const v = 0.58 + grain*0.26 + rings*0.16;
+    return [(128*v)|0, (92*v)|0, (58*v)|0, 255];
+  }), "repeat");
+
+  // Wasseroberflaeche: sehr weiches Rauschen, wird spaeter nur als
+  // leichte Stoerung UEBER den Farbverlauf gelegt
+  TEX.waterNoise = ctx.createPattern(makeTextureCanvas(S,(x,y)=>{
+    const n = fbm(x/30,y/30,77.1,3);
+    const a = 26 + n*40;
+    return [210,238,255, a|0];
+  }), "repeat");
+
+  // Feine Koernung fuer den Grading-Pass (nimmt den "sauberen Vektor"-Look)
+  TEX.grain = ctx.createPattern(makeTextureCanvas(64,(x,y)=>{
+    const n = noiseHash(x,y,3.3);
+    const g = 128 + (n-0.5)*70;
+    return [g|0,g|0,g|0,255];
+  }), "repeat");
+}
+
+// ================= Inselform / Kuestenlinie =================
+// Die Bauflaeche bleibt exakt das quadratische Raster (Spiellogik unveraendert),
+// aber die LANDMASSE bekommt eine organische Kontur: ein Superellipsen-
+// "Squircle" mit Rausch-Wobble. Ein perfektes Quadrat ist der groesste
+// Brettspiel-Look, den die Karte hatte.
+function islandRadiusAt(theta, baseHalf, wobbleAmp, seed){
+  const n = 4.2;
+  const c = Math.abs(Math.cos(theta)), s = Math.abs(Math.sin(theta));
+  const squircle = Math.pow(Math.pow(c,n)+Math.pow(s,n), -1/n);
+  const w = (fbm(Math.cos(theta)*2.2+7, Math.sin(theta)*2.2+7, seed, 3)-0.5)*wobbleAmp;
+  return baseHalf*squircle + w;
+}
+
+function traceIslandPath(baseHalf, wobbleAmp, seed){
+  const steps = 180;
+  ctx.beginPath();
+  for(let i=0;i<=steps;i++){
+    const th = (i/steps)*Math.PI*2;
+    const rr = islandRadiusAt(th, baseHalf, wobbleAmp, seed);
+    const px = Math.cos(th)*rr, py = Math.sin(th)*rr;
+    if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+}
+
+function drawIslandBase(gridSize){
+  const half = gridHalfExtent(gridSize);
+
+  // 1. Flachwasser-Hof: heller Saum im Wasser rund um die Insel, wie ein
+  // Sandbank-Schelf - erzeugt Tiefeneindruck statt harter Kante.
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  [[112,0.05],[78,0.07],[48,0.09]].forEach(([pad,al])=>{
+    traceIslandPath(half+pad, 26, 4.4);
+    ctx.fillStyle = "rgba(150,214,220,"+al+")";
+    ctx.fill();
+  });
+  ctx.restore();
+
+  // 2. Dunkler Saum direkt unter der Graskante: die Insel wirft Schatten
+  // ins Wasser, dadurch sitzt das Land drin statt daraufgeklebt zu sein.
+  ctx.save();
+  traceIslandPath(half+16, 13, 4.4);
+  ctx.strokeStyle = "rgba(4,16,22,0.42)"; ctx.lineWidth = 9;
+  ctx.stroke();
+  ctx.restore();
+
+  // 3. Schaumsaum genau auf der Graskante
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const t = performance.now()/1000;
+  [[10,0.13],[5,0.22]].forEach(([lw,al])=>{
+    traceIslandPath(half+15+Math.sin(t*1.2)*1.4, 13, 4.4);
+    ctx.strokeStyle = "rgba(238,250,252,"+al+")"; ctx.lineWidth = lw;
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// Weicher Schatten: gestapelte Ellipsen mit abnehmender Deckkraft statt
+// einer harten schwarzen Flaeche - sieht aus wie ein echter Halbschatten
+// und funktioniert ohne ctx.filter (iOS-kompatibel).
+function drawShadow(x,y,rx,ry){
+  const layers = [[1.35,0.055],[1.15,0.075],[0.95,0.1],[0.75,0.12]];
+  layers.forEach(([sc,al])=>{
+    ctx.beginPath();
+    ctx.ellipse(x+rx*0.12, y+ry*0.6, rx*sc, ry*sc, 0, 0, Math.PI*2);
+    ctx.fillStyle="rgba(8,14,10,"+al+")"; ctx.fill();
+  });
+}
+
+function drawWater(){
+  const t = performance.now()/1000;
+
+  // 1. Tiefenverlauf: flaches Schelfwasser an der Insel, tiefes, fast
+  // schwarzes Blau nach aussen - gedeckt, nicht Candy-Tuerkis.
+  const grad = ctx.createRadialGradient(0,0,WATER_RADIUS*0.1, 0,0,WATER_RADIUS*1.2);
+  grad.addColorStop(0,    "#2b6b72");
+  grad.addColorStop(0.18, "#1d5665");
+  grad.addColorStop(0.45, "#123f52");
+  grad.addColorStop(0.75, "#0a293a");
+  grad.addColorStop(1,    "#04141f");
+  ctx.fillStyle = grad;
+  ctx.fillRect(-4000,-4000,8000,8000);
+
+  // 2. Oberflaechenstruktur: prozedurales Rauschen driftet langsam ueber
+  // das Wasser - nimmt dem Verlauf den "glatte Farbflaeche"-Look.
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.globalCompositeOperation = "soft-light";
+  ctx.translate((t*7)%128, (t*4)%128);
+  ctx.fillStyle = TEX.waterNoise;
+  ctx.fillRect(-4200,-4200,8400,8400);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = 0.1;
+  ctx.globalCompositeOperation = "overlay";
+  ctx.translate(-((t*5)%128), (t*9)%128);
+  ctx.fillStyle = TEX.waterNoise;
+  ctx.fillRect(-4200,-4200,8400,8400);
+  ctx.restore();
+
+  // 3. Breite Sonnenreflexion (Glitzerband) statt gleichmaessiger Flecken -
+  // ein klar gerichtetes Licht wirkt sofort "echter".
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const sunX = -WATER_RADIUS*0.42, sunY = -WATER_RADIUS*0.5;
+  const sg = ctx.createRadialGradient(sunX,sunY,10, sunX,sunY,WATER_RADIUS*0.85);
+  sg.addColorStop(0,"rgba(255,244,214,0.3)");
+  sg.addColorStop(0.35,"rgba(190,224,230,0.1)");
+  sg.addColorStop(1,"rgba(120,180,200,0)");
+  ctx.fillStyle=sg; ctx.fillRect(-4000,-4000,8000,8000);
+  ctx.restore();
+
+  // 4. Wellenkaemme: kurze, versetzte Striche statt durchgehender Linien -
+  // durchgehende Linien ueber den ganzen Bildschirm sehen gezeichnet aus.
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.lineCap = "round";
+  for(let i=0;i<120;i++){
+    const a = hashRand(i*5.13)*Math.PI*2;
+    const d = 70+hashRand(i*2.71)*WATER_RADIUS*1.05;
+    const drift = ((t*11*(0.6+hashRand(i*7.7)*0.8)) % 140) - 70;
+    const wx = Math.cos(a)*d + drift, wy = Math.sin(a)*d;
+    const len = 9+hashRand(i*3.3)*22;
+    const near = 1-Math.min(1, d/(WATER_RADIUS*1.1));
+    const al = (0.05+0.14*near)*(0.5+0.5*Math.sin(t*1.7+i));
+    ctx.strokeStyle = "rgba(226,244,252,"+al.toFixed(3)+")";
+    ctx.lineWidth = 1+hashRand(i*9.1)*1.4;
+    ctx.beginPath();
+    ctx.moveTo(wx-len/2, wy);
+    ctx.quadraticCurveTo(wx, wy-2.5, wx+len/2, wy);
+    ctx.stroke();
+  }
+  ctx.lineCap = "butt";
+  ctx.restore();
+
+  // 5. Aeussere Vignette: Tiefe/Abschluss nach aussen
+  const edge = ctx.createRadialGradient(0,0,WATER_RADIUS*0.75,0,0,WATER_RADIUS*1.45);
+  edge.addColorStop(0,"rgba(2,8,14,0)"); edge.addColorStop(1,"rgba(2,8,14,0.72)");
+  ctx.fillStyle=edge; ctx.beginPath(); ctx.arc(0,0,WATER_RADIUS*1.45,0,Math.PI*2); ctx.fill();
+
+  ctx.beginPath(); ctx.arc(0,0,WATER_RADIUS,0,Math.PI*2);
+  ctx.strokeStyle = "rgba(200,222,232,0.22)"; ctx.lineWidth = 2/camera.scale;
+  ctx.setLineDash([16/camera.scale,14/camera.scale]); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(210,228,238,0.45)"; ctx.font = "600 "+(13/camera.scale)+"px sans-serif"; ctx.textAlign="center";
+  ctx.fillText("offene See →", 0, -WATER_RADIUS+24/camera.scale);
+  ctx.textAlign="left";
+}
+
+// ================= Hafen (Steg mit Bootsplaetzen, ab HAFEN_UNLOCK_LEVEL) =================
+// Struktur/Optik erstmal fertig - was Boot 1 konkret tut, ist noch offen
+// und wird erst gebaut, wenn das feststeht (kein Sammel-Loop ohne echte
+// Funktion dahinter).
+
+const HAFEN_BERTH_SIZE = CELL*3;   // Platz fuer ein 3x3-Boot
+const HAFEN_GAP = CELL*0.55;       // Steg-Stueck zwischen den beiden Plaetzen
+
+function hafenLayout(gridSize){
+  const x0 = -gridHalfExtent(gridSize); // linke Kante der Insel
+  const berthW = HAFEN_BERTH_SIZE, berthH = HAFEN_BERTH_SIZE;
+  const totalH = berthH*2 + HAFEN_GAP;
+  const topY = -totalH/2;
+  return {
+    walkway: { x: x0-CELL, y: -CELL*0.35, w: CELL, h: CELL*0.7 },
+    berthA: { x: x0-berthW, y: topY, w: berthW, h: berthH, locked:false },
+    berthB: { x: x0-berthW, y: topY+berthH+HAFEN_GAP, w: berthW, h: berthH, locked:true }
+  };
+}
+
+function drawHafen(gridSize){
+  if(state.basisLevel < HAFEN_UNLOCK_LEVEL) return;
+  const L = hafenLayout(gridSize);
+
+  drawRoundRect(L.walkway.x, L.walkway.y, L.walkway.w, L.walkway.h, 2, "#8a6a3f");
+
+  [L.berthA, L.berthB].forEach(b=>{
+    drawShadow(b.x+b.w/2, b.y+b.h+4, b.w*0.45, 6);
+    drawRoundRect(b.x, b.y, b.w, b.h, 6, b.locked ? "#5c5646" : "#8a6a3f");
+    ctx.strokeStyle = "rgba(0,0,0,0.28)"; ctx.lineWidth = 2;
+    ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(b.x,b.y,b.w,b.h,6); ctx.stroke();
+    // Planken-Linien quer zum Steg
+    ctx.strokeStyle = "rgba(0,0,0,0.15)"; ctx.lineWidth = 1.5;
+    for(let i=1;i<6;i++){
+      const ly = b.y + (b.h/6)*i;
+      ctx.beginPath(); ctx.moveTo(b.x+4, ly); ctx.lineTo(b.x+b.w-4, ly); ctx.stroke();
+    }
+    if(b.locked){
+      ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fillRect(b.x,b.y,b.w,b.h);
+      ctx.font = "18px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("🔒", b.x+b.w/2, b.y+b.h/2-2);
+      ctx.fillStyle = "#eee"; ctx.font = "600 10px sans-serif";
+      ctx.fillText("später", b.x+b.w/2, b.y+b.h/2+16);
+      ctx.textAlign = "left";
+    }
+  });
+}
+
+function drawGrassTile(x,y,c,r){
+  const x0 = x-CELL/2, y0 = y-CELL/2;
+
+  // 1. Echte Grastextur (prozedural, gedecktes Oliv) als Basis - keine
+  // flache Farbflaeche mehr. Das Pattern wird verschoben, damit nicht
+  // jedes Feld identisch aussieht.
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0,y0,CELL,CELL); ctx.clip();
+  ctx.translate(x0,y0);
+  ctx.fillStyle = TEX.grass;
+  ctx.fillRect(-((c*37)%128), -((r*53)%128), CELL+128, CELL+128);
+  ctx.restore();
+
+  // 2. Bodenkontakt-Schattierung: Feldraender leicht abdunkeln, so wirkt
+  // die Flaeche wie Gelaende statt wie ein Schachbrett-Kachel.
+  const edge = ctx.createLinearGradient(x0,y0,x0,y0+CELL);
+  edge.addColorStop(0,"rgba(255,252,235,0.07)");
+  edge.addColorStop(0.35,"rgba(0,0,0,0)");
+  edge.addColorStop(1,"rgba(10,18,8,0.2)");
+  ctx.fillStyle = edge; ctx.fillRect(x0,y0,CELL,CELL);
+
+  // 3. Grasbueschel mit Licht-/Schattenseite (Licht kommt von oben links)
+  const seed = c*131+r*911;
+  for(let k=0;k<5;k++){
+    const bx = x+(hashRand(seed+k)-0.5)*CELL*0.8;
+    const by = y+(hashRand(seed+k+40)-0.5)*CELL*0.8;
+    for(let b=0;b<4;b++){
+      const ang = -Math.PI/2 + (hashRand(seed+k*3+b)-0.5)*1.0;
+      const len = 5+hashRand(seed+k+b*7)*4;
+      ctx.strokeStyle = "rgba(24,44,16,0.45)"; ctx.lineWidth=1.5; ctx.lineCap="round";
+      ctx.beginPath(); ctx.moveTo(bx+b*2-3, by);
+      ctx.lineTo(bx+b*2-3+Math.cos(ang)*len, by+Math.sin(ang)*len);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(190,205,140,0.16)"; ctx.lineWidth=0.9;
+      ctx.beginPath(); ctx.moveTo(bx+b*2-3.6, by-0.4);
+      ctx.lineTo(bx+b*2-3.6+Math.cos(ang)*len*0.8, by-0.4+Math.sin(ang)*len*0.8);
+      ctx.stroke();
+      ctx.lineCap="butt";
+    }
+  }
+
+  // 4. Vereinzelte Steinchen/Erdflecken statt bunter Bluemchen
+  if(hashRand(seed*3.7)>0.66){
+    const fx = x+(hashRand(seed+99)-0.5)*CELL*0.65, fy = y+(hashRand(seed+77)-0.5)*CELL*0.65;
+    ctx.beginPath(); ctx.ellipse(fx,fy,2.6,1.9,hashRand(seed+5)*3,0,Math.PI*2);
+    ctx.fillStyle="rgba(120,116,104,0.55)"; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(fx-0.6,fy-0.6,1.5,1,hashRand(seed+5)*3,0,Math.PI*2);
+    ctx.fillStyle="rgba(178,176,164,0.45)"; ctx.fill();
+  }
+}
+
+function drawPlusButton(x,y){
+  drawShadow(x,y+16,20,6);
+  const grad = ctx.createLinearGradient(x,y-22,x,y+22);
+  grad.addColorStop(0,"rgba(255,255,255,0.16)"); grad.addColorStop(1,"rgba(0,0,0,0.12)");
+  drawRoundRect(x-22,y-22,44,44,8,grad);
+  ctx.strokeStyle="rgba(255,255,255,0.32)"; ctx.lineWidth=1.5;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,8); ctx.stroke();
+  ctx.strokeStyle="rgba(230,255,235,0.9)"; ctx.lineWidth=3; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(x-8,y); ctx.lineTo(x+8,y); ctx.moveTo(x,y-8); ctx.lineTo(x,y+8); ctx.stroke();
+  ctx.lineCap="butt";
+}
+
+function drawLockedButton(x,y){
+  drawShadow(x,y+16,20,6);
+  const grad = ctx.createLinearGradient(x,y-22,x,y+22);
+  grad.addColorStop(0,"rgba(10,16,14,0.38)"); grad.addColorStop(1,"rgba(10,16,14,0.2)");
+  drawRoundRect(x-22,y-22,44,44,8,grad);
+  ctx.strokeStyle="rgba(255,255,255,0.14)"; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,8); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle="rgba(200,208,218,0.55)"; ctx.lineWidth=2.2;
+  ctx.beginPath(); ctx.arc(x,y-3,5,Math.PI,0); ctx.stroke();
+  drawRoundRect(x-7,y-3,14,10,2,"rgba(200,208,218,0.55)");
+}
+
+function drawLevelPips(x,y,level){
+  const n = Math.min(level,5);
+  const w = n*7-3;
+  for(let i=0;i<n;i++){
+    ctx.beginPath(); ctx.arc(x-w/2+i*7, y, 2.1, 0, Math.PI*2);
+    ctx.fillStyle = "#f2c94c"; ctx.fill();
+  }
+}
+
+function drawHpBar(x,y,hp,maxHp,w){
+  if(hp>=maxHp) return;
+  const ratio = Math.max(0,hp/maxHp);
+  ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(x-w/2,y,w,4);
+  ctx.fillStyle = ratio>0.5 ? "#6ad46a" : ratio>0.25 ? "#e0c34a" : "#e04a4a";
+  ctx.fillRect(x-w/2,y,w*ratio,4);
+}
+
+function shadeColor(hex, amt){
+  const n = parseInt(hex.slice(1),16);
+  const r = Math.max(0,Math.min(255,(n>>16)+amt));
+  const g = Math.max(0,Math.min(255,((n>>8)&0xff)+amt));
+  const b = Math.max(0,Math.min(255,(n&0xff)+amt));
+  return "rgb("+r+","+g+","+b+")";
+}
+
+function drawPlayerSprite(){
+  const pl = state.player;
+  const x=pl.x, y=pl.y;
+
+  if(pl.moveTarget){
+    ctx.strokeStyle="rgba(255,255,255,0.35)"; ctx.lineWidth=1.6;
+    ctx.setLineDash([5,5]);
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(pl.moveTarget.x,pl.moveTarget.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.save();
+  // Kurzes Blinken waehrend der Unverwundbarkeit nach einem K.o.
+  if(pl.invulnCd>0) ctx.globalAlpha = (Math.floor(performance.now()/120)%2===0) ? 0.4 : 1;
+
+  drawShadow(x,y+13,10,4);
+  // Rucksack (hinter dem Koerper), Fuellstand als kleiner Ring
+  const total = backpackTotal();
+  const fillRatio = Math.max(0, Math.min(1, total/BACKPACK_CAPACITY));
+  const bpX = x-9, bpY = y-2;
+  drawRoundRect(bpX-6,bpY-7,12,15,3,"#6a4c2a");
+  ctx.strokeStyle="#3a2612"; ctx.lineWidth=1.2; ctx.strokeRect(bpX-6,bpY-7,12,15);
+  if(total>0){
+    ctx.beginPath(); ctx.arc(bpX,bpY,9,-Math.PI/2,-Math.PI/2+Math.PI*2*fillRatio);
+    ctx.strokeStyle = fillRatio>=1 ? "#e04a4a" : "#f2c94c"; ctx.lineWidth=2; ctx.lineCap="round"; ctx.stroke(); ctx.lineCap="butt";
+  }
+  // Beine
+  ctx.fillStyle="#3a3f5a";
+  ctx.fillRect(x-5,y+6,4,9); ctx.fillRect(x+1,y+6,4,9);
+  // Koerper - gedecktes Stahlblau statt Comic-Hellblau
+  const bodyGrad = ctx.createLinearGradient(x,y-8,x,y+8);
+  bodyGrad.addColorStop(0,"#3f6699"); bodyGrad.addColorStop(1,"#2a4a73");
+  drawRoundRect(x-8,y-8,16,15,4,bodyGrad);
+  ctx.strokeStyle="#1c3350"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-8,y-8,16,15,4); ctx.stroke();
+  // Kopf
+  ctx.beginPath(); ctx.arc(x,y-13,7,0,Math.PI*2);
+  ctx.fillStyle="#e8b48a"; ctx.fill();
+  ctx.strokeStyle="#a5764f"; ctx.lineWidth=1; ctx.stroke();
+  // Haare
+  ctx.beginPath(); ctx.arc(x,y-16,6,Math.PI,0); ctx.fillStyle="#5a3a22"; ctx.fill();
+  // Augen
+  ctx.fillStyle="#2a1f18";
+  ctx.beginPath(); ctx.arc(x-2.5,y-13,1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+2.5,y-13,1,0,Math.PI*2); ctx.fill();
+
+  // Rucksack-Kapazitaet als x/x ueber dem Kopf
+  ctx.font = "bold 10px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  const capLabel = total+"/"+BACKPACK_CAPACITY;
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+  ctx.strokeText(capLabel, x, y-24);
+  ctx.fillStyle = fillRatio>=1 ? "#e04a4a" : "#fff";
+  ctx.fillText(capLabel, x, y-24);
+  ctx.textAlign = "left";
+
+  ctx.restore();
+  // HP-Leiste (ausserhalb des Blink-Alpha, damit sie auch waehrend der
+  // Unverwundbarkeit klar lesbar bleibt)
+  drawHpBar(x, y-38, pl.hp, PLAYER_MAX_HP, 24);
+}
+
+function drawDepositFx(){
+  if(!depositFx) return;
+  const elapsed = performance.now()-depositFx.startedAt;
+  if(elapsed>=DEPOSIT_FX_DURATION){ depositFx = null; return; }
+  const t = elapsed/DEPOSIT_FX_DURATION;
+  const rise = t*26, alpha = 1-t;
+  const label = "+"+depositFx.holz+" 🌳  +"+depositFx.stein+" 🪨";
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = "bold 12px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+  ctx.strokeText(label, 0, -40-rise);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, 0, -40-rise);
+  ctx.restore();
+}
+
+function drawKnockoutFx(){
+  if(!knockoutFx) return;
+  const elapsed = performance.now()-knockoutFx.startedAt;
+  if(elapsed>=KNOCKOUT_FX_DURATION){ knockoutFx = null; return; }
+  const t = elapsed/KNOCKOUT_FX_DURATION;
+  const rise = t*30, alpha = 1-t;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = "bold 12px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+  ctx.strokeText("K.o.! Rucksack verloren", 0, -46-rise);
+  ctx.fillStyle = "#ff6a6a";
+  ctx.fillText("K.o.! Rucksack verloren", 0, -46-rise);
+  ctx.restore();
+}
+
+function drawEnemy(e){
+  const type = ENEMY_TYPES[e.typeKey] || {color:"#8a2f2f"};
+  drawShadow(e.x,e.y+e.r,e.r*1.3,4);
+  const bodyGrad = ctx.createRadialGradient(e.x-e.r*0.35,e.y-e.r*0.35,e.r*0.1,e.x,e.y,e.r*1.15);
+  bodyGrad.addColorStop(0, shadeColor(type.color,45));
+  bodyGrad.addColorStop(1, shadeColor(type.color,-25));
+  ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
+  ctx.fillStyle=bodyGrad; ctx.fill();
+  ctx.strokeStyle="rgba(0,0,0,0.45)"; ctx.lineWidth=2; ctx.stroke();
+  if(e.armor){
+    // Ruestungsplatten mit Nieten
+    ctx.strokeStyle="rgba(225,228,235,0.85)"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(e.x,e.y,e.r-3,0.35,1.65); ctx.stroke();
+    ctx.beginPath(); ctx.arc(e.x,e.y,e.r-3,Math.PI+0.35,Math.PI+1.65); ctx.stroke();
+    ctx.fillStyle="rgba(200,204,212,0.9)";
+    [0.55,1.0,1.45].forEach(a=>{ ctx.beginPath(); ctx.arc(e.x+Math.cos(a)*(e.r-3),e.y+Math.sin(a)*(e.r-3),1.1,0,Math.PI*2); ctx.fill(); });
+  }
+  // Augen (leicht wuetend, je nach Typ)
+  const eyeDx = e.r*0.32, eyeDy = -e.r*0.08;
+  [-1,1].forEach(s=>{
+    ctx.beginPath(); ctx.arc(e.x+s*eyeDx,e.y+eyeDy,e.r*0.16,0,Math.PI*2);
+    ctx.fillStyle="#1a1410"; ctx.fill();
+    ctx.beginPath(); ctx.arc(e.x+s*eyeDx-e.r*0.05,e.y+eyeDy-e.r*0.05,e.r*0.05,0,Math.PI*2);
+    ctx.fillStyle="rgba(255,255,255,0.8)"; ctx.fill();
+  });
+  ctx.strokeStyle="rgba(0,0,0,0.55)"; ctx.lineWidth=1.4; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(e.x-eyeDx-e.r*0.16,e.y+eyeDy-e.r*0.22); ctx.lineTo(e.x-eyeDx+e.r*0.1,e.y+eyeDy-e.r*0.1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(e.x+eyeDx+e.r*0.16,e.y+eyeDy-e.r*0.22); ctx.lineTo(e.x+eyeDx-e.r*0.1,e.y+eyeDy-e.r*0.1); ctx.stroke();
+  ctx.lineCap="butt";
+  ctx.beginPath(); ctx.arc(e.x-e.r*0.35,e.y-e.r*0.4,e.r*0.18,0,Math.PI*2);
+  ctx.fillStyle="rgba(255,255,255,0.35)"; ctx.fill();
+  const w=e.r*2.2, ratio=Math.max(0,e.hp/e.maxHp), by=e.y-e.r-9;
+  ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(e.x-w/2,by,w,4);
+  ctx.fillStyle = ratio>0.5 ? "#6ad46a" : ratio>0.25 ? "#e0c34a" : "#e04a4a";
+  ctx.fillRect(e.x-w/2,by,w*ratio,4);
+}
+
+function drawProjectile(pr){
+  const ang = Math.atan2(pr.vy,pr.vx);
+  const tx = pr.x-Math.cos(ang)*9, ty = pr.y-Math.sin(ang)*9;
+  const trail = ctx.createLinearGradient(tx,ty,pr.x,pr.y);
+  trail.addColorStop(0,"rgba(242,201,76,0)"); trail.addColorStop(1,"rgba(255,224,140,0.85)");
+  ctx.strokeStyle=trail; ctx.lineWidth=2.6; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(pr.x,pr.y); ctx.stroke();
+  ctx.lineCap="butt";
+  const glow = ctx.createRadialGradient(pr.x,pr.y,0,pr.x,pr.y,5);
+  glow.addColorStop(0,"rgba(255,240,190,0.9)"); glow.addColorStop(1,"rgba(255,240,190,0)");
+  ctx.beginPath(); ctx.arc(pr.x,pr.y,5,0,Math.PI*2); ctx.fillStyle=glow; ctx.fill();
+  ctx.beginPath(); ctx.arc(pr.x,pr.y,2.6,0,Math.PI*2);
+  ctx.fillStyle="#fff3c4"; ctx.fill();
+}
+
+function drawTutorialHighlight(x,y,label){
+  const t = performance.now()/1000;
+  const pulse = 0.5+0.5*Math.sin(t*3.2);
+  ctx.beginPath(); ctx.arc(x,y,31+pulse*5,0,Math.PI*2);
+  ctx.strokeStyle = `rgba(255,225,90,${0.55+pulse*0.35})`; ctx.lineWidth=3.5; ctx.stroke();
+  ctx.beginPath(); ctx.arc(x,y,31+pulse*5+7,0,Math.PI*2);
+  ctx.strokeStyle = `rgba(255,225,90,${0.18+pulse*0.15})`; ctx.lineWidth=2; ctx.stroke();
+  // Pfeil von oben
+  const ay = y-46-pulse*4;
+  ctx.fillStyle="#ffe15a";
+  ctx.beginPath(); ctx.moveTo(x,ay+14); ctx.lineTo(x-7,ay); ctx.lineTo(x+7,ay); ctx.closePath(); ctx.fill();
+  ctx.font="bold 12px sans-serif"; ctx.textAlign="center";
+  ctx.strokeStyle="rgba(0,0,0,0.6)"; ctx.lineWidth=3; ctx.strokeText(label, x, ay-4);
+  ctx.fillText(label, x, ay-4);
+  ctx.textAlign="left";
+}
+
+// Fuellt eine Flaeche mit einer echten Material-Textur und legt danach
+// Licht/Schatten darueber: Lichtkante oben links, Kernschatten unten rechts,
+// dunkler Rand aussen. Das ist der Unterschied zwischen "flache Farbe" und
+// "Material mit Volumen".
+function fillTexturedBlock(x0,y0,w,h,r,pattern,seed,tintTop,tintBottom){
+  ctx.save();
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x0,y0,w,h,r); else ctx.rect(x0,y0,w,h);
+  ctx.clip();
+  ctx.save();
+  ctx.translate(x0-((seed*29)%128), y0-((seed*61)%128));
+  ctx.fillStyle = pattern;
+  ctx.fillRect(0,0,w+128,h+128);
+  ctx.restore();
+  // Materialfarbe einfaerben (multiply behaelt die Struktur)
+  ctx.globalCompositeOperation = "multiply";
+  const tint = ctx.createLinearGradient(x0,y0,x0,y0+h);
+  tint.addColorStop(0,tintTop); tint.addColorStop(1,tintBottom);
+  ctx.fillStyle = tint; ctx.fillRect(x0,y0,w,h);
+  // Volumen: Licht oben links, Schatten unten rechts
+  ctx.globalCompositeOperation = "source-over";
+  const vol = ctx.createLinearGradient(x0,y0,x0+w*0.7,y0+h);
+  vol.addColorStop(0,"rgba(255,246,222,0.2)");
+  vol.addColorStop(0.42,"rgba(255,255,255,0)");
+  vol.addColorStop(1,"rgba(10,14,22,0.36)");
+  ctx.fillStyle = vol; ctx.fillRect(x0,y0,w,h);
+  // Innerer dunkler Saum (Ambient Occlusion an den Kanten)
+  ctx.strokeStyle="rgba(12,16,22,0.3)"; ctx.lineWidth=3;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x0+1.5,y0+1.5,w-3,h-3,Math.max(1,r-1)); ctx.stroke();
+  ctx.restore();
+}
+
+function drawTowerSprite(x,y,b){
+  const s=25;
+  drawShadow(x,y+s-2,21,6);
+  fillTexturedBlock(x-s,y-s,s*2,s*2,5,TEX.stone,b.level*7+3,
+    "rgba(188,196,206,1)","rgba(128,138,150,1)");
+  // Steinfugen, leicht versetzt wie echtes Mauerwerk
+  ctx.save();
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s,y-s,s*2,s*2,5); ctx.clip();
+  for(let i=1;i<5;i++){
+    const yy=y-s+i*(s*2/5);
+    ctx.strokeStyle="rgba(18,22,28,0.3)"; ctx.lineWidth=1.3;
+    ctx.beginPath(); ctx.moveTo(x-s,yy); ctx.lineTo(x+s,yy); ctx.stroke();
+    ctx.strokeStyle="rgba(255,252,240,0.1)"; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x-s,yy+1.2); ctx.lineTo(x+s,yy+1.2); ctx.stroke();
+    const off = (i%2===0)?0:(s*2)/3/2;
+    for(let xx=x-s+off; xx<x+s; xx+=(s*2)/3){
+      ctx.strokeStyle="rgba(18,22,28,0.26)"; ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.moveTo(xx,yy); ctx.lineTo(xx,yy-(s*2/5)); ctx.stroke();
+    }
+  }
+  ctx.restore();
+  // Zinnen (Kraneliert) oben, jede mit eigener Licht-/Schattenseite
+  const cz=6.5;
+  [-s+2, -s+2+cz*2.2, s-cz*3.2, s-cz-2].forEach(dx=>{
+    fillTexturedBlock(x+dx,y-s-4,cz,8,1.5,TEX.stone,dx+11,
+      "rgba(196,204,214,1)","rgba(140,150,162,1)");
+  });
+  // Wach-Kuppel mit Verlauf - gedecktes Rostrot statt Comic-Rot
+  const domeGrad = ctx.createRadialGradient(x-4,y-8,2,x,y-3,14);
+  domeGrad.addColorStop(0,"#a44a44"); domeGrad.addColorStop(1,"#6e2c28");
+  ctx.beginPath(); ctx.arc(x,y-3,13,0,Math.PI*2);
+  ctx.fillStyle=domeGrad; ctx.fill();
+  ctx.strokeStyle="#421a18"; ctx.lineWidth=2; ctx.stroke();
+  // Sichtschlitz
+  ctx.fillStyle="rgba(20,10,10,0.5)"; drawRoundRect(x-4,y-6,8,5,2,"rgba(20,10,10,0.5)");
+  ctx.beginPath(); ctx.arc(x-4,y-7,3,0,Math.PI*2);
+  ctx.fillStyle="rgba(255,255,255,0.3)"; ctx.fill();
+  if(b.weapon==="moerser"){
+    // Dicke, leicht schraeg nach oben zeigende Moerser-Roehre
+    ctx.save(); ctx.translate(x,y-9); ctx.rotate(-0.35);
+    ctx.fillStyle="#2f4a34"; drawRoundRect(-5,-3,10,15,3,"#2f4a34");
+    ctx.fillStyle="#4a6f52"; ctx.fillRect(-5,-3,10,4);
+    ctx.strokeStyle="#1a2e1f"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(-5,-3,10,15,3); ctx.stroke();
+    ctx.restore();
+  } else {
+    const weaponColor = b.weapon==="kanone" ? "#3a3a42" : "#8a6a3a";
+    ctx.fillStyle = weaponColor; ctx.fillRect(x-3,y-19,6,11);
+    ctx.fillStyle = b.weapon==="kanone" ? "#6a6a75" : "#c9a06a"; ctx.fillRect(x-3,y-19,6,3);
+  }
+  drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("turm",b.level), 34);
+}
+
+function drawWallSpriteWood(x,y,b){
+  const s=25;
+  // Einzelne Palisaden-Bohlen, jede mit eigener Maserung und eigener
+  // Licht-/Schattenseite - statt einer Flaeche mit aufgemalten Linien.
+  const planks = 4, pw = (s*2)/planks;
+  for(let i=0;i<planks;i++){
+    const px = x-s+i*pw;
+    fillTexturedBlock(px+0.5, y-s, pw-1, s*2, 2, TEX.wood, i*17+b.level,
+      "rgba(196,150,104,1)","rgba(132,94,58,1)");
+    // Rundung der Bohle: Glanzkante links, Schattenkante rechts
+    ctx.fillStyle="rgba(255,240,210,0.14)"; ctx.fillRect(px+1,y-s,1.6,s*2);
+    ctx.fillStyle="rgba(16,10,4,0.26)"; ctx.fillRect(px+pw-2.4,y-s,1.8,s*2);
+  }
+  // Zwei Querbalken, deutlich davor liegend
+  [-8, 12].forEach(dy=>{
+    fillTexturedBlock(x-s-1, y+dy, s*2+2, 8, 2, TEX.wood, dy+41,
+      "rgba(176,132,88,1)","rgba(112,78,46,1)");
+    ctx.fillStyle="rgba(10,6,2,0.22)"; ctx.fillRect(x-s-1, y+dy+8, s*2+2, 2.4);
+    // Nagelkoepfe
+    [-s+6, 0, s-8].forEach(dx=>{
+      ctx.beginPath(); ctx.arc(x+dx, y+dy+4, 1.5, 0, Math.PI*2);
+      ctx.fillStyle="#6a6058"; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+dx-0.4, y+dy+3.5, 0.8, 0, Math.PI*2);
+      ctx.fillStyle="rgba(230,226,216,0.6)"; ctx.fill();
+    });
+  });
+  // Moos/Bewitterung am Fuss
+  ctx.fillStyle="rgba(74,96,48,0.3)";
+  [[-s+7,y+s-4,4.5],[s-12,y+s-3,3.4],[-3,y+s-2,3]].forEach(([dx,dy,rr])=>{
+    ctx.beginPath(); ctx.ellipse(x+dx,dy,rr,rr*0.6,0,0,Math.PI*2); ctx.fill();
+  });
+}
+
+function drawWallSpriteStone(x,y,b){
+  // Ab Level 3: verstaerkte Steinmauer statt Holzpalisade - sichtbare
+  // Belohnung fuers Investieren, kein neuer Mechanismus.
+  const s=25;
+  fillTexturedBlock(x-s,y-s,s*2,s*2,3,TEX.stone,b.level*13+5,
+    "rgba(198,204,212,1)","rgba(126,134,144,1)");
+  // Einzelne Quader im Verband, jeder mit Fuge und Lichtkante
+  ctx.save();
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s,y-s,s*2,s*2,3); ctx.clip();
+  const rows=4, rowH=(s*2)/rows;
+  for(let i=0;i<rows;i++){
+    const yy0=y-s+i*rowH;
+    if(i>0){
+      ctx.strokeStyle="rgba(14,18,24,0.42)"; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.moveTo(x-s,yy0); ctx.lineTo(x+s,yy0); ctx.stroke();
+      ctx.strokeStyle="rgba(255,252,242,0.13)"; ctx.lineWidth=1.1;
+      ctx.beginPath(); ctx.moveTo(x-s,yy0+1.4); ctx.lineTo(x+s,yy0+1.4); ctx.stroke();
+    }
+    const offset=(i%2===0)?0:(s*2)/4;
+    for(let xx=x-s+offset; xx<x+s; xx+=(s*2)/2){
+      ctx.strokeStyle="rgba(14,18,24,0.38)"; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(xx,yy0); ctx.lineTo(xx,yy0+rowH); ctx.stroke();
+      ctx.strokeStyle="rgba(255,252,242,0.1)"; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(xx+1.2,yy0); ctx.lineTo(xx+1.2,yy0+rowH); ctx.stroke();
+    }
+  }
+  ctx.restore();
+  // Eisenverstaerkung als Band, mit Metallglanz
+  const bandGrad = ctx.createLinearGradient(x,y-4,x,y+4);
+  bandGrad.addColorStop(0,"#6e655c"); bandGrad.addColorStop(0.35,"#8d8378");
+  bandGrad.addColorStop(0.6,"#4e463f"); bandGrad.addColorStop(1,"#332d28");
+  ctx.fillStyle=bandGrad; ctx.fillRect(x-s,y-4,s*2,8);
+  ctx.strokeStyle="rgba(12,10,8,0.6)"; ctx.lineWidth=1; ctx.strokeRect(x-s,y-4,s*2,8);
+  [-16,-5,6,16].forEach(dx=>{
+    ctx.beginPath(); ctx.arc(x+dx,y,1.8,0,Math.PI*2); ctx.fillStyle="#57504a"; ctx.fill();
+    ctx.beginPath(); ctx.arc(x+dx-0.5,y-0.5,1,0,Math.PI*2); ctx.fillStyle="rgba(226,222,214,0.7)"; ctx.fill();
+  });
+}
+
+function drawWallSprite(x,y,b){
+  const s=25;
+  drawShadow(x,y+s-4,20,6);
+  if(b.level>=3) drawWallSpriteStone(x,y,b); else drawWallSpriteWood(x,y,b);
+  drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("mauer",b.level), 34);
+}
+
+function drawKaserneSprite(x,y,b){
+  const s=25;
+  drawShadow(x,y+s-2,21,6);
+  const grad = ctx.createLinearGradient(x,y-s,x,y+s);
+  grad.addColorStop(0,"#41668a"); grad.addColorStop(1,"#2e4a63");
+  drawRoundRect(x-s,y-s,s*2,s*2,6,grad);
+  ctx.strokeStyle="#1c2e3f"; ctx.lineWidth=2;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s+1,y-s+1,s*2-2,s*2-2,5); ctx.stroke();
+  const roofGrad = ctx.createLinearGradient(x,y-s-14,x,y-s+2);
+  roofGrad.addColorStop(0,"#6f93b8"); roofGrad.addColorStop(1,"#4a6f92");
+  ctx.beginPath(); ctx.moveTo(x-s-2,y-s+2); ctx.lineTo(x,y-s-14); ctx.lineTo(x+s+2,y-s+2); ctx.closePath();
+  ctx.fillStyle=roofGrad; ctx.fill(); ctx.strokeStyle="#1c2e3f"; ctx.stroke();
+  // Tuer mit Rahmen
+  drawRoundRect(x-6,y-2,12,16,2,"#213241");
+  ctx.strokeStyle="#0f1a24"; ctx.lineWidth=1.3; ctx.strokeRect(x-6,y-2,12,16);
+  ctx.fillStyle="#f2c94c"; ctx.beginPath(); ctx.arc(x+3,y+6,1,0,Math.PI*2); ctx.fill();
+  // kleines Fenster
+  drawRoundRect(x-16,y-11,7,7,1.5,"rgba(255,230,150,0.55)");
+  ctx.strokeStyle="#1c2e3f"; ctx.strokeRect(x-16,y-11,7,7);
+  ctx.fillStyle="rgba(255,255,255,0.12)"; ctx.fillRect(x-s+1,y-s+1,s*2-2,3);
+  drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("kaserne",b.level), 34);
+}
+
+function drawKrankenhausSprite(x,y,b){
+  const s=25;
+  drawShadow(x,y+s-2,21,6);
+  const grad = ctx.createLinearGradient(x,y-s,x,y+s);
+  grad.addColorStop(0,"#f5f3ec"); grad.addColorStop(1,"#d9d6cb");
+  drawRoundRect(x-s,y-s,s*2,s*2,6,grad);
+  ctx.strokeStyle="#9a9890"; ctx.lineWidth=2;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s+1,y-s+1,s*2-2,s*2-2,5); ctx.stroke();
+  // Flaches Dach - gedecktes Rot statt Comic-Rot
+  ctx.fillStyle="#9c3d3d"; ctx.fillRect(x-s-1,y-s-4,s*2+2,5);
+  ctx.strokeStyle="#5c2222"; ctx.lineWidth=1.2; ctx.strokeRect(x-s-1,y-s-4,s*2+2,5);
+  // Rotes Kreuz mit leichtem Schatten
+  ctx.fillStyle="rgba(0,0,0,0.12)"; ctx.fillRect(x-2,y-11,7,17); ctx.fillRect(x-10,y-4,22,7);
+  ctx.fillStyle="#a83e3e";
+  ctx.fillRect(x-3,y-13,6,16);
+  ctx.fillRect(x-11,y-5,22,6);
+  ctx.strokeStyle="#652424"; ctx.lineWidth=1; ctx.strokeRect(x-3,y-13,6,16); ctx.strokeRect(x-11,y-5,22,6);
+  // Fenster links/rechts
+  ["#bfe0ec"].forEach(col=>{
+    drawRoundRect(x-19,y+2,6,7,1.5,col); ctx.strokeStyle="#9a9890"; ctx.strokeRect(x-19,y+2,6,7);
+    drawRoundRect(x+13,y+2,6,7,1.5,col); ctx.strokeRect(x+13,y+2,6,7);
+  });
+  ctx.fillStyle="rgba(0,0,0,0.08)"; ctx.fillRect(x-s,y+s-6,s*2,6);
+  drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("krankenhaus",b.level), 34);
+}
+
+function drawLagerSprite(x,y,b){
+  const s=25;
+  drawShadow(x,y+s-2,21,6);
+  const grad = ctx.createLinearGradient(x,y-s,x,y+s);
+  grad.addColorStop(0,"#8f6c42"); grad.addColorStop(1,"#6a4c2a");
+  drawRoundRect(x-s,y-s,s*2,s*2,5,grad);
+  ctx.strokeStyle="#3a2612"; ctx.lineWidth=2;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s+1,y-s+1,s*2-2,s*2-2,4); ctx.stroke();
+  const roofGrad = ctx.createLinearGradient(x,y-s-12,x,y-s+2);
+  roofGrad.addColorStop(0,"#6a4c2a"); roofGrad.addColorStop(1,"#4a3218");
+  ctx.beginPath(); ctx.moveTo(x-s-3,y-s+2); ctx.lineTo(x,y-s-12); ctx.lineTo(x+s+3,y-s+2); ctx.closePath();
+  ctx.fillStyle=roofGrad; ctx.fill(); ctx.strokeStyle="#2e1f10"; ctx.stroke();
+  [-10,4].forEach(dx=>{
+    ctx.strokeStyle="rgba(0,0,0,0.3)"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(x+dx,y-s+6); ctx.lineTo(x+dx,y+s-4); ctx.stroke();
+  });
+  // Kisten davor als Andeutung von Lagergut
+  drawRoundRect(x-19,y+9,10,9,1.5,"#a5825a");
+  ctx.strokeStyle="#5a3f22"; ctx.lineWidth=1; ctx.strokeRect(x-19,y+9,10,9);
+  ctx.beginPath(); ctx.moveTo(x-19,y+13); ctx.lineTo(x-9,y+13); ctx.moveTo(x-14,y+9); ctx.lineTo(x-14,y+18); ctx.stroke();
+  ctx.fillStyle="rgba(255,255,255,0.1)"; ctx.fillRect(x-s+1,y-s+1,s*2-2,3);
+  drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("lager",b.level), 34);
+}
+
+function drawWachturmSprite(x,y,b){
+  const s=25;
+  drawShadow(x,y+s-4,18,6);
+  const legGrad = ctx.createLinearGradient(x-10,0,x+10,0);
+  legGrad.addColorStop(0,"#5a4a38"); legGrad.addColorStop(0.5,"#7a6650"); legGrad.addColorStop(1,"#5a4a38");
+  ctx.fillStyle=legGrad;
+  ctx.beginPath(); ctx.moveTo(x-10,y+s); ctx.lineTo(x-6,y-s+4); ctx.lineTo(x+6,y-s+4); ctx.lineTo(x+10,y+s); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle="#3a2f22"; ctx.lineWidth=1.5; ctx.stroke();
+  // Streben-Kreuz
+  ctx.strokeStyle="rgba(0,0,0,0.3)"; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.moveTo(x-8,y+s-4); ctx.lineTo(x+6,y+2); ctx.moveTo(x+8,y+s-4); ctx.lineTo(x-6,y+2); ctx.stroke();
+  const platGrad = ctx.createLinearGradient(x,y-s-8,x,y-s+6);
+  platGrad.addColorStop(0,"#a08862"); platGrad.addColorStop(1,"#7a6244");
+  drawRoundRect(x-13,y-s-8,26,14,3,platGrad);
+  ctx.strokeStyle="#3a2f22"; ctx.strokeRect(x-13,y-s-8,26,14);
+  ctx.fillStyle="rgba(0,0,0,0.15)"; ctx.fillRect(x-13,y-s+2,26,4);
+  // Laterne/Ausguck mit Glanz
+  const lampGrad = ctx.createRadialGradient(x-1.5,y-s-13,0,x,y-s-12,5);
+  lampGrad.addColorStop(0,"#fff3c4"); lampGrad.addColorStop(1,"#e8b84a");
+  ctx.beginPath(); ctx.arc(x,y-s-12,4.5,0,Math.PI*2);
+  ctx.fillStyle=lampGrad; ctx.fill(); ctx.strokeStyle="#3a2f22"; ctx.stroke();
+  drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("wachturm",b.level), 34);
+}
+
+function drawHandelspostenSprite(x,y,b){
+  const s=25;
+  drawShadow(x,y+s-2,21,6);
+  const grad = ctx.createLinearGradient(x,y-s+6,x,y+s);
+  grad.addColorStop(0,"#a5824a"); grad.addColorStop(1,"#7a5f34");
+  drawRoundRect(x-s,y-s+6,s*2,s*2-6,5,grad);
+  ctx.strokeStyle="#4a341c"; ctx.lineWidth=2;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s+1,y-s+7,s*2-2,s*2-7,4); ctx.stroke();
+  // Gestreiftes Markisen-Dach - gedecktes Rot/Beige statt Comic-Zirkuszelt
+  ["#9c4a3f","#d9cfb8"].forEach((col,i)=>{
+    ctx.fillStyle=col;
+    for(let k=0;k<4;k++){
+      if((k+i)%2===0) ctx.fillRect(x-s+k*(s/2), y-s-6, s/2, 8);
+    }
+  });
+  ctx.strokeStyle="#4a341c"; ctx.lineWidth=1; ctx.strokeRect(x-s,y-s-6,s*2,8);
+  // Zickzack-Volant unter der Markise
+  ctx.fillStyle="#9c4a3f";
+  for(let k=0;k<6;k++){
+    ctx.beginPath(); ctx.moveTo(x-s+k*(s/3), y-s+2); ctx.lineTo(x-s+(k+0.5)*(s/3), y-s+7); ctx.lineTo(x-s+(k+1)*(s/3), y-s+2); ctx.closePath(); ctx.fill();
+  }
+  // Theke/Auslage
+  drawRoundRect(x-14,y+8,28,10,2,"#5a3f22");
+  ctx.strokeStyle="#2e1f10"; ctx.strokeRect(x-14,y+8,28,10);
+  ctx.fillStyle="#e8b84a"; ctx.beginPath(); ctx.arc(x-6,y+8,3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="#7fb84a"; ctx.beginPath(); ctx.arc(x+2,y+8,3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="#c94a4a"; ctx.beginPath(); ctx.arc(x+9,y+8,3,0,Math.PI*2); ctx.fill();
+  drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("handelsposten",b.level), 34);
+}
+
+function drawBaseSprite(x,y){
+  const s=28;
+  drawShadow(x,y+s-4,27,8);
+  const grad = ctx.createLinearGradient(x,y-s,x,y+s);
+  grad.addColorStop(0,"#d97a52"); grad.addColorStop(0.55,"#c25f3d"); grad.addColorStop(1,"#9c4930");
+  drawRoundRect(x-s,y-s,s*2,s*2,10,grad);
+  ctx.strokeStyle="rgba(255,255,255,0.28)"; ctx.lineWidth=1.5;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s,y-s,s*2,s*2,10); ctx.stroke();
+  // Holzbalken-Dach oben
+  const roofGrad = ctx.createLinearGradient(x,y-s-4,x,y-s+6);
+  roofGrad.addColorStop(0,"#6a4326"); roofGrad.addColorStop(1,"#4a2e18");
+  drawRoundRect(x-s-2,y-s-4,s*2+4,10,4,roofGrad);
+  ctx.strokeStyle="#2e1c10"; ctx.lineWidth=1.2; ctx.strokeRect(x-s-2,y-s-4,s*2+4,10);
+  for(let i=-2;i<=2;i++){ ctx.strokeStyle="rgba(0,0,0,0.25)"; ctx.beginPath(); ctx.moveTo(x+i*10,y-s-4); ctx.lineTo(x+i*10,y-s+6); ctx.stroke(); }
+  // Rundbogen-Eingang mit warmem Licht
+  const doorGrad = ctx.createRadialGradient(x,y+18,1,x,y+16,14);
+  doorGrad.addColorStop(0,"#ffdf9c"); doorGrad.addColorStop(1,"#c9822f");
+  ctx.beginPath(); ctx.arc(x,y+10,10,Math.PI,0); ctx.lineTo(x+10,y+22); ctx.lineTo(x-10,y+22); ctx.closePath();
+  ctx.fillStyle=doorGrad; ctx.fill();
+  ctx.strokeStyle="#5a2f14"; ctx.lineWidth=1.6; ctx.stroke();
+  // Fenster links/rechts
+  ["#bfe6f2"].forEach(()=>{
+    drawRoundRect(x-s+7,y-6,8,9,2,"#bfe6f2"); ctx.strokeStyle="#5a2f14"; ctx.lineWidth=1.2; ctx.strokeRect(x-s+7,y-6,8,9);
+    drawRoundRect(x+s-15,y-6,8,9,2,"#bfe6f2"); ctx.strokeRect(x+s-15,y-6,8,9);
+  });
+  // Wehende Fahne
+  const t = performance.now()/1000;
+  const wave = Math.sin(t*3)*2.5;
+  ctx.strokeStyle="#3a1f14"; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x,y-s-4); ctx.lineTo(x,y-s-22); ctx.stroke();
+  ctx.fillStyle="#f2c94c";
+  ctx.beginPath();
+  ctx.moveTo(x,y-s-22);
+  ctx.quadraticCurveTo(x+9+wave,y-s-19,x+15,y-s-16);
+  ctx.quadraticCurveTo(x+9-wave,y-s-15,x,y-s-12);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle="#c9962a"; ctx.lineWidth=1; ctx.stroke();
+
+  ctx.fillStyle="#fff"; ctx.font="700 11px sans-serif"; ctx.textAlign="center";
+  ctx.strokeStyle="rgba(0,0,0,0.4)"; ctx.lineWidth=3;
+  ctx.strokeText("Lv "+state.basisLevel, x, y+34);
+  ctx.fillText("Lv "+state.basisLevel, x, y+34);
+  ctx.textAlign="left";
+  drawHpBar(x, y+40, state.baseHp, maxBaseHp(), 44);
+}
+
+function drawDestroyedOverlay(x,y){
+  const s=25;
+  ctx.save();
+  // Verkohlter Schutthaufen statt Gebaeude - kein Kreuz aus zwei Linien mehr.
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = "#1c1712";
+  ctx.beginPath(); ctx.ellipse(x,y+7,s*0.95,s*0.5,0,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Unregelmaessige Trümmerbrocken (Balken/Steine), verstreut statt symmetrisch.
+  ctx.fillStyle = "#332822";
+  [[-12,3,7,-0.3],[7,7,6,0.55],[-2,-3,5,0.1],[13,-1,5,-0.45]].forEach(([dx,dy,rr,rot])=>{
+    ctx.save();
+    ctx.translate(x+dx,y+dy);
+    ctx.rotate(rot);
+    ctx.fillRect(-rr,-rr*0.5,rr*2,rr);
+    ctx.restore();
+  });
+
+  // Ein paar Glutreste zwischen dem Schutt.
+  ctx.fillStyle = "#ff8a3d"; ctx.globalAlpha = 0.85;
+  [[-6,-1,1.6],[9,4,1.3],[1,-6,1.2]].forEach(([dx,dy,rr])=>{
+    ctx.beginPath(); ctx.arc(x+dx,y+dy,rr,0,Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Duenner Rauch, der nach oben zieht.
+  ctx.strokeStyle = "rgba(190,190,190,0.4)"; ctx.lineWidth=3; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(x-4,y-6); ctx.quadraticCurveTo(x-11,y-18,x-4,y-30); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+6,y-4); ctx.quadraticCurveTo(x+13,y-16,x+6,y-28); ctx.stroke();
+  ctx.restore();
+}
+
+function drawBuildingSprite(x,y,building){
+  if(building.type==="turm") drawTowerSprite(x,y,building);
+  else if(building.type==="mauer") drawWallSprite(x,y,building);
+  else if(building.type==="kaserne") drawKaserneSprite(x,y,building);
+  else if(building.type==="krankenhaus") drawKrankenhausSprite(x,y,building);
+  else if(building.type==="lager") drawLagerSprite(x,y,building);
+  else if(building.type==="wachturm") drawWachturmSprite(x,y,building);
+  else if(building.type==="handelsposten") drawHandelspostenSprite(x,y,building);
+  if(building.hp<=0) drawDestroyedOverlay(x,y);
+}
+
+function drawRepairIndicator(gridSize){
+  if(!state.repairJob) return;
+  const slot = state.cellsByCoord[state.repairJob.key];
+  if(!slot || !slot.building) return;
+  const [c,r] = state.repairJob.key.split(",").map(Number);
+  const p = cellCenter(c,r,gridSize);
+  const t = performance.now()/1000;
+  const progress = Math.max(0, Math.min(1, 1-(state.repairJob.timeLeft/state.repairJob.totalTime)));
+  const ix = p.x+20, iy = p.y-26+Math.sin(t*4)*3;
+
+  // Fortschrittsring, damit ein Abschluss nie "aus dem Nichts" kommt
+  ctx.beginPath(); ctx.arc(ix,iy,11,0,Math.PI*2);
+  ctx.fillStyle="rgba(15,25,35,0.6)"; ctx.fill();
+  ctx.beginPath(); ctx.arc(ix,iy,11,-Math.PI/2,-Math.PI/2+Math.PI*2*progress);
+  ctx.strokeStyle="#6ad46a"; ctx.lineWidth=2.5; ctx.stroke();
+
+  ctx.save();
+  ctx.translate(ix, iy);
+  ctx.rotate(Math.sin(t*3)*0.3);
+  ctx.strokeStyle="#f2c94c"; ctx.lineWidth=3; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(-5,5); ctx.lineTo(5,-5); ctx.stroke();
+  ctx.beginPath(); ctx.arc(5,-5,3.2,0,Math.PI*2); ctx.stroke();
+  ctx.restore();
+}
+
+function findBuildingSlotByType(type){
+  for(const [key,slot] of Object.entries(state.cellsByCoord)){
+    if(slot.building && slot.building.type===type){
+      const [c,r] = key.split(",").map(Number);
+      return {c,r};
+    }
+  }
+  return null;
+}
+
+function drawAngreiferUnits(gridSize){
+  const active = state.npc.angreifer.filter(a=>a.status==="aktiv");
+  const n = active.length;
+  active.forEach((a,i)=>{
+    const ang = (i/Math.max(n,1))*Math.PI*2 - Math.PI/2;
+    const x = Math.cos(ang)*46, y = Math.sin(ang)*46;
+    drawShadow(x,y+10,11,3);
+    ctx.beginPath(); ctx.arc(x,y,10,0,Math.PI*2);
+    ctx.fillStyle="#4a8f5a"; ctx.fill();
+    ctx.strokeStyle="#204a2c"; ctx.lineWidth=1.8; ctx.stroke();
+    // kleiner Bogen als Erkennungsmerkmal, damit sie nicht wie beliebige Punkte wirken
+    ctx.strokeStyle="#eafff0"; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(x+3,y,4.5,-0.9,0.9); ctx.stroke();
+    drawHpBar(x,y-18,a.hp,a.maxHp,18);
+  });
+
+  // Verletzte liegen sichtbar beim Krankenhaus, mit Heil-Fortschrittsring,
+  // statt einfach unsichtbar zu sein
+  const verletzt = state.npc.angreifer.filter(a=>a.status==="verletzt");
+  if(verletzt.length>0){
+    const kSlot = findBuildingSlotByType("krankenhaus");
+    if(kSlot){
+      const p = cellCenter(kSlot.c, kSlot.r, gridSize);
+      const totalHeal = healTimeFor();
+      verletzt.forEach((a,i)=>{
+        const x = p.x-24+i*16, y = p.y+34;
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath(); ctx.ellipse(x,y,8,5,0,0,Math.PI*2);
+        ctx.fillStyle="#8a3a3a"; ctx.fill();
+        ctx.globalAlpha = 1;
+        const ratio = Math.max(0, Math.min(1, 1-(a.healLeft/totalHeal)));
+        ctx.beginPath(); ctx.arc(x,y-9,5,-Math.PI/2,-Math.PI/2+Math.PI*2*ratio);
+        ctx.strokeStyle="#6ad46a"; ctx.lineWidth=2; ctx.stroke();
+      });
+    }
+  }
+}
+
+function drawFloatBase(x,y){
+  // Kleines Holzfloss, auf dem die Ressource treibt - mit sanftem Schaukeln
+  const t = performance.now()/1000;
+  const bob = Math.sin(t*1.6+x*0.01)*1.6;
+  drawShadow(x,y+18,17,5);
+  const raftGrad = ctx.createRadialGradient(x-6,y-6+bob,3,x,y+bob,23);
+  raftGrad.addColorStop(0,"#3a7a92"); raftGrad.addColorStop(1,"#1c4a5f");
+  ctx.beginPath(); ctx.arc(x,y+bob,22,0,Math.PI*2);
+  ctx.fillStyle=raftGrad; ctx.fill();
+  ctx.strokeStyle="rgba(255,255,255,0.15)"; ctx.lineWidth=1.4; ctx.stroke();
+  return bob;
+}
+
+function drawLogNode(x,y,node,def){
+  const full = node.amount>=def.capacity;
+  const empty = node.amount<=0;
+  ctx.globalAlpha = empty ? 0.45 : 1;
+  const bob = drawFloatBase(x,y);
+  y += bob;
+  ["#7a4c2a","#a06d3f"].forEach((col,i)=>{
+    const logGrad = ctx.createLinearGradient(x,y-4+i*7,x,y+2+i*7);
+    logGrad.addColorStop(0, shadeColor(col,25)); logGrad.addColorStop(1, col);
+    drawRoundRect(x-15, y-4+i*7, 30, 6, 3, logGrad);
+    ctx.strokeStyle="rgba(0,0,0,0.2)"; ctx.lineWidth=0.8; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-15,y-4+i*7,30,6,3); ctx.stroke();
+    ["#5a3a1f","#c9a06a"].forEach((rc,ri)=>{
+      ctx.beginPath(); ctx.arc(x-13,y-1+i*7,2-ri*0.7,0,Math.PI*2); ctx.fillStyle=rc; ctx.fill();
+      ctx.beginPath(); ctx.arc(x+13,y-1+i*7,2-ri*0.7,0,Math.PI*2); ctx.fill();
+    });
+  });
+  ctx.globalAlpha = 1;
+  // Fuellstand-Ring
+  ctx.beginPath(); ctx.arc(x,y,26,-Math.PI/2, -Math.PI/2 + Math.PI*2*(node.amount/def.capacity));
+  ctx.strokeStyle = full ? "#f2c94c" : "#c99a5a"; ctx.lineWidth=3; ctx.lineCap="round"; ctx.stroke(); ctx.lineCap="butt";
+  ctx.fillStyle="#fff"; ctx.font="700 10px sans-serif"; ctx.textAlign="center";
+  ctx.strokeStyle="rgba(0,0,0,0.4)"; ctx.lineWidth=2.5; ctx.strokeText(node.amount, x, y+22);
+  ctx.fillText(node.amount, x, y+22);
+  ctx.textAlign="left";
+}
+
+function drawRockNode(x,y,node,def){
+  const full = node.amount>=def.capacity;
+  const empty = node.amount<=0;
+  ctx.globalAlpha = empty ? 0.45 : 1;
+  const bob = drawFloatBase(x,y);
+  y += bob;
+  [[-7,3,9,"#8a929a"],[6,4,8,"#6a7278"],[0,-5,7,"#c4cdd4"]].forEach(([dx,dy,rr,col])=>{
+    const rg = ctx.createRadialGradient(x+dx-rr*0.3,y+dy-rr*0.3,rr*0.15,x+dx,y+dy,rr);
+    rg.addColorStop(0, shadeColor(col,35)); rg.addColorStop(1, shadeColor(col,-15));
+    ctx.beginPath(); ctx.arc(x+dx,y+dy,rr,0,Math.PI*2);
+    ctx.fillStyle=rg; ctx.fill();
+    ctx.strokeStyle="rgba(0,0,0,0.3)"; ctx.lineWidth=1.2; ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.arc(x,y,26,-Math.PI/2, -Math.PI/2 + Math.PI*2*(node.amount/def.capacity));
+  ctx.strokeStyle = full ? "#f2c94c" : "#b7c2cf"; ctx.lineWidth=3; ctx.lineCap="round"; ctx.stroke(); ctx.lineCap="butt";
+  ctx.fillStyle="#fff"; ctx.font="700 10px sans-serif"; ctx.textAlign="center";
+  ctx.strokeStyle="rgba(0,0,0,0.4)"; ctx.lineWidth=2.5; ctx.strokeText(node.amount, x, y+22);
+  ctx.fillText(node.amount, x, y+22);
+  ctx.textAlign="left";
+}
+
+function drawChip(x,y,w,fill,drawIcon,text){
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,0.35)"; ctx.shadowBlur=6; ctx.shadowOffsetY=2;
+  drawRoundRect(x,y,w,30,15,fill);
+  ctx.restore();
+  ctx.strokeStyle="rgba(255,255,255,0.15)"; ctx.lineWidth=1;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,30,15); ctx.stroke();
+  ctx.save();
+  ctx.translate(x+18,y+15);
+  drawIcon();
+  ctx.restore();
+  ctx.fillStyle="#fff"; ctx.font="bold 13px sans-serif"; ctx.textAlign="left"; ctx.textBaseline="middle";
+  ctx.fillText(text, x+32, y+16);
+  ctx.textBaseline="alphabetic";
+}
+
+// ================= Profilblock (1:1 an Sword x Staff-Referenzfoto) =================
+// Profilbild -> Name -> Level -> EXP-Leiste -> Kraft, alle Elemente floaten
+// einzeln direkt auf dem Spielhintergrund - KEIN umschliessendes Panel,
+// genau wie im Referenzfoto (kein Gold-Rahmen drumherum).
+
+// Duenner heller Ring statt dickem Gold-Rahmen - so wie im Referenzfoto,
+// kein Fantasy-Schmuck am Avatar selbst.
+function drawAvatarPortrait(cx,cy,r){
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,0.45)"; ctx.shadowBlur=5; ctx.shadowOffsetY=2;
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fillStyle="rgba(20,26,34,0.4)"; ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle="rgba(230,236,242,0.85)"; ctx.lineWidth=2.2; ctx.stroke();
+
+  const innerR = r*0.88;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx,cy,innerR,0,Math.PI*2); ctx.clip();
+  const bg = ctx.createRadialGradient(cx,cy-innerR*0.3,innerR*0.1,cx,cy,innerR*1.1);
+  bg.addColorStop(0,"#6a5ec9"); bg.addColorStop(1,"#2c2354");
+  ctx.fillStyle=bg; ctx.fillRect(cx-innerR,cy-innerR,innerR*2,innerR*2);
+  ctx.fillStyle="rgba(255,240,220,0.92)";
+  ctx.beginPath(); ctx.arc(cx,cy-innerR*0.22,innerR*0.34,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx,cy+innerR*1.05,innerR*0.62,Math.PI,0); ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,0.22)";
+  ctx.beginPath(); ctx.ellipse(cx-innerR*0.4,cy-innerR*0.55,innerR*0.28,innerR*0.16,-0.5,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+// Level-Chip haengt unten am Avatar-Ring, ueberlappt ihn leicht - dunkler
+// Chip mit duennem hellem Rand, genau wie im Referenzfoto (kein Gold).
+function drawLevelBadge(cx,y,level){
+  const w=36,h=17;
+  const x = cx-w/2;
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,0.5)"; ctx.shadowBlur=3; ctx.shadowOffsetY=1;
+  drawRoundRect(x,y,w,h,h/2,"rgba(10,13,18,0.95)");
+  ctx.restore();
+  ctx.strokeStyle="rgba(210,218,226,0.5)"; ctx.lineWidth=1.2;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.stroke();
+  ctx.fillStyle="#fff"; ctx.font="bold 11px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(level, cx, y+h/2+1);
+  ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+}
+
+// Grosse Zahlen (Kraft kann mit vielen Gebaeuden/NPCs schnell vierstellig
+// werden) als 16K/1.2M statt einer langen Ziffernkette, wie im Referenzbild.
+function formatCompactNumber(v){
+  if(v>=1000000) return (v/1000000).toFixed(v%1000000===0?0:1)+"M";
+  if(v>=1000) return (v/1000).toFixed(v%1000===0?0:1)+"K";
+  return String(v);
+}
+
+function drawExpBar(x,y,w,h,ratio){
+  drawRoundRect(x,y,w,h,h/2,"rgba(12,17,26,0.9)");
+  ctx.strokeStyle="#0e1826"; ctx.lineWidth=2.2;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.stroke();
+  const rr = Math.max(0,Math.min(1,ratio));
+  if(rr>0.01){
+    ctx.save();
+    ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x+1.5,y+1.5,w*rr-3,h-3,(h-3)/2); ctx.clip();
+    const fillGrad = ctx.createLinearGradient(x,y,x,y+h);
+    fillGrad.addColorStop(0,"#eef27a"); fillGrad.addColorStop(1,"#c7d936");
+    ctx.fillStyle=fillGrad; ctx.fillRect(x,y,w*rr,h);
+    ctx.restore();
+  }
+}
+
+function drawKraftPill(x,y,w,h,value){
+  drawRoundRect(x,y,w,h,h/2,"rgba(45,60,80,0.88)");
+  ctx.strokeStyle="rgba(140,160,180,0.5)"; ctx.lineWidth=1.2;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.stroke();
+  ctx.save(); ctx.translate(x+h/2,y+h/2); drawKraftIcon(h*0.38); ctx.restore();
+  ctx.fillStyle="#fff"; ctx.font="bold 10.5px sans-serif"; ctx.textAlign="left"; ctx.textBaseline="middle";
+  ctx.fillText(formatCompactNumber(value), x+h+3, y+h/2+1);
+  ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+}
+
+// Icon liegt bewusst ueber der Leiste (ragt oben drueber raus), statt
+// komplett darin eingebettet zu sein - orientiert an der Referenz (grosses
+// eigenstaendiges Icon mit kraeftigem Umriss, helle Glas-Pille dahinter).
+function drawOverlapResourceChip(x,y,iconR,pillW,pillH,drawIconFn,text){
+  const cx = x+iconR, cy = y+iconR*0.85;
+  const pillX = cx, pillY = cy-pillH*0.12;
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,0.25)"; ctx.shadowBlur=4; ctx.shadowOffsetY=2;
+  drawRoundRect(pillX,pillY,pillW,pillH,pillH/2,"rgba(150,165,180,0.5)");
+  ctx.restore();
+  ctx.fillStyle="#fff"; ctx.font="bold 15px sans-serif"; ctx.textAlign="left"; ctx.textBaseline="middle";
+  ctx.fillText(text, pillX+iconR*1.15, pillY+pillH/2+1);
+  ctx.textBaseline="alphabetic"; ctx.textAlign="left";
+
+  ctx.save(); ctx.translate(cx,cy); drawIconFn(); ctx.restore();
+  return pillX+pillW;
+}
+
+// Fuellstands-Leiste wie in Clash of Clans: der Balken selbst fuellt sich
+// mit dem Fortschritt zur Lagerkapazitaet, statt nur eine Zahl zu zeigen.
+function drawStorageBar(x,y,w,h,current,cap,iconR,drawIconFn,fillColor,text){
+  drawRoundRect(x,y,w,h,h/2,"rgba(10,16,22,0.55)");
+  const ratio = Math.max(0, Math.min(1, cap>0 ? current/cap : 0));
+  ctx.save();
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.clip();
+  ctx.fillStyle = fillColor;
+  ctx.fillRect(x,y,w*ratio,h);
+  ctx.restore();
+  ctx.strokeStyle="rgba(255,255,255,0.15)"; ctx.lineWidth=1;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.stroke();
+
+  ctx.fillStyle="#fff"; ctx.font="bold 11px sans-serif"; ctx.textAlign="right"; ctx.textBaseline="middle";
+  ctx.fillText(text, x+w-9, y+h/2+1);
+  ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+
+  const cx = x+iconR*0.75, cy = y+h/2;
+  ctx.save(); ctx.translate(cx,cy); drawIconFn(iconR); ctx.restore();
+}
+
+function drawStarIcon(r){
+  ctx.beginPath();
+  for(let i=0;i<5;i++){
+    const ang=-Math.PI/2+i*(Math.PI*2/5);
+    const ang2=ang+Math.PI/5;
+    ctx.lineTo(Math.cos(ang)*r,Math.sin(ang)*r);
+    ctx.lineTo(Math.cos(ang2)*r*0.42,Math.sin(ang2)*r*0.42);
+  }
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0,-r,0,r);
+  grad.addColorStop(0,"#6ec3f4"); grad.addColorStop(1,"#2f7fd1");
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.strokeStyle="#1a4a7a"; ctx.lineWidth=2.4; ctx.stroke();
+}
+
+function drawCoinIcon(r){
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  const grad = ctx.createRadialGradient(-r*0.3,-r*0.3,r*0.2,0,0,r);
+  grad.addColorStop(0,"#ffd873"); grad.addColorStop(1,"#e5a219");
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.strokeStyle="#8a5a10"; ctx.lineWidth=2.4; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,r*0.55,0,Math.PI*2);
+  ctx.fillStyle="#f2b93c"; ctx.fill();
+  ctx.strokeStyle="#c98a1a"; ctx.lineWidth=1.4; ctx.stroke();
+}
+
+function drawGemIcon(r){
+  ctx.beginPath();
+  ctx.moveTo(0,-r); ctx.lineTo(r*0.85,-r*0.15); ctx.lineTo(r*0.4,r);
+  ctx.lineTo(-r*0.4,r); ctx.lineTo(-r*0.85,-r*0.15); ctx.closePath();
+  const grad = ctx.createLinearGradient(0,-r,0,r);
+  grad.addColorStop(0,"#8fd8ff"); grad.addColorStop(1,"#2f8fd8");
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.strokeStyle="#1a4a7a"; ctx.lineWidth=2.4; ctx.stroke();
+  ctx.strokeStyle="rgba(255,255,255,0.55)"; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.moveTo(0,-r*0.85); ctx.lineTo(0,r*0.4); ctx.stroke();
+}
+
+function drawLogIcon(r){
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  ctx.fillStyle="#a06d3f"; ctx.fill(); ctx.strokeStyle="#5a3a1c"; ctx.lineWidth=2.4; ctx.stroke();
+  ["#c9a06a","#8a5a34"].forEach((col,i)=>{
+    ctx.fillStyle=col; drawRoundRect(-r*0.65,-r*0.35+i*r*0.45,r*1.3,r*0.32,r*0.16,col);
+  });
+}
+
+function drawStoneIcon(r){
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  ctx.fillStyle="#8a929a"; ctx.fill(); ctx.strokeStyle="#3f4650"; ctx.lineWidth=2.4; ctx.stroke();
+  [[-r*0.28,r*0.1,r*0.4,"#6a7278"],[r*0.3,r*0.18,r*0.36,"#7c8590"],[0,-r*0.2,r*0.36,"#b3bcc4"]].forEach(([dx,dy,rr,col])=>{
+    ctx.beginPath(); ctx.arc(dx,dy,rr,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
+  });
+}
+
+function drawKraftIcon(r){
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  const grad = ctx.createLinearGradient(0,-r,0,r);
+  grad.addColorStop(0,"#f2a35c"); grad.addColorStop(1,"#c9622e");
+  ctx.fillStyle=grad; ctx.fill(); ctx.strokeStyle="#7a3414"; ctx.lineWidth=2.4; ctx.stroke();
+  ctx.fillStyle="#fff3c4";
+  ctx.beginPath();
+  ctx.moveTo(r*0.15,-r*0.6); ctx.lineTo(-r*0.35,r*0.1); ctx.lineTo(r*0.05,r*0.1);
+  ctx.lineTo(-r*0.15,r*0.6); ctx.lineTo(r*0.4,-r*0.1); ctx.lineTo(r*0.02,-r*0.1);
+  ctx.closePath(); ctx.fill();
+}
+
+function drawPlayerLevelUpFx(cx,y){
+  if(!playerLevelUpFx) return;
+  const elapsed = performance.now()-playerLevelUpFx.startedAt;
+  if(elapsed>=LEVELUP_FX_DURATION){ playerLevelUpFx = null; return; }
+  const t = elapsed/LEVELUP_FX_DURATION;
+  const rise = t*14, alpha = t<0.15 ? t/0.15 : 1-((t-0.15)/0.85);
+  ctx.save();
+  ctx.globalAlpha = Math.max(0,alpha);
+  ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center";
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+  const label = "Level Up! Lv. "+playerLevelUpFx.level;
+  ctx.strokeText(label, cx, y+8-rise);
+  ctx.fillStyle = "#ffe27a";
+  ctx.fillText(label, cx, y+8-rise);
+  ctx.restore();
+}
+
+// ================= Licht- und Grading-Pass =================
+// Laeuft ueber die FERTIGE Weltdarstellung (aber vor dem HUD, damit die UI
+// scharf bleibt). Das ist der Schritt, der aus "flach gezeichneten Formen"
+// eine zusammenhaengend beleuchtete Szene macht: ein gerichtetes Sonnenlicht,
+// kuehler Gegenschatten, Vignette und eine feine Koernung. Alles ueber
+// Blend-Modes, die auch iOS-Safari seit Jahren unterstuetzt.
+function drawLightingPass(){
+  // Warmes Sonnenlicht von oben links
+  ctx.save();
+  ctx.globalCompositeOperation = "soft-light";
+  const sun = ctx.createRadialGradient(W*0.18, H*0.1, 0, W*0.18, H*0.1, Math.max(W,H)*1.05);
+  sun.addColorStop(0,   "rgba(255,238,198,0.75)");
+  sun.addColorStop(0.45,"rgba(255,226,180,0.25)");
+  sun.addColorStop(1,   "rgba(60,80,110,0)");
+  ctx.fillStyle = sun; ctx.fillRect(0,0,W,H);
+  ctx.restore();
+
+  // Kuehler Gegenschatten unten rechts - Farbtemperatur-Kontrast, das
+  // wichtigste Mittel, damit eine Szene nicht "eingefaerbt flach" wirkt
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  const cool = ctx.createRadialGradient(W*0.9, H*0.95, 0, W*0.9, H*0.95, Math.max(W,H)*0.95);
+  cool.addColorStop(0,  "rgba(150,170,205,0.42)");
+  cool.addColorStop(0.6,"rgba(198,208,225,0.18)");
+  cool.addColorStop(1,  "rgba(255,255,255,0)");
+  ctx.fillStyle = cool; ctx.fillRect(0,0,W,H);
+  ctx.restore();
+
+  // Vignette
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  const vig = ctx.createRadialGradient(W/2,H*0.45,Math.min(W,H)*0.38, W/2,H*0.45,Math.max(W,H)*0.82);
+  vig.addColorStop(0,"rgba(255,255,255,1)");
+  vig.addColorStop(1,"rgba(96,104,120,1)");
+  ctx.fillStyle = vig; ctx.fillRect(0,0,W,H);
+  ctx.restore();
+
+  // Feine Filmkoernung - nimmt den "sauberen Vektor"-Eindruck
+  ctx.save();
+  ctx.globalCompositeOperation = "overlay";
+  ctx.globalAlpha = 0.055;
+  ctx.translate((Math.random()*64)|0, (Math.random()*64)|0);
+  ctx.fillStyle = TEX.grain;
+  ctx.fillRect(-64,-64,W+128,H+128);
+  ctx.restore();
+}
+
+function drawInGameHud(){
+  ctx.fillStyle="rgba(8,14,20,0.0)";
+  const barY = 12;
+
+  // Profilblock oben links: Profilbild -> Name -> Level -> EXP-Leiste ->
+  // Kraft. Alle Elemente floaten einzeln direkt auf dem Hintergrund, kein
+  // umschliessendes Panel - 1:1 an der Sword x Staff-Referenz.
+  const avatarR = 27, avatarCx = 12+avatarR, avatarCy = barY+avatarR+4;
+  drawAvatarPortrait(avatarCx, avatarCy, avatarR);
+  // Level-Chip haengt unten am Avatar, statt in der Namenszeile Platz
+  // wegzunehmen - so wie in der Referenz.
+  drawLevelBadge(avatarCx, avatarCy+avatarR-8, state.playerLevel);
+
+  const textX = avatarCx+avatarR+8;
+  const colRight = textX+122;
+  const nameMaxW = colRight-textX;
+  ctx.textAlign="left"; ctx.textBaseline="middle";
+  ctx.shadowColor="rgba(0,0,0,0.7)"; ctx.shadowBlur=3;
+  ctx.fillStyle="#fff";
+  let nameSize=13, name=state.playerName;
+  ctx.font="bold "+nameSize+"px sans-serif";
+  while(nameSize>10 && ctx.measureText(name).width>nameMaxW){ nameSize--; ctx.font="bold "+nameSize+"px sans-serif"; }
+  while(ctx.measureText(name).width>nameMaxW && name.length>1){ name = name.slice(0,-1); ctx.font="bold "+nameSize+"px sans-serif"; }
+  if(name!==state.playerName) name = name.replace(/.$/,"…");
+  ctx.fillText(name, textX, avatarCy-avatarR*0.55);
+  ctx.shadowBlur=0; ctx.textBaseline="alphabetic";
+
+  const xpRatio = state.playerXp/xpForLevel(state.playerLevel);
+  drawExpBar(textX, avatarCy-2, colRight-textX, 11, xpRatio);
+  drawKraftPill(textX, avatarCy+13, colRight-textX-6, 17, computeKraft());
+  drawPlayerLevelUpFx(avatarCx, avatarCy+avatarR+22);
+
+  let leftEnd = colRight;
+
+  // Rechts: Waehrungen/Rohstoffe gebuendelt, damit der Profilblock links
+  // nicht mit Muenzen/Edelsteinen um Platz konkurrieren muss.
+  const iconR = 11, pillW = 38, pillH = 22, gap = 6;
+  const currencyRowW = pillW*2+gap+iconR*2;
+  const currencyX = W-currencyRowW-12;
+  drawOverlapResourceChip(currencyX, barY-2, iconR, pillW, pillH, ()=>drawCoinIcon(iconR), state.resources.coins);
+  drawOverlapResourceChip(currencyX+iconR*2+pillW-2, barY-2, iconR, pillW, pillH, ()=>drawGemIcon(iconR), state.resources.gems);
+
+  // Holz- und Stein-Leiste uebereinander, die sich wie in Clash of Clans mit
+  // dem Fuellstand zur Lagerkapazitaet fuellen.
+  const barW = 100, barH = 22, barGap = 6;
+  const rightX = W-barW-12;
+  const resRowY = barY+pillH+10;
+  const cap = storageCap();
+  drawStorageBar(rightX, resRowY, barW, barH, state.resources.holz, cap, 13, drawLogIcon, "#8a5a34", state.resources.holz+"/"+cap);
+  drawStorageBar(rightX, resRowY+barH+barGap, barW, barH, state.resources.stein, cap, 13, drawStoneIcon, "#6a7278", state.resources.stein+"/"+cap);
+
+  // Mitte: Wellen-Status, zentriert in der Luecke zwischen linker und
+  // rechter Gruppe (nicht stur auf der Bildschirmmitte). Wird die Luecke
+  // zu schmal, schrumpft der Chip lieber selbst, statt links oder rechts
+  // zu ueberlappen.
+  const gapLeft = leftEnd+8, gapRight = rightX-8;
+  const chipW = Math.max(64, Math.min(108, gapRight-gapLeft));
+  const statusX = (gapLeft+gapRight)/2 - chipW/2;
+  const statusY = barY;
+  if(!state.tutorialDone){
+    drawChip(statusX, statusY, chipW, "rgba(74,140,60,0.6)", ()=>{
+      ctx.strokeStyle="#eee"; ctx.lineWidth=1.8; ctx.lineCap="round";
+      ctx.beginPath(); ctx.moveTo(-5,3); ctx.lineTo(-1,7); ctx.lineTo(6,-5); ctx.stroke();
+      ctx.lineCap="butt";
+    }, "Aufbau "+tutorialProgressText());
+  } else {
+    const waveLabel = enemies.length>0 ? enemies.length+" Gegner" : Math.max(0,Math.ceil(state.waveTimer))+"s";
+    drawChip(statusX, statusY, chipW, enemies.length>0 ? "rgba(138,47,47,0.6)" : "rgba(10,16,22,0.55)", ()=>{
+      ctx.strokeStyle="#eee"; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-5); ctx.moveTo(0,0); ctx.lineTo(3,2); ctx.stroke();
+    }, waveLabel);
+
+    // Wachturm-Vorschau: zeigt an, was in der naechsten Welle kommt
+    if(enemies.length===0 && state.nextWaveComposition){
+      const counts = {};
+      state.nextWaveComposition.forEach(k=>{ counts[k]=(counts[k]||0)+1; });
+      const summary = Object.entries(counts).map(([k,v])=>v+"x "+ENEMY_TYPES[k].name).join(" · ");
+      ctx.font="600 10.5px sans-serif";
+      const tw = ctx.measureText(summary).width;
+      const cx = statusX+chipW/2;
+      const py = statusY+38;
+      drawRoundRect(cx-tw/2-10, py, tw+20, 20, 10, "rgba(10,16,22,0.7)");
+      ctx.fillStyle="#e8e6df"; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText(summary, cx, py+10);
+      ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+    }
+  }
+}
+
+function render(){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const list = cellList(gridSize);
+
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(W/2, H/2);
+  ctx.scale(camera.scale, camera.scale);
+  ctx.translate(-camera.x, -camera.y);
+
+  drawWater();
+  drawIslandBase(gridSize);
+
+  // Gras wird an die organische Kuestenlinie geclippt - so enden die
+  // quadratischen Felder nicht in einer harten Kante, sondern laufen an
+  // den Ecken in den Strand aus.
+  ctx.save();
+  traceIslandPath(gridHalfExtent(gridSize)+14, 13, 4.4);
+  ctx.clip();
+  list.forEach(([c,r])=>{ const p=cellCenter(c,r,gridSize); drawGrassTile(p.x,p.y,c,r); });
+  { const p = cellCenter(centerOf(gridSize),centerOf(gridSize),gridSize); drawGrassTile(p.x,p.y,0,0); }
+  // Kante abdunkeln, damit das Gras zum Wasser hin abfaellt statt flach
+  // abzubrechen
+  const gHalf = gridHalfExtent(gridSize);
+  const toEdge = ctx.createRadialGradient(0,0,gHalf*0.86, 0,0,gHalf+16);
+  toEdge.addColorStop(0,"rgba(14,32,16,0)");
+  toEdge.addColorStop(1,"rgba(14,32,16,0.45)");
+  ctx.fillStyle = toEdge; ctx.fillRect(-gHalf-40,-gHalf-40,(gHalf+40)*2,(gHalf+40)*2);
+  ctx.restore();
+
+  drawHafen(gridSize);
+
+  list.forEach(([c,r])=>{
+    const p = cellCenter(c,r,gridSize);
+    const slot = state.cellsByCoord[c+","+r] || {unlocked:false,building:null};
+    if(slot.building) drawBuildingSprite(p.x,p.y,slot.building);
+    else if(!slot.unlocked) drawLockedButton(p.x,p.y);
+    else drawPlusButton(p.x,p.y);
+  });
+
+  // Wasser-Ressourcenknoten
+  state.nodes.forEach(n=>{
+    const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
+    const p = nodeWorldPos(n);
+    if(def.type==="holz") drawLogNode(p.x,p.y,n,def); else drawRockNode(p.x,p.y,n,def);
+  });
+
+  // Base in der Mitte
+  {
+    const p = cellCenter(centerOf(gridSize),centerOf(gridSize),gridSize);
+    drawBaseSprite(p.x,p.y);
+  }
+
+  drawAngreiferUnits(gridSize);
+  drawRepairIndicator(gridSize);
+  drawPlayerSprite();
+  drawDepositFx();
+  drawKnockoutFx();
+
+  projectiles.forEach(drawProjectile);
+  enemies.forEach(drawEnemy);
+
+  if(moveSource){
+    const p = cellCenter(moveSource.c, moveSource.r, gridSize);
+    drawTutorialHighlight(p.x, p.y, "Zielfeld antippen");
+  }
+
+  const tut = nextTutorialTarget();
+  if(tut){
+    let tp;
+    if(tut.kind==="cell") tp = cellCenter(tut.c,tut.r,gridSize);
+    else {
+      const n = tut.node || state.nodes.find(x=>x.amount>0) || state.nodes[0];
+      tp = nodeWorldPos(n);
+    }
+    drawTutorialHighlight(tp.x, tp.y, tut.label);
+  }
+
+  ctx.restore();
+  drawLightingPass();
+  drawInGameHud();
+}
+
+// ================= Eingabe / Menues =================
+
+// Waehrend "Verschieben" aktiv ist, wartet der naechste Tap auf ein Zielfeld
+// statt normal ein Menue zu oeffnen.
+let moveSource = null;
+
+function handleTap(wx,wy){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const c0 = centerOf(gridSize);
+
+  if(moveSource){
+    const c = Math.round(wx/CELL + c0);
+    const r = Math.round(wy/CELL + c0);
+    const srcSlot = state.cellsByCoord[moveSource.c+","+moveSource.r];
+    const validTarget = c>=0 && c<gridSize && r>=0 && r<gridSize && !(c===c0 && r===c0) && !(c===moveSource.c && r===moveSource.r);
+    if(validTarget && srcSlot && srcSlot.building){
+      const destSlot = state.cellsByCoord[c+","+r];
+      const req = requiredTypeForCell(c,r);
+      const destOk = destSlot && destSlot.unlocked && !destSlot.building && (!req || req===srcSlot.building.type);
+      if(destOk){
+        destSlot.building = srcSlot.building;
+        srcSlot.building = null;
+        save();
+      }
+    }
+    moveSource = null;
+    render();
+    return;
+  }
+
+  // Wasser-Knoten treffen? Der Spieler laeuft erst hin, sammelt nicht mehr
+  // sofort per Fingertipp - Rucksack-Kapazitaet macht das erst zur Reise.
+  for(const n of state.nodes){
+    const p = nodeWorldPos(n);
+    if(Math.hypot(wx-p.x,wy-p.y) < 26){
+      if(n.amount<=0) return;
+      state.player.moveTarget = { x:p.x, y:p.y, nodeId:n.id };
+      save(); render();
+      return;
+    }
+  }
+
+  const c = Math.round(wx/CELL + c0);
+  const r = Math.round(wy/CELL + c0);
+  if(c<0||c>=gridSize||r<0||r>=gridSize) return;
+  if(c===c0 && r===c0){ openBasisMenu(); return; }
+  openBuildMenu(c,r);
+}
+
+function relocateNode(n){
+  // an eine neue Stelle im Wasser versetzen, mit Abstand zu den anderen Knoten
+  let tries=0, angle;
+  do { angle = Math.random()*360; tries++; }
+  while(tries<10 && state.nodes.some(o=>o!==n && Math.abs(((o.angle-angle+540)%360)-180)<35));
+  n.angle = angle;
+}
+
+const PLAYER_SPEED = 130;       // px/s - deutlich schneller als jeder Gegner
+const BACKPACK_CAPACITY = 40;   // Gesamt an Holz+Stein, die der Spieler gleichzeitig tragen kann
+const PLAYER_ARRIVE_RADIUS = 22;
+const BASE_DEPOSIT_RADIUS = 40;
+
+function backpackTotal(){ return state.player.backpack.holz + state.player.backpack.stein; }
+
+const JOYSTICK_DEADZONE = 0.15; // kleine Ausschläge ignorieren, damit er nicht zittert
+
+// Beim manuellen Steuern per Joystick gibt es kein "Tap-Ziel" mit fester
+// Knoten-ID mehr - stattdessen wird im Vorbeilaufen eingesammelt, sobald
+// der Spieler nah genug an einem Knoten mit Inhalt ist.
+function collectNearbyNode(pl){
+  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS;
+  state.nodes.forEach(n=>{
+    if(n.amount<=0) return;
+    const p = nodeWorldPos(n);
+    const d = Math.hypot(p.x-pl.x, p.y-pl.y);
+    if(d<closestDist){ closestDist=d; closest=n; }
+  });
+  if(!closest) return;
+  const def = WATER_NODE_DEFS.find(d=>d.id===closest.id);
+  const room = BACKPACK_CAPACITY - backpackTotal();
+  const take = Math.min(closest.amount, room);
+  if(take>0){
+    pl.backpack[def.type] += take;
+    closest.amount -= take;
+    if(closest.amount<=0){
+      relocateNode(closest);
+      state.tutorialCollected = true;
+      checkTutorial();
+    }
+    save();
+  }
+}
+
+// Kurzer visueller Effekt beim Entleeren an der Base - keine Spielmechanik,
+// darum nicht in state/save, sondern nur lokal fuers Rendern.
+let depositFx = null;
+const DEPOSIT_FX_DURATION = 900;
+
+// Effekt beim K.o. des Spielers, ebenfalls rein visuell.
+let knockoutFx = null;
+const KNOCKOUT_FX_DURATION = 1400;
+
+// Effekt beim Spieler-Level-Up, ebenfalls rein visuell (state.playerLevel
+// selbst ist schon aktuell, das hier ist nur das kurze Aufblitzen im HUD).
+let playerLevelUpFx = null;
+const LEVELUP_FX_DURATION = 1600;
+
+function updatePlayer(dt){
+  const pl = state.player;
+  const joyLen = Math.hypot(joystickDir.x, joystickDir.y);
+  if(joyLen>JOYSTICK_DEADZONE){
+    // Manuelle Steuerung per Joystick geht vor - bricht ein per Tap gesetztes
+    // Auto-Ziel ab, der Spieler bestimmt direkt die Richtung.
+    pl.moveTarget = null;
+    const speedMult = Math.min(1, joyLen);
+    pl.x += (joystickDir.x/joyLen)*PLAYER_SPEED*speedMult*dt;
+    pl.y += (joystickDir.y/joyLen)*PLAYER_SPEED*speedMult*dt;
+    collectNearbyNode(pl);
+  } else if(pl.moveTarget){
+    const dx = pl.moveTarget.x-pl.x, dy = pl.moveTarget.y-pl.y;
+    const dist = Math.hypot(dx,dy);
+    if(dist>PLAYER_ARRIVE_RADIUS){
+      const ang = Math.atan2(dy,dx);
+      pl.x += Math.cos(ang)*PLAYER_SPEED*dt;
+      pl.y += Math.sin(ang)*PLAYER_SPEED*dt;
+    } else {
+      if(pl.moveTarget.nodeId){
+        const node = state.nodes.find(n=>n.id===pl.moveTarget.nodeId);
+        if(node && node.amount>0){
+          const def = WATER_NODE_DEFS.find(d=>d.id===node.id);
+          const room = BACKPACK_CAPACITY - backpackTotal();
+          const take = Math.min(node.amount, room);
+          if(take>0){
+            pl.backpack[def.type] += take;
+            node.amount -= take;
+            if(node.amount<=0){
+              relocateNode(node);
+              state.tutorialCollected = true;
+              checkTutorial();
+            }
+          }
+        }
+      }
+      pl.moveTarget = null;
+      // Rucksack voll -> automatisch zur Base zurücklaufen, statt extra Klick
+      if(backpackTotal()>=BACKPACK_CAPACITY){
+        pl.moveTarget = { x:0, y:0, nodeId:null };
+      }
+      save();
+    }
+  }
+  // In der Naehe der Base automatisch entleeren
+  if(backpackTotal()>0 && Math.hypot(pl.x,pl.y)<=BASE_DEPOSIT_RADIUS){
+    const cap = storageCap();
+    state.resources.holz = Math.min(cap, state.resources.holz+pl.backpack.holz);
+    state.resources.stein = Math.min(cap, state.resources.stein+pl.backpack.stein);
+    depositFx = { holz: pl.backpack.holz, stein: pl.backpack.stein, startedAt: performance.now() };
+    pl.backpack.holz = 0; pl.backpack.stein = 0;
+    save();
+  }
+}
+
+function requiredTypeForCell(c,r){
+  if(state.tutorialDone) return null;
+  const t = tutorialTargets();
+  if(t.towers.some(([tc,tr])=>tc===c&&tr===r)) return "turm";
+  if(t.walls.some(([tc,tr])=>tc===c&&tr===r)) return "mauer";
+  return null;
+}
+
+function openBasisMenu(){
+  const overlay = document.createElement("div");
+  overlay.className="buildmenu";
+  const box = document.createElement("div");
+  box.className="box";
+  box.innerHTML = `<h3>Base</h3><div class="hint2">Level ${state.basisLevel}</div>`;
+
+  if(!state.tutorialDone){
+    box.innerHTML += `<div class="hint2">Baue zuerst deine Grundverteidigung fertig (${tutorialProgressText()}), bevor du die Base verbessern kannst.</div>`;
+  } else {
+    const cost = basisUpgradeCost(state.basisLevel);
+    const opt = document.createElement("div");
+    opt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
+    opt.innerHTML = `<span>Verbessern auf Level ${state.basisLevel+1}<small>${nextLevelDescription()}</small></span><b>${formatCost(cost)}</b>`;
+    opt.addEventListener("click", ()=>{
+      if(upgradeBasis()){ document.body.removeChild(overlay); render(); }
+    });
+    box.appendChild(opt);
+  }
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function openBuildMenu(c,r){
+  const key = c+","+r;
+  const slot = state.cellsByCoord[key] || {unlocked:false, building:null};
+  state.cellsByCoord[key] = slot;
+
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+
+  if(!slot.unlocked){
+    box.innerHTML = `<h3>Noch gesperrt</h3><div class="hint2">Verbessere deine Base, um weitere Felder freizuschalten.</div>`;
+  } else if(slot.building){
+    const b = slot.building;
+    const def = BUILDABLE_TYPES[b.type];
+    const cost = upgradeCost(b.type, b.level);
+    const maxHp = maxHpFor(b.type, b.level);
+    // Zerstoerte Gebaeude (0 HP) bleiben stehen statt zu verschwinden - sie
+    // muessen erst repariert werden, bevor man sie hochstuft, umruestet
+    // oder verschiebt.
+    const isDestroyed = b.hp<=0;
+    box.innerHTML = `<h3>${def.name}${isDestroyed?" (kaputt)":""}</h3><div class="hint2">Level ${b.level} · HP ${Math.round(b.hp)}/${maxHp}</div>`;
+
+    // Gebaeude-Level darf das aktuelle Basis-Level nie ueberholen - sonst
+    // koennte man wieder einen einzelnen Turm isoliert hochpumpen, egal wie
+    // weit die Basis eigentlich ist (genau das Problem, das die Kanone
+    // vorher hatte).
+    const atLevelCap = b.level>=state.basisLevel;
+    const upOpt = document.createElement("div");
+    upOpt.className = "buildopt" + (isDestroyed || atLevelCap || !canAfford(cost) ? " disabled":"");
+    upOpt.innerHTML = isDestroyed
+      ? `<span>Verbessern auf Level ${b.level+1}<small>Erst reparieren</small></span>`
+      : atLevelCap
+      ? `<span>Verbessern auf Level ${b.level+1}<small>Erst ab Basis-Level ${b.level+1} möglich</small></span>`
+      : `<span>Verbessern auf Level ${b.level+1}<small>Repariert dabei auch komplett</small></span><b>${formatCost(cost)}</b>`;
+    upOpt.addEventListener("click", ()=>{
+      if(!isDestroyed && !atLevelCap && canAfford(cost)){
+        payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level);
+        addPlayerXp(buildingUpgradeXp(b.level));
+        save(); document.body.removeChild(overlay); render();
+      }
+    });
+    box.appendChild(upOpt);
+
+    if(b.hp<maxHp){
+      const rCost = repairCost(b.type,b);
+      const repOpt = document.createElement("div");
+      repOpt.className = "buildopt" + (!canAfford(rCost) ? " disabled":"");
+      repOpt.innerHTML = `<span>Reparieren<small>Stellt volle HP wieder her</small></span><b>${formatCost(rCost)}</b>`;
+      repOpt.addEventListener("click", ()=>{
+        if(canAfford(rCost)){ payCost(rCost); b.hp = maxHp; save(); document.body.removeChild(overlay); render(); }
+      });
+      box.appendChild(repOpt);
+    }
+
+    if(b.type==="kaserne"){
+      const head = document.createElement("div");
+      head.className="hint2"; head.style.marginTop="6px"; head.textContent="Ausbildung:";
+      box.appendChild(head);
+
+      if(isDestroyed){
+        const info = document.createElement("div");
+        info.className="hint2"; info.textContent = "Erst reparieren, bevor hier weiter ausgebildet werden kann.";
+        box.appendChild(info);
+      } else {
+        const anyTraining = !!state.npc.training;
+        Object.entries(NPC_TRAIN_DEFS).forEach(([kind,trainDef])=>{
+          const count = kind==="reparatur" ? state.npc.reparaturCount : state.npc.angreifer.length;
+          const cap = kind==="reparatur" ? REPAIR_NPC_CAP : ANGREIFER_CAP;
+          const isTrainingThis = state.npc.training && state.npc.training.kind===kind;
+
+          const rowHead = document.createElement("div");
+          rowHead.className="hint2"; rowHead.style.marginTop="6px";
+          rowHead.textContent = trainDef.name+" herstellen "+count+"/"+cap
+            + (isTrainingThis ? " · noch "+Math.ceil(state.npc.training.timeLeft)+"s" : "");
+          box.appendChild(rowHead);
+
+          const slotRow = document.createElement("div");
+          slotRow.className="slotRow";
+          for(let i=0;i<cap;i++){
+            const slotEl = document.createElement("div");
+            if(i<count){
+              slotEl.className = "slot filled";
+              slotEl.textContent = "✓";
+            } else {
+              const canStart = !anyTraining && canAfford(trainDef.cost);
+              slotEl.className = "slot empty" + (canStart ? "" : " disabled");
+              slotEl.textContent = "+";
+              slotEl.title = trainDef.desc+" ("+formatCost(trainDef.cost)+")";
+              if(canStart){
+                slotEl.addEventListener("click", ()=>{
+                  payCost(trainDef.cost);
+                  state.npc.training = { kind, timeLeft: trainDef.baseTime, totalTime: trainDef.baseTime };
+                  save(); document.body.removeChild(overlay); render();
+                });
+              }
+            }
+            slotRow.appendChild(slotEl);
+          }
+          box.appendChild(slotRow);
+        });
+
+        const costHint = document.createElement("div");
+        costHint.className="hint2";
+        costHint.textContent = "Kosten pro Slot: Reparatur-Trupp "+formatCost(NPC_TRAIN_DEFS.reparatur.cost)+" · Angreifer "+formatCost(NPC_TRAIN_DEFS.angreifer.cost);
+        box.appendChild(costHint);
+      }
+    }
+
+    if(b.type==="krankenhaus"){
+      const verletzt = state.npc.angreifer.filter(a=>a.status==="verletzt").length;
+      const info = document.createElement("div");
+      info.className="hint2"; info.style.marginTop="6px";
+      info.textContent = isDestroyed
+        ? "Erst reparieren - solange ist die Pflege-Kapazität 0."
+        : "Pflegeplätze belegt: "+verletzt+"/"+b.level+". Höheres Level heilt schneller und bietet mehr Plätze.";
+      box.appendChild(info);
+    }
+
+    if(b.type==="lager"){
+      const info = document.createElement("div");
+      info.className="hint2"; info.style.marginTop="6px";
+      info.textContent = "Aktuelle Lagerkapazität: "+storageCap()+" pro Rohstoff.";
+      box.appendChild(info);
+    }
+
+    if(b.type==="wachturm"){
+      const info = document.createElement("div");
+      info.className="hint2"; info.style.marginTop="6px";
+      info.textContent = isDestroyed ? "Erst reparieren, bevor wieder vorgewarnt wird." : "Zeigt die Zusammensetzung der nächsten Welle oben im Spiel an.";
+      box.appendChild(info);
+    }
+
+    if(b.type==="handelsposten"){
+      const rate = tradeRate(b.level);
+      const info = document.createElement("div");
+      info.className="hint2"; info.style.marginTop="6px";
+      info.textContent = isDestroyed ? "Erst reparieren, bevor hier getauscht werden kann." : "Tauschkurs: "+Math.round(rate*100)+"% - kein Ersatz fürs Sammeln, nur eine Notlösung.";
+      box.appendChild(info);
+
+      if(!isDestroyed){
+        const TRADE_AMOUNT = 20;
+        const gain = Math.round(TRADE_AMOUNT*rate);
+        const cap = storageCap();
+
+        const toStein = document.createElement("div");
+        const canToStein = state.resources.holz>=TRADE_AMOUNT;
+        toStein.className = "buildopt"+(canToStein?"":" disabled");
+        toStein.innerHTML = `<span>${TRADE_AMOUNT} Holz → ${gain} Stein</span>`;
+        toStein.addEventListener("click", ()=>{
+          if(state.resources.holz>=TRADE_AMOUNT){
+            state.resources.holz -= TRADE_AMOUNT;
+            state.resources.stein = Math.min(cap, state.resources.stein+gain);
+            save(); document.body.removeChild(overlay); render();
+          }
+        });
+        box.appendChild(toStein);
+
+        const toHolz = document.createElement("div");
+        const canToHolz = state.resources.stein>=TRADE_AMOUNT;
+        toHolz.className = "buildopt"+(canToHolz?"":" disabled");
+        toHolz.innerHTML = `<span>${TRADE_AMOUNT} Stein → ${gain} Holz</span>`;
+        toHolz.addEventListener("click", ()=>{
+          if(state.resources.stein>=TRADE_AMOUNT){
+            state.resources.stein -= TRADE_AMOUNT;
+            state.resources.holz = Math.min(cap, state.resources.holz+gain);
+            save(); document.body.removeChild(overlay); render();
+          }
+        });
+        box.appendChild(toHolz);
+      }
+    }
+
+    if(b.type==="turm"){
+      const wHead = document.createElement("div");
+      wHead.className="hint2"; wHead.style.marginTop="6px"; wHead.textContent="Waffe auswählen:";
+      box.appendChild(wHead);
+      Object.entries(WEAPONS).forEach(([key2,w])=>{
+        // Beides muss stimmen: die Basis muss weit genug sein (Fortschritt
+        // insgesamt) UND DIESER Turm muss selbst auf das Level hochgekauft
+        // sein (Investition in genau diesen Turm) - sonst bekommt man die
+        // Kanone quasi geschenkt, sobald die Basis hoch genug ist.
+        const basisOk = state.basisLevel>=w.unlockLevel;
+        const turmOk = b.level>=w.unlockLevel;
+        const unlocked = basisOk && turmOk && !isDestroyed;
+        const selected = b.weapon===key2;
+        const wOpt = document.createElement("div");
+        wOpt.className = "buildopt"+(!unlocked?" disabled":"");
+        wOpt.style.border = selected ? "1px solid #7aa2f7" : "";
+        let hint = w.desc;
+        if(!unlocked){
+          hint = isDestroyed ? "Erst reparieren"
+               : !basisOk && !turmOk ? "Braucht Basis-Level "+w.unlockLevel+" und Turm-Level "+w.unlockLevel
+               : !basisOk ? "Braucht Basis-Level "+w.unlockLevel
+               : "Braucht Turm-Level "+w.unlockLevel;
+        }
+        wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${hint}</small></span>`;
+        if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ b.weapon=key2; save(); document.body.removeChild(overlay); render(); });
+        box.appendChild(wOpt);
+      });
+    }
+
+    const moveOpt = document.createElement("div");
+    moveOpt.className = "buildopt" + (isDestroyed ? " disabled":""); moveOpt.style.marginTop="6px";
+    moveOpt.innerHTML = isDestroyed
+      ? `<span>Verschieben<small>Erst reparieren</small></span>`
+      : `<span>Verschieben<small>Tippe danach ein freies Feld an</small></span>`;
+    moveOpt.addEventListener("click", ()=>{
+      if(isDestroyed) return;
+      moveSource = {c,r};
+      document.body.removeChild(overlay); render();
+    });
+    box.appendChild(moveOpt);
+
+    const refund = sellRefund(b.type,b.level);
+    const sellOpt = document.createElement("div");
+    sellOpt.className = "buildopt"; sellOpt.style.marginTop="6px";
+    sellOpt.innerHTML = `<span>Verkaufen</span><b>+${formatCost(refund)}</b>`;
+    sellOpt.addEventListener("click", ()=>{
+      state.resources.holz+=refund.holz; state.resources.stein+=refund.stein;
+      slot.building = null;
+      save(); document.body.removeChild(overlay); render();
+    });
+    box.appendChild(sellOpt);
+  } else {
+    const required = requiredTypeForCell(c,r);
+    box.innerHTML = required
+      ? `<h3>${BUILDABLE_TYPES[required].name} bauen</h3><div class="hint2">Für die Grundverteidigung brauchst du hier ${required==="turm"?"einen Turm":"eine Mauer"}.</div>`
+      : `<h3>Feld bebauen</h3>`;
+    Object.entries(BUILDABLE_TYPES).filter(([type])=>{
+      if(required) return type===required;
+      if(type==="kaserne") return state.basisLevel>=KASERNE_UNLOCK_LEVEL && !hasKaserne();
+      if(type==="krankenhaus") return state.basisLevel>=KASERNE_UNLOCK_LEVEL && !hasKrankenhaus();
+      if(type==="lager") return state.basisLevel>=LAGER_UNLOCK_LEVEL && !hasLager();
+      if(type==="wachturm") return state.basisLevel>=WACHTURM_UNLOCK_LEVEL && !hasWachturm();
+      if(type==="handelsposten") return state.basisLevel>=HANDEL_UNLOCK_LEVEL && !hasHandelsposten();
+      return true;
+    }).forEach(([type,def])=>{
+      const opt = document.createElement("div");
+      opt.className = "buildopt" + (!canAfford(def.cost) ? " disabled":"");
+      opt.innerHTML = `<span>${def.name}<small>${def.desc}</small></span><b>${formatCost(def.cost)}</b>`;
+      opt.addEventListener("click", ()=>{
+        if(canAfford(def.cost)){
+          payCost(def.cost);
+          const hp = maxHpFor(type,1);
+          slot.building = type==="turm" ? {type,level:1,weapon:"bogen",hp} : {type,level:1,hp};
+          checkTutorial();
+          save(); document.body.removeChild(overlay); render();
+        }
+      });
+      box.appendChild(opt);
+    });
+  }
+
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function addCloseBtn(box, overlay){
+  const close = document.createElement("div");
+  close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
+  close.addEventListener("click", ()=> document.body.removeChild(overlay));
+  box.appendChild(close);
+}
+
+function showIntroIfNeeded(){
+  if(state.tutorialIntroShown) return;
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>Willkommen auf deiner Insel</h3>
+    <div class="hint2">
+      Folge der markierten Stelle mit dem Pfeil und tippe genau dort drauf -
+      sie zeigt dir Schritt für Schritt, was als Nächstes zu tun ist.
+      Erst wenn deine Grundverteidigung steht, kommt die erste Gegnerwelle.
+    </div>`;
+  const opt = document.createElement("div");
+  opt.className = "buildopt"; opt.style.justifyContent="center";
+  opt.textContent = "Los geht's";
+  opt.addEventListener("click", ()=>{
+    state.tutorialIntroShown = true;
+    save();
+    document.body.removeChild(overlay);
+  });
+  box.appendChild(opt);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+buildTextures();
+resizeCanvas();
+showIntroIfNeeded();
+
+let lastT = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now-lastT)/1000);
+  lastT = now;
+  updateWave(dt);
+  updateRepairJob(dt);
+  updateTraining(dt);
+  updateHospital(dt);
+  updatePlayer(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
