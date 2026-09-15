@@ -289,55 +289,89 @@ function drawRoundRect(x,y,w,h,r,fill){
 }
 function hashRand(seed){ const x=Math.sin(seed*12.9898)*43758.5453; return x-Math.floor(x); }
 
+function drawShadow(x,y,rx,ry){
+  ctx.beginPath(); ctx.ellipse(x,y+ry*0.5,rx,ry,0,0,Math.PI*2);
+  ctx.fillStyle="rgba(0,0,0,0.28)"; ctx.fill();
+}
+
 function drawWater(){
-  ctx.fillStyle = "#123145";
+  const grad = ctx.createRadialGradient(0,0,WATER_RADIUS*0.25, 0,0,WATER_RADIUS*1.15);
+  grad.addColorStop(0, "#1d6b82");
+  grad.addColorStop(0.55, "#134f68");
+  grad.addColorStop(1, "#0a2c3d");
+  ctx.fillStyle = grad;
   ctx.fillRect(-3000,-3000,6000,6000);
-  ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 3;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.lineWidth = 3;
   for(let i=-25;i<25;i++){
     ctx.beginPath();
     ctx.moveTo(-1500, i*45);
     ctx.quadraticCurveTo(0, i*45+18, 1500, i*45);
     ctx.stroke();
   }
+  for(let i=0;i<18;i++){
+    const a = hashRand(i*7.3)*Math.PI*2, d = 60+hashRand(i*3.1)*WATER_RADIUS*0.9;
+    ctx.beginPath(); ctx.arc(Math.cos(a)*d, Math.sin(a)*d, 1.6, 0, Math.PI*2);
+    ctx.fillStyle="rgba(255,255,255,0.35)"; ctx.fill();
+  }
+
   ctx.beginPath(); ctx.arc(0,0,WATER_RADIUS,0,Math.PI*2);
-  ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 4/camera.scale;
-  ctx.setLineDash([14/camera.scale,10/camera.scale]); ctx.stroke(); ctx.setLineDash([]);
-  ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = (13/camera.scale)+"px sans-serif"; ctx.textAlign="center";
+  ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 3/camera.scale;
+  ctx.setLineDash([16/camera.scale,12/camera.scale]); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "600 "+(13/camera.scale)+"px sans-serif"; ctx.textAlign="center";
   ctx.fillText("offene See →", 0, -WATER_RADIUS+24/camera.scale);
   ctx.textAlign="left";
 }
 
 function drawGrassTile(x,y,c,r){
-  ctx.fillStyle = "#33502f";
+  const checker = (c+r)%2===0;
+  const grad = ctx.createLinearGradient(x,y-CELL/2,x,y+CELL/2);
+  if(checker){ grad.addColorStop(0,"#5cae44"); grad.addColorStop(1,"#4c9a38"); }
+  else { grad.addColorStop(0,"#54a33e"); grad.addColorStop(1,"#458f32"); }
+  ctx.fillStyle = grad;
   ctx.fillRect(x-CELL/2, y-CELL/2, CELL, CELL);
+
   const seed = c*131+r*911;
-  for(let k=0;k<4;k++){
-    const rx = (hashRand(seed+k)-0.5)*CELL*0.8;
-    const ry = (hashRand(seed+k+40)-0.5)*CELL*0.8;
-    ctx.fillStyle = k%2===0 ? "rgba(255,255,255,0.045)" : "rgba(0,0,0,0.09)";
-    ctx.beginPath(); ctx.arc(x+rx,y+ry, 2.5+hashRand(seed+k+80)*3, 0, Math.PI*2); ctx.fill();
+  for(let k=0;k<3;k++){
+    const bx = x+(hashRand(seed+k)-0.5)*CELL*0.75;
+    const by = y+(hashRand(seed+k+40)-0.5)*CELL*0.75;
+    ctx.strokeStyle = "rgba(30,70,20,0.35)"; ctx.lineWidth=1.6; ctx.lineCap="round";
+    for(let b=0;b<3;b++){
+      const ang = -Math.PI/2 + (hashRand(seed+k*3+b)-0.5)*0.9;
+      ctx.beginPath(); ctx.moveTo(bx+b*2-2, by);
+      ctx.lineTo(bx+b*2-2+Math.cos(ang)*6, by+Math.sin(ang)*6);
+      ctx.stroke();
+    }
+    ctx.lineCap="butt";
   }
-  ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;
+  ctx.fillStyle = "rgba(255,255,255,0.08)"; ctx.fillRect(x-CELL/2, y-CELL/2, CELL, 2);
+  ctx.strokeStyle = "rgba(0,0,0,0.10)"; ctx.lineWidth = 1;
   ctx.strokeRect(x-CELL/2, y-CELL/2, CELL, CELL);
 }
 
 function drawPlusButton(x,y){
-  drawRoundRect(x-22,y-22,44,44,9,"rgba(255,255,255,0.10)");
-  ctx.strokeStyle="rgba(255,255,255,0.32)"; ctx.lineWidth=1.5;
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,9); ctx.stroke();
-  ctx.strokeStyle="#cfe3f7"; ctx.lineWidth=3; ctx.lineCap="round";
+  drawShadow(x,y+16,20,6);
+  const grad = ctx.createLinearGradient(x,y-22,x,y+22);
+  grad.addColorStop(0,"rgba(255,255,255,0.22)"); grad.addColorStop(1,"rgba(255,255,255,0.08)");
+  drawRoundRect(x-22,y-22,44,44,12,grad);
+  ctx.strokeStyle="rgba(255,255,255,0.4)"; ctx.lineWidth=1.5;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,12); ctx.stroke();
+  ctx.strokeStyle="#eafff0"; ctx.lineWidth=3.2; ctx.lineCap="round";
   ctx.beginPath(); ctx.moveTo(x-8,y); ctx.lineTo(x+8,y); ctx.moveTo(x,y-8); ctx.lineTo(x,y+8); ctx.stroke();
   ctx.lineCap="butt";
 }
 
 function drawLockedButton(x,y){
-  drawRoundRect(x-22,y-22,44,44,9,"rgba(255,255,255,0.03)");
-  ctx.strokeStyle="rgba(255,255,255,0.14)"; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,9); ctx.stroke();
+  drawShadow(x,y+16,20,6);
+  const grad = ctx.createLinearGradient(x,y-22,x,y+22);
+  grad.addColorStop(0,"rgba(20,30,25,0.30)"); grad.addColorStop(1,"rgba(20,30,25,0.15)");
+  drawRoundRect(x-22,y-22,44,44,12,grad);
+  ctx.strokeStyle="rgba(255,255,255,0.18)"; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,12); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.strokeStyle="rgba(210,220,235,0.55)"; ctx.lineWidth=2.2;
+  ctx.strokeStyle="rgba(220,228,238,0.65)"; ctx.lineWidth=2.2;
   ctx.beginPath(); ctx.arc(x,y-3,5,Math.PI,0); ctx.stroke();
-  drawRoundRect(x-7,y-3,14,10,2,"rgba(210,220,235,0.55)");
+  drawRoundRect(x-7,y-3,14,10,2,"rgba(220,228,238,0.65)");
 }
 
 function drawLevelPips(x,y,level){
@@ -351,6 +385,7 @@ function drawLevelPips(x,y,level){
 
 function drawTowerSprite(x,y,b){
   const s=25;
+  drawShadow(x,y+s-4,20,6);
   drawRoundRect(x-s,y-s,s*2,s*2,7,"#5a6472");
   ctx.strokeStyle="#333a42"; ctx.lineWidth=2;
   ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
@@ -370,6 +405,7 @@ function drawTowerSprite(x,y,b){
 
 function drawWallSprite(x,y,b){
   const s=25;
+  drawShadow(x,y+s-4,20,6);
   drawRoundRect(x-s,y-s,s*2,s*2,4,"#8a5a3a");
   ctx.strokeStyle="rgba(0,0,0,0.35)"; ctx.lineWidth=1.3;
   const rows=4, rowH=(s*2)/rows;
@@ -393,6 +429,7 @@ function drawBuildingSprite(x,y,building){
 function drawLogNode(x,y,node,def){
   const full = node.amount>=def.capacity;
   const empty = node.amount<=0;
+  drawShadow(x,y+16,16,5);
   ctx.globalAlpha = empty ? 0.4 : 1;
   ctx.beginPath(); ctx.arc(x,y,22,0,Math.PI*2);
   ctx.fillStyle="rgba(20,40,55,0.5)"; ctx.fill();
@@ -415,6 +452,7 @@ function drawLogNode(x,y,node,def){
 function drawRockNode(x,y,node,def){
   const full = node.amount>=def.capacity;
   const empty = node.amount<=0;
+  drawShadow(x,y+16,16,5);
   ctx.globalAlpha = empty ? 0.4 : 1;
   ctx.beginPath(); ctx.arc(x,y,22,0,Math.PI*2);
   ctx.fillStyle="rgba(20,40,55,0.5)"; ctx.fill();
@@ -432,7 +470,12 @@ function drawRockNode(x,y,node,def){
 }
 
 function drawChip(x,y,w,fill,drawIcon,text){
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,0.35)"; ctx.shadowBlur=6; ctx.shadowOffsetY=2;
   drawRoundRect(x,y,w,30,15,fill);
+  ctx.restore();
+  ctx.strokeStyle="rgba(255,255,255,0.15)"; ctx.lineWidth=1;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,30,15); ctx.stroke();
   ctx.save();
   ctx.translate(x+18,y+15);
   drawIcon();
@@ -503,10 +546,19 @@ function render(){
   // Base in der Mitte
   {
     const p = cellCenter(centerOf(gridSize),centerOf(gridSize),gridSize);
-    drawRoundRect(p.x-27,p.y-27,54,54,8,"#a5533a");
-    ctx.fillStyle="#1a0d0d"; ctx.font="9px sans-serif"; ctx.textAlign="center";
-    ctx.fillText("Base", p.x, p.y+2);
-    ctx.fillText("Level "+state.basisLevel, p.x, p.y+13);
+    drawShadow(p.x,p.y+24,26,7);
+    const grad = ctx.createLinearGradient(p.x,p.y-28,p.x,p.y+28);
+    grad.addColorStop(0,"#c96a48"); grad.addColorStop(1,"#9c4930");
+    drawRoundRect(p.x-28,p.y-28,56,56,10,grad);
+    ctx.strokeStyle="rgba(255,255,255,0.25)"; ctx.lineWidth=1.5;
+    ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(p.x-28,p.y-28,56,56,10); ctx.stroke();
+    // kleine Fahne
+    ctx.strokeStyle="#3a1f14"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(p.x,p.y-22); ctx.lineTo(p.x,p.y-8); ctx.stroke();
+    ctx.fillStyle="#f2c94c";
+    ctx.beginPath(); ctx.moveTo(p.x,p.y-22); ctx.lineTo(p.x+11,p.y-18); ctx.lineTo(p.x,p.y-14); ctx.closePath(); ctx.fill();
+    ctx.fillStyle="#fff"; ctx.font="600 10px sans-serif"; ctx.textAlign="center";
+    ctx.fillText("Lv "+state.basisLevel, p.x, p.y+12);
     ctx.textAlign="left";
   }
 
