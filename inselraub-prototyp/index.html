@@ -20,7 +20,7 @@
   #hud .pill { background:#1c2b3a; border:1px solid #2e4358; padding:5px 10px; border-radius:11px; }
   #hud .pill b { color:#f2c94c; }
 
-  canvas { background:#173247; border:2px solid #2e4358; border-radius:8px; display:block; }
+  canvas { background:#0f2233; border:2px solid #2e4358; border-radius:8px; display:block; }
 
   .legend { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:10px; font-size:11px; color:#9aa3b2; }
   .legend span { display:flex; align-items:center; gap:4px; }
@@ -44,7 +44,7 @@
 
 <div id="app">
   <h1>Basis-Raster-Prototyp</h1>
-  <div class="sub">Türme auf das Raster setzen – die Mauer dazwischen entsteht automatisch und passt sich an, sobald du weitere Türme baust.</div>
+  <div class="sub">5x5 Raster, deine Base in der Mitte. Auf jedem freien Feld kannst du selbst wählen: Turm oder Mauer.</div>
 
   <div id="hud">
     <div class="pill">Vorräte: <b id="hudRes">0</b></div>
@@ -55,10 +55,9 @@
 
   <div class="legend">
     <span><i class="swatch" style="background:#c94a4a"></i>Turm</span>
-    <span><i class="swatch" style="background:#8a5a3a"></i>Mauer (automatisch)</span>
-    <span><i class="swatch" style="background:#4a7fc9"></i>Lagerhaus</span>
-    <span><i class="swatch" style="background:#7a4ac9"></i>Kaserne</span>
-    <span><i class="swatch" style="background:#a5533a"></i>Kernbau</span>
+    <span><i class="swatch" style="background:#8a5a3a"></i>Mauer</span>
+    <span><i class="swatch" style="background:#a5533a"></i>Base</span>
+    <span><i class="swatch" style="background:#33502f"></i>Grün / frei</span>
   </div>
 </div>
 
@@ -66,37 +65,32 @@
 (function(){
 "use strict";
 
-const CELL = 62, ORIGIN = {x:35, y:35}, GRID = 5;
+const GRID = 5, CELL = 62, ORIGIN = {x:35, y:35};
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function cellCenter(c,r){ return { x: ORIGIN.x + c*CELL + CELL/2, y: ORIGIN.y + r*CELL + CELL/2 }; }
 
-// Ring im Uhrzeigersinn ab oben links (16 Randfelder eines 5x5-Rasters)
-const RING_CELLS = [
-  [0,0],[1,0],[2,0],[3,0],[4,0],
-  [4,1],[4,2],[4,3],
-  [4,4],[3,4],[2,4],[1,4],[0,4],
-  [0,3],[0,2],[0,1]
-];
-// Innere 3x3 ohne Mittelpunkt (Kernbau) = 8 Bauplaetze
-const INTERIOR_CELLS = [
-  [1,1],[2,1],[3,1],
-  [1,2],        [3,2],
-  [1,3],[2,3],[3,3]
-];
-const CORE_CELL = [2,2];
+const CENTER = [2,2];
+
+// Alle 24 Felder auSSer der Mitte - die 8 direkten Nachbarn zuerst
+// (die schaltest du zuerst frei), danach der aeuSSere Rand des 5x5-Rasters.
+const NEIGHBOR_CELLS = [[1,1],[2,1],[3,1],[1,2],[3,2],[1,3],[2,3],[3,3]];
+const OUTER_CELLS = [];
+for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
+  if(r===0||r===GRID-1||c===0||c===GRID-1) OUTER_CELLS.push([c,r]);
+}
+const CELLS = NEIGHBOR_CELLS.concat(OUTER_CELLS);
 
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v1";
+const SAVE_KEY = "basis_raster_proto_v2";
 
 function defaultState(){
   return {
     resources: 70,
-    coreHp: 100,
-    ring: Array.from({length:16}, (_,i)=>({ unlocked: i<3, tower:false, level:0 })),
-    interior: Array.from({length:8}, (_,i)=>({ unlocked: i<2, building:null }))
+    baseHp: 100,
+    cells: CELLS.map((_,i)=>({ unlocked: i<4, building:null }))
   };
 }
 let state = load();
@@ -106,40 +100,13 @@ function load(){
 }
 function save(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch(e){} }
 
-const RING_UNLOCK_BASE = 35, RING_UNLOCK_STEP = 30;
-const INTERIOR_UNLOCK_BASE = 45, INTERIOR_UNLOCK_STEP = 35;
-function ringUnlockCost(i){ return RING_UNLOCK_BASE + i*RING_UNLOCK_STEP; }
-function interiorUnlockCost(i){ return INTERIOR_UNLOCK_BASE + i*INTERIOR_UNLOCK_STEP; }
+function unlockCost(i){ return 30 + i*18; }
 
-const TOWER_DEF = { name:"Turm", desc:"Verteidigungsturm. Zwischen zwei Türmen entsteht automatisch eine Mauer.", baseCost:40 };
-function towerUpgradeCost(level){ return Math.round(TOWER_DEF.baseCost * Math.pow(1.5, level)); }
-
-const INTERIOR_TYPES = {
-  lager:   { name:"Lagerhaus", desc:"Erhöht deine Vorratskapazität.", baseCost:30, icon:"L", color:"#4a7fc9" },
-  kaserne: { name:"Kaserne",   desc:"Erhöht deine Basis-HP.",         baseCost:35, icon:"K", color:"#7a4ac9" }
+const BUILDABLE_TYPES = {
+  turm:  { name:"Turm",  desc:"Verteidigungsturm, greift Angreifer an.", baseCost:40, icon:"⚔", color:"#c94a4a" },
+  mauer: { name:"Mauer", desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", baseCost:15, icon:"▮", color:"#8a5a3a" }
 };
-function interiorUpgradeCost(type, level){ return Math.round(INTERIOR_TYPES[type].baseCost * Math.pow(1.5, level)); }
-
-// ================= Automatische Mauer-Berechnung =================
-// Regel: sobald 2+ Tuerme auf dem Ring stehen, wird JEDES Feld zwischen
-// zwei (im Ring-Index) aufeinanderfolgenden Tuermen automatisch zur Mauer -
-// unabhaengig davon ob dieses Feld schon freigeschaltet ist. Freischalten
-// ist nur noetig, um dort selbst einen NEUEN Turm zu bauen.
-
-function computeWallSet(){
-  const towerIdx = [];
-  state.ring.forEach((s,i)=>{ if(s.tower) towerIdx.push(i); });
-  const walls = new Set();
-  if(towerIdx.length>=2){
-    for(let k=0;k<towerIdx.length;k++){
-      const a = towerIdx[k];
-      const b = towerIdx[(k+1)%towerIdx.length];
-      let i = (a+1)%16;
-      while(i!==b){ walls.add(i); i=(i+1)%16; }
-    }
-  }
-  return walls;
-}
+function upgradeCost(type, level){ return Math.round(BUILDABLE_TYPES[type].baseCost * Math.pow(1.5, level)); }
 
 // ================= Rendern =================
 
@@ -151,25 +118,29 @@ function drawRoundRect(x,y,w,h,r,fill){
 
 function render(){
   document.getElementById("hudRes").textContent = state.resources;
-  document.getElementById("hudHp").textContent = state.coreHp;
+  document.getElementById("hudHp").textContent = state.baseHp;
 
-  ctx.fillStyle = "#0f2233"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  const wallSet = computeWallSet();
+  // Gruenes 5x5-Feld als Untergrund
+  ctx.fillStyle = "#33502f";
+  ctx.fillRect(ORIGIN.x, ORIGIN.y, CELL*GRID, CELL*GRID);
+  ctx.strokeStyle = "rgba(255,255,255,0.06)";
+  for(let i=0;i<=GRID;i++){
+    ctx.beginPath(); ctx.moveTo(ORIGIN.x+i*CELL, ORIGIN.y); ctx.lineTo(ORIGIN.x+i*CELL, ORIGIN.y+CELL*GRID); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ORIGIN.x, ORIGIN.y+i*CELL); ctx.lineTo(ORIGIN.x+CELL*GRID, ORIGIN.y+i*CELL); ctx.stroke();
+  }
 
-  // Ring-Felder
-  RING_CELLS.forEach(([c,r],i)=>{
+  // Bau-Felder
+  CELLS.forEach(([c,r],i)=>{
     const p = cellCenter(c,r);
-    const slot = state.ring[i];
-    if(slot.tower){
-      drawRoundRect(p.x-26,p.y-26,52,52,8,"#c94a4a");
-      ctx.fillStyle="#1a0d0d"; ctx.font="bold 20px sans-serif"; ctx.textAlign="center";
-      ctx.fillText("⚔", p.x, p.y+7);
-      ctx.font="9px sans-serif"; ctx.fillText("Lv"+slot.level, p.x, p.y+22);
-    } else if(wallSet.has(i)){
-      drawRoundRect(p.x-26,p.y-26,52,52,4,"#8a5a3a");
-      ctx.strokeStyle="#5a3a22"; ctx.lineWidth=2;
-      ctx.strokeRect(p.x-26,p.y-26,52,52);
+    const slot = state.cells[i];
+    if(slot.building){
+      const def = BUILDABLE_TYPES[slot.building.type];
+      drawRoundRect(p.x-26,p.y-26,52,52,8,def.color);
+      ctx.fillStyle="#1a0d0d"; ctx.font="bold 19px sans-serif"; ctx.textAlign="center";
+      ctx.fillText(def.icon, p.x, p.y+6);
+      ctx.font="9px sans-serif"; ctx.fillText("Lv"+slot.building.level, p.x, p.y+21);
     } else if(!slot.unlocked){
       ctx.strokeStyle="#3a5570"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
       ctx.strokeRect(p.x-24,p.y-24,48,48); ctx.setLineDash([]);
@@ -183,36 +154,13 @@ function render(){
     }
   });
 
-  // Innere Felder
-  INTERIOR_CELLS.forEach(([c,r],i)=>{
-    const p = cellCenter(c,r);
-    const slot = state.interior[i];
-    if(slot.building){
-      const def = INTERIOR_TYPES[slot.building.type];
-      drawRoundRect(p.x-24,p.y-24,48,48,7,def.color);
-      ctx.fillStyle="#0d1620"; ctx.font="bold 15px sans-serif"; ctx.textAlign="center";
-      ctx.fillText(def.icon, p.x, p.y+5);
-      ctx.font="8px sans-serif"; ctx.fillText("Lv"+slot.building.level, p.x, p.y+17);
-    } else if(!slot.unlocked){
-      ctx.strokeStyle="#3a5570"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
-      ctx.strokeRect(p.x-22,p.y-22,44,44); ctx.setLineDash([]);
-      ctx.fillStyle="#5f7180"; ctx.font="16px sans-serif"; ctx.textAlign="center";
-      ctx.fillText("+", p.x, p.y+5);
-    } else {
-      ctx.strokeStyle="#cfe3f7"; ctx.lineWidth=1.5;
-      ctx.strokeRect(p.x-22,p.y-22,44,44);
-      ctx.fillStyle="#cfe3f7"; ctx.font="16px sans-serif"; ctx.textAlign="center";
-      ctx.fillText("+", p.x, p.y+5);
-    }
-  });
-
-  // Kernbau
+  // Base in der Mitte
   {
-    const p = cellCenter(CORE_CELL[0], CORE_CELL[1]);
+    const p = cellCenter(CENTER[0], CENTER[1]);
     drawRoundRect(p.x-27,p.y-27,54,54,8,"#a5533a");
     ctx.fillStyle="#1a0d0d"; ctx.font="9px sans-serif"; ctx.textAlign="center";
-    ctx.fillText("Kernbau", p.x, p.y+3);
-    ctx.fillText(state.coreHp+"/100", p.x, p.y+14);
+    ctx.fillText("Base", p.x, p.y+3);
+    ctx.fillText(state.baseHp+"/100", p.x, p.y+14);
   }
 
   ctx.textAlign="left";
@@ -220,8 +168,7 @@ function render(){
 
 // ================= Eingabe =================
 
-function findRingIndex(c,r){ return RING_CELLS.findIndex(cell=>cell[0]===c&&cell[1]===r); }
-function findInteriorIndex(c,r){ return INTERIOR_CELLS.findIndex(cell=>cell[0]===c&&cell[1]===r); }
+function findCellIndex(c,r){ return CELLS.findIndex(cell=>cell[0]===c&&cell[1]===r); }
 
 canvas.addEventListener("click", e=>{
   const rect = canvas.getBoundingClientRect();
@@ -229,68 +176,21 @@ canvas.addEventListener("click", e=>{
   const y = (e.clientY-rect.top)*(canvas.height/rect.height);
   const c = Math.floor((x-ORIGIN.x)/CELL), r = Math.floor((y-ORIGIN.y)/CELL);
   if(c<0||c>=GRID||r<0||r>=GRID) return;
+  if(c===CENTER[0] && r===CENTER[1]) return;
 
-  const ri = findRingIndex(c,r);
-  if(ri>=0){ openRingMenu(ri); return; }
-  const ii = findInteriorIndex(c,r);
-  if(ii>=0){ openInteriorMenu(ii); return; }
+  const i = findCellIndex(c,r);
+  if(i>=0) openBuildMenu(i);
 });
 
-function openRingMenu(i){
-  const slot = state.ring[i];
+function openBuildMenu(i){
+  const slot = state.cells[i];
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
   box.className = "box";
 
   if(!slot.unlocked){
-    const cost = ringUnlockCost(i);
-    box.innerHTML = `<h3>Feld freischalten</h3><div class="hint2">Erst freigeschaltete Felder kannst du selbst mit einem Turm bebauen.</div>`;
-    const opt = document.createElement("div");
-    opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
-    opt.innerHTML = `<span>Freischalten</span><b>${cost}g</b>`;
-    opt.addEventListener("click", ()=>{
-      if(state.resources>=cost){ state.resources-=cost; slot.unlocked=true; save(); document.body.removeChild(overlay); render(); }
-    });
-    box.appendChild(opt);
-  } else if(slot.tower){
-    const cost = towerUpgradeCost(slot.level);
-    box.innerHTML = `<h3>Turm aufwerten</h3><div class="hint2">Level ${slot.level} → ${slot.level+1}</div>`;
-    const opt = document.createElement("div");
-    opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
-    opt.innerHTML = `<span>Aufwerten</span><b>${cost}g</b>`;
-    opt.addEventListener("click", ()=>{
-      if(state.resources>=cost){ state.resources-=cost; slot.level++; save(); document.body.removeChild(overlay); render(); }
-    });
-    box.appendChild(opt);
-  } else {
-    box.innerHTML = `<h3>Turm bauen</h3><div class="hint2">Zwischen deinen Türmen entsteht automatisch eine verbindende Mauer.</div>`;
-    const opt = document.createElement("div");
-    opt.className = "buildopt" + (state.resources<TOWER_DEF.baseCost ? " disabled":"");
-    opt.innerHTML = `<span>${TOWER_DEF.name}<small>${TOWER_DEF.desc}</small></span><b>${TOWER_DEF.baseCost}g</b>`;
-    opt.addEventListener("click", ()=>{
-      if(state.resources>=TOWER_DEF.baseCost){
-        state.resources-=TOWER_DEF.baseCost; slot.tower=true; slot.level=1;
-        save(); document.body.removeChild(overlay); render();
-      }
-    });
-    box.appendChild(opt);
-  }
-
-  addCloseBtn(box, overlay);
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-}
-
-function openInteriorMenu(i){
-  const slot = state.interior[i];
-  const overlay = document.createElement("div");
-  overlay.className = "buildmenu";
-  const box = document.createElement("div");
-  box.className = "box";
-
-  if(!slot.unlocked){
-    const cost = interiorUnlockCost(i);
+    const cost = unlockCost(i);
     box.innerHTML = `<h3>Feld freischalten</h3>`;
     const opt = document.createElement("div");
     opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
@@ -300,8 +200,8 @@ function openInteriorMenu(i){
     });
     box.appendChild(opt);
   } else if(slot.building){
-    const def = INTERIOR_TYPES[slot.building.type];
-    const cost = interiorUpgradeCost(slot.building.type, slot.building.level);
+    const def = BUILDABLE_TYPES[slot.building.type];
+    const cost = upgradeCost(slot.building.type, slot.building.level);
     box.innerHTML = `<h3>${def.name} aufwerten</h3><div class="hint2">Level ${slot.building.level} → ${slot.building.level+1}</div>`;
     const opt = document.createElement("div");
     opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
@@ -311,8 +211,8 @@ function openInteriorMenu(i){
     });
     box.appendChild(opt);
   } else {
-    box.innerHTML = `<h3>Gebäude wählen</h3>`;
-    Object.entries(INTERIOR_TYPES).forEach(([type,def])=>{
+    box.innerHTML = `<h3>Feld bebauen</h3>`;
+    Object.entries(BUILDABLE_TYPES).forEach(([type,def])=>{
       const opt = document.createElement("div");
       opt.className = "buildopt" + (state.resources<def.baseCost ? " disabled":"");
       opt.innerHTML = `<span>${def.name}<small>${def.desc}</small></span><b>${def.baseCost}g</b>`;
@@ -326,16 +226,13 @@ function openInteriorMenu(i){
     });
   }
 
-  addCloseBtn(box, overlay);
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-}
-
-function addCloseBtn(box, overlay){
   const close = document.createElement("div");
   close.className = "buildopt"; close.style.justifyContent = "center"; close.textContent = "Schließen";
   close.addEventListener("click", ()=> document.body.removeChild(overlay));
   box.appendChild(close);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 
 render();
