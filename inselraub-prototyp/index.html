@@ -127,7 +127,7 @@ function cellCenter(c,r,gridSize){ const c0=centerOf(gridSize); return { x:(c-c0
 
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v13";
+const SAVE_KEY = "basis_raster_proto_v14";
 const TUTORIAL_START_UNLOCK = 8; // das ganze 3x3-Feld um die Base ist von Anfang an frei
 const MIN_WAVE_GAP = 30; // Sekunden Mindestabstand zwischen zwei Wellen
 const PLAYER_MAX_HP = 60;
@@ -152,6 +152,8 @@ function gridHalfExtent(gridSize){ return centerOf(gridSize)*CELL + CELL/2; }
 function defaultState(){
   return {
     playerName: "Kommandant",
+    playerLevel: 1,
+    playerXp: 0,
     resources: { holz: 60, stein: 30, gems: 0, coins: 0 },
     basisLevel: 1,
     baseHp: 100,
@@ -282,15 +284,25 @@ const WEAPONS = {
 
 function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,level-1)), stein: Math.round(45*Math.pow(1.55,level-1)) }; }
 
-// Es gibt (noch) kein eigenes EXP-System - die "EXP-Leiste" im Profilblock
-// zeigt darum ehrlich den echten Fortschritt zum naechsten Basis-Level,
-// statt eine erfundene Zahl ohne Bedeutung dahinter zu zeigen.
-function levelProgressRatio(){
-  const cost = basisUpgradeCost(state.basisLevel);
-  const need = cost.holz+cost.stein;
-  if(need<=0) return 0;
-  const have = Math.min(state.resources.holz,cost.holz)+Math.min(state.resources.stein,cost.stein);
-  return have/need;
+// ================= Spieler-Level/EXP - eigenstaendig von Basis-Level =================
+// Kommt aus zwei echten Quellen: Wellen ueberstehen und irgendwas verbessern
+// (Basis-Level oder Gebaeude-Level) - keine Deko-Zahl ohne Bedeutung.
+
+function xpForLevel(level){ return Math.round(60*Math.pow(1.22,level-1)); }
+function waveXpReward(){ return 18+state.basisLevel*5; }
+function basisUpgradeXp(newLevel){ return 25+newLevel*8; }
+function buildingUpgradeXp(newLevel){ return 6+newLevel*3; }
+
+function addPlayerXp(amount){
+  state.playerXp += amount;
+  let leveledUp = false;
+  while(state.playerXp >= xpForLevel(state.playerLevel)){
+    state.playerXp -= xpForLevel(state.playerLevel);
+    state.playerLevel++;
+    leveledUp = true;
+  }
+  if(leveledUp) playerLevelUpFx = { level: state.playerLevel, startedAt: performance.now() };
+  save();
 }
 
 // ================= Basis-Level: schaltet Felder frei, laesst das Raster wachsen =================
@@ -332,6 +344,7 @@ function upgradeBasis(){
     }
   }
   applyUnlocksForCurrentLevel();
+  addPlayerXp(basisUpgradeXp(state.basisLevel));
   save();
   return true;
 }
@@ -792,6 +805,7 @@ function updateWave(dt){
     state.resources.holz = Math.min(cap, state.resources.holz+loot.holz);
     state.resources.stein = Math.min(cap, state.resources.stein+loot.stein);
     waveActive = false;
+    addPlayerXp(waveXpReward());
     save();
   }
 }
@@ -2015,6 +2029,23 @@ function drawKraftIcon(r){
   ctx.closePath(); ctx.fill();
 }
 
+function drawPlayerLevelUpFx(cx,y){
+  if(!playerLevelUpFx) return;
+  const elapsed = performance.now()-playerLevelUpFx.startedAt;
+  if(elapsed>=LEVELUP_FX_DURATION){ playerLevelUpFx = null; return; }
+  const t = elapsed/LEVELUP_FX_DURATION;
+  const rise = t*14, alpha = t<0.15 ? t/0.15 : 1-((t-0.15)/0.85);
+  ctx.save();
+  ctx.globalAlpha = Math.max(0,alpha);
+  ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center";
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+  const label = "Level Up! Lv. "+playerLevelUpFx.level;
+  ctx.strokeText(label, cx, y+8-rise);
+  ctx.fillStyle = "#ffe27a";
+  ctx.fillText(label, cx, y+8-rise);
+  ctx.restore();
+}
+
 function drawInGameHud(){
   ctx.fillStyle="rgba(8,14,20,0.0)";
   const barY = 12;
@@ -2039,10 +2070,12 @@ function drawInGameHud(){
   if(name!==state.playerName) name = name.replace(/.$/,"…");
   ctx.fillText(name, textX, panelY+15);
   ctx.shadowBlur=0; ctx.textBaseline="alphabetic";
-  drawLevelBadge(badgeX, panelY+6, state.basisLevel);
+  drawLevelBadge(badgeX, panelY+6, state.playerLevel);
 
-  drawExpBar(textX, panelY+27, panelX+panelW-14-textX, 8, levelProgressRatio());
+  const xpRatio = state.playerXp/xpForLevel(state.playerLevel);
+  drawExpBar(textX, panelY+27, panelX+panelW-14-textX, 8, xpRatio);
   drawKraftPill(textX, panelY+40, 92, 17, computeKraft());
+  drawPlayerLevelUpFx(avatarCx, panelY+panelH);
 
   let leftEnd = panelX+panelW;
 
@@ -2271,6 +2304,11 @@ const DEPOSIT_FX_DURATION = 900;
 let knockoutFx = null;
 const KNOCKOUT_FX_DURATION = 1400;
 
+// Effekt beim Spieler-Level-Up, ebenfalls rein visuell (state.playerLevel
+// selbst ist schon aktuell, das hier ist nur das kurze Aufblitzen im HUD).
+let playerLevelUpFx = null;
+const LEVELUP_FX_DURATION = 1600;
+
 function updatePlayer(dt){
   const pl = state.player;
   const joyLen = Math.hypot(joystickDir.x, joystickDir.y);
@@ -2394,7 +2432,11 @@ function openBuildMenu(c,r){
       ? `<span>Verbessern auf Level ${b.level+1}<small>Erst ab Basis-Level ${b.level+1} möglich</small></span>`
       : `<span>Verbessern auf Level ${b.level+1}<small>Repariert dabei auch komplett</small></span><b>${formatCost(cost)}</b>`;
     upOpt.addEventListener("click", ()=>{
-      if(!isDestroyed && !atLevelCap && canAfford(cost)){ payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level); save(); document.body.removeChild(overlay); render(); }
+      if(!isDestroyed && !atLevelCap && canAfford(cost)){
+        payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level);
+        addPlayerXp(buildingUpgradeXp(b.level));
+        save(); document.body.removeChild(overlay); render();
+      }
     });
     box.appendChild(upOpt);
 
