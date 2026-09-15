@@ -88,7 +88,7 @@ function cellCenter(c,r,gridSize){ const c0=centerOf(gridSize); return { x:(c-c0
 
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v5";
+const SAVE_KEY = "basis_raster_proto_v6";
 
 const WATER_NODE_DEFS = [
   { id:"holz1", type:"holz", angle:35,  capacity:20, regenMs:1600 },
@@ -103,8 +103,10 @@ function defaultState(){
   return {
     resources: { holz: 60, stein: 30 },
     basisLevel: 1,
+    baseHp: 100,
+    waveTimer: 25,
     cellsByCoord: {},
-    nodes: WATER_NODE_DEFS.map(n=>({ id:n.id, amount:n.capacity }))
+    nodes: WATER_NODE_DEFS.map(n=>({ id:n.id, amount:n.capacity, angle:n.angle }))
   };
 }
 let state = load();
@@ -135,7 +137,13 @@ const BUILDABLE_TYPES = {
   mauer: { name:"Mauer", desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", cost:{holz:16,stein:8}, baseHp:150, hpPerLevel:35 }
 };
 function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)); }
-function hpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp+(level-1)*d.hpPerLevel; }
+function maxHpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp+(level-1)*d.hpPerLevel; }
+function sellRefund(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, 0.5*level); }
+function repairCost(type, b){
+  const max = maxHpFor(type,b.level);
+  const missing = Math.max(0, max-b.hp);
+  return scaleCost(BUILDABLE_TYPES[type].cost, (missing/max)*0.7);
+}
 
 const WEAPONS = {
   bogen:  { name:"Bogen",  desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
@@ -200,10 +208,115 @@ setInterval(()=>{
   if(changed){ save(); render(); }
 }, 900);
 
-function nodeWorldPos(def){
+function nodeWorldPos(node){
   const radius = gridHalfExtent(gridSizeForLevel(state.basisLevel)) + NODE_WATER_MARGIN;
-  const rad = def.angle*Math.PI/180;
+  const rad = node.angle*Math.PI/180;
   return { x: Math.cos(rad)*radius, y: Math.sin(rad)*radius };
+}
+
+// ================= Wellen: Gegner spawnen, Tuerme feuern =================
+
+const WEAPON_STATS = {
+  bogen:  { dmg: 6,  range: 130, rate: 0.9 },
+  kanone: { dmg: 14, range: 150, rate: 1.6 }
+};
+function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return w.dmg + (b.level-1)*2; }
+function maxBaseHp(){ return 100 + (state.basisLevel-1)*20; }
+
+let enemies = [];
+let projectiles = [];
+
+function spawnWave(){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const spawnRadius = gridHalfExtent(gridSize) + NODE_WATER_MARGIN + 40;
+  const count = Math.min(3+Math.floor(state.basisLevel/2), 10);
+  for(let i=0;i<count;i++){
+    const angle = Math.random()*Math.PI*2;
+    const hp = 26+state.basisLevel*6;
+    enemies.push({
+      x: Math.cos(angle)*spawnRadius, y: Math.sin(angle)*spawnRadius,
+      hp, maxHp: hp,
+      dmg: 5+Math.floor(state.basisLevel/2), speed: 24+Math.random()*8, r:10,
+      attackCd: 0
+    });
+  }
+}
+
+function findEnemyTarget(e){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  let best=null, bestDist=Infinity;
+  Object.entries(state.cellsByCoord).forEach(([key,slot])=>{
+    if(!slot.building || slot.building.hp<=0) return;
+    const [c,r] = key.split(",").map(Number);
+    const p = cellCenter(c,r,gridSize);
+    const d = Math.hypot(e.x-p.x,e.y-p.y);
+    if(d<bestDist){ bestDist=d; best={x:p.x,y:p.y,r:27,slot}; }
+  });
+  if(best) return best;
+  return {x:0,y:0,r:29,isBase:true};
+}
+
+function updateWave(dt){
+  if(enemies.length===0){
+    state.waveTimer -= dt;
+    if(state.waveTimer<=0){ spawnWave(); save(); }
+  }
+
+  const gridSize = gridSizeForLevel(state.basisLevel);
+
+  enemies.forEach(e=>{
+    const target = findEnemyTarget(e);
+    const dist = Math.hypot(target.x-e.x, target.y-e.y);
+    const stopDist = target.r+e.r+2;
+    if(dist>stopDist){
+      const ang = Math.atan2(target.y-e.y, target.x-e.x);
+      e.x += Math.cos(ang)*e.speed*dt;
+      e.y += Math.sin(ang)*e.speed*dt;
+    } else {
+      e.attackCd -= dt;
+      if(e.attackCd<=0){
+        e.attackCd = 1;
+        if(target.isBase){
+          state.baseHp = Math.max(0, state.baseHp-e.dmg);
+        } else {
+          target.slot.building.hp -= e.dmg;
+          if(target.slot.building.hp<=0) target.slot.building = null;
+        }
+        save();
+      }
+    }
+  });
+
+  Object.entries(state.cellsByCoord).forEach(([key,slot])=>{
+    if(!slot.building || slot.building.type!=="turm" || slot.building.hp<=0) return;
+    const [c,r] = key.split(",").map(Number);
+    const p = cellCenter(c,r,gridSize);
+    const b = slot.building;
+    const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen;
+    b.fireCd = (b.fireCd||0) - dt;
+    if(b.fireCd>0) return;
+    let nearest=null, nd=Infinity;
+    enemies.forEach(e=>{
+      const d = Math.hypot(e.x-p.x,e.y-p.y);
+      if(d<=w.range && d<nd){ nd=d; nearest=e; }
+    });
+    if(nearest){
+      b.fireCd = w.rate;
+      const ang = Math.atan2(nearest.y-p.y, nearest.x-p.x);
+      projectiles.push({x:p.x,y:p.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b)});
+    }
+  });
+
+  projectiles.forEach(pr=>{ pr.x+=pr.vx*dt; pr.y+=pr.vy*dt; pr.life-=dt; });
+  for(let i=projectiles.length-1;i>=0;i--){
+    const pr = projectiles[i];
+    let hit = pr.life<=0;
+    enemies.forEach(e=>{
+      if(!hit && Math.hypot(pr.x-e.x,pr.y-e.y)<e.r+4){ e.hp-=pr.dmg; hit=true; }
+    });
+    if(hit) projectiles.splice(i,1);
+  }
+  enemies = enemies.filter(e=>e.hp>0);
 }
 
 // ================= Kamera (Zoom & Verschieben) =================
@@ -383,6 +496,32 @@ function drawLevelPips(x,y,level){
   }
 }
 
+function drawHpBar(x,y,hp,maxHp,w){
+  if(hp>=maxHp) return;
+  const ratio = Math.max(0,hp/maxHp);
+  ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(x-w/2,y,w,4);
+  ctx.fillStyle = ratio>0.5 ? "#6ad46a" : ratio>0.25 ? "#e0c34a" : "#e04a4a";
+  ctx.fillRect(x-w/2,y,w*ratio,4);
+}
+
+function drawEnemy(e){
+  drawShadow(e.x,e.y+e.r,e.r*1.3,4);
+  ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
+  ctx.fillStyle="#8a2f2f"; ctx.fill();
+  ctx.strokeStyle="#3a1010"; ctx.lineWidth=2; ctx.stroke();
+  ctx.beginPath(); ctx.arc(e.x-3,e.y-3,2,0,Math.PI*2);
+  ctx.fillStyle="rgba(255,255,255,0.3)"; ctx.fill();
+  const w=22, ratio=Math.max(0,e.hp/e.maxHp), by=e.y-e.r-9;
+  ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(e.x-w/2,by,w,4);
+  ctx.fillStyle = ratio>0.5 ? "#6ad46a" : ratio>0.25 ? "#e0c34a" : "#e04a4a";
+  ctx.fillRect(e.x-w/2,by,w*ratio,4);
+}
+
+function drawProjectile(pr){
+  ctx.beginPath(); ctx.arc(pr.x,pr.y,3,0,Math.PI*2);
+  ctx.fillStyle="#f2c94c"; ctx.fill();
+}
+
 function drawTowerSprite(x,y,b){
   const s=25;
   drawShadow(x,y+s-4,20,6);
@@ -401,6 +540,7 @@ function drawTowerSprite(x,y,b){
   ctx.fillStyle = weaponColor; ctx.fillRect(x-3,y-19,6,11);
   ctx.fillStyle = b.weapon==="kanone" ? "#55555f" : "#a5825a"; ctx.fillRect(x-3,y-19,6,3);
   drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("turm",b.level), 34);
 }
 
 function drawWallSprite(x,y,b){
@@ -419,6 +559,7 @@ function drawWallSprite(x,y,b){
   ctx.fillStyle="rgba(0,0,0,0.28)"; ctx.fillRect(x-s,y+s-4,s*2,4);
   ctx.strokeStyle="#4a2f1c"; ctx.lineWidth=2; ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
   drawLevelPips(x, y+18, b.level);
+  drawHpBar(x, y+22, b.hp, maxHpFor("mauer",b.level), 34);
 }
 
 function drawBuildingSprite(x,y,building){
@@ -511,6 +652,14 @@ function drawInGameHud(){
     }
     ctx.closePath(); ctx.fill();
   }, "Lv "+state.basisLevel);
+
+  const waveLabel = enemies.length>0 ? enemies.length+" Gegner" : Math.max(0,Math.ceil(state.waveTimer))+"s";
+  const chipW = 96;
+  drawChip(W/2-chipW/2, barY, chipW, enemies.length>0 ? "rgba(138,47,47,0.6)" : "rgba(10,16,22,0.55)", ()=>{
+    ctx.strokeStyle="#eee"; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-5); ctx.moveTo(0,0); ctx.lineTo(3,2); ctx.stroke();
+  }, waveLabel);
 }
 
 function render(){
@@ -539,7 +688,7 @@ function render(){
   // Wasser-Ressourcenknoten
   state.nodes.forEach(n=>{
     const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
-    const p = nodeWorldPos(def);
+    const p = nodeWorldPos(n);
     if(def.type==="holz") drawLogNode(p.x,p.y,n,def); else drawRockNode(p.x,p.y,n,def);
   });
 
@@ -560,7 +709,11 @@ function render(){
     ctx.fillStyle="#fff"; ctx.font="600 10px sans-serif"; ctx.textAlign="center";
     ctx.fillText("Lv "+state.basisLevel, p.x, p.y+12);
     ctx.textAlign="left";
+    drawHpBar(p.x, p.y+30, state.baseHp, maxBaseHp(), 40);
   }
+
+  projectiles.forEach(drawProjectile);
+  enemies.forEach(drawEnemy);
 
   ctx.restore();
   drawInGameHud();
@@ -574,9 +727,8 @@ function handleTap(wx,wy){
 
   // Wasser-Knoten treffen?
   for(const n of state.nodes){
-    const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
-    const p = nodeWorldPos(def);
-    if(Math.hypot(wx-p.x,wy-p.y) < 26){ collectNode(n,def); return; }
+    const p = nodeWorldPos(n);
+    if(Math.hypot(wx-p.x,wy-p.y) < 26){ collectNode(n); return; }
   }
 
   const c = Math.round(wx/CELL + c0);
@@ -586,10 +738,16 @@ function handleTap(wx,wy){
   openBuildMenu(c,r);
 }
 
-function collectNode(n,def){
+function collectNode(n){
   if(n.amount<=0) return;
+  const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
   state.resources[def.type] += n.amount;
   n.amount = 0;
+  // an eine neue Stelle im Wasser versetzen, mit Abstand zu den anderen Knoten
+  let tries=0, angle;
+  do { angle = Math.random()*360; tries++; }
+  while(tries<10 && state.nodes.some(o=>o!==n && Math.abs(((o.angle-angle+540)%360)-180)<35));
+  n.angle = angle;
   save(); render();
 }
 
@@ -628,16 +786,27 @@ function openBuildMenu(c,r){
     const b = slot.building;
     const def = BUILDABLE_TYPES[b.type];
     const cost = upgradeCost(b.type, b.level);
-    const hp = hpFor(b.type, b.level);
-    box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level} · HP ${hp}/${hp}</div>`;
+    const maxHp = maxHpFor(b.type, b.level);
+    box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level} · HP ${Math.round(b.hp)}/${maxHp}</div>`;
 
     const upOpt = document.createElement("div");
     upOpt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
-    upOpt.innerHTML = `<span>Verbessern auf Level ${b.level+1}</span><b>${formatCost(cost)}</b>`;
+    upOpt.innerHTML = `<span>Verbessern auf Level ${b.level+1}<small>Repariert dabei auch komplett</small></span><b>${formatCost(cost)}</b>`;
     upOpt.addEventListener("click", ()=>{
-      if(canAfford(cost)){ payCost(cost); b.level++; save(); document.body.removeChild(overlay); render(); }
+      if(canAfford(cost)){ payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level); save(); document.body.removeChild(overlay); render(); }
     });
     box.appendChild(upOpt);
+
+    if(b.hp<maxHp){
+      const rCost = repairCost(b.type,b);
+      const repOpt = document.createElement("div");
+      repOpt.className = "buildopt" + (!canAfford(rCost) ? " disabled":"");
+      repOpt.innerHTML = `<span>Reparieren<small>Stellt volle HP wieder her</small></span><b>${formatCost(rCost)}</b>`;
+      repOpt.addEventListener("click", ()=>{
+        if(canAfford(rCost)){ payCost(rCost); b.hp = maxHp; save(); document.body.removeChild(overlay); render(); }
+      });
+      box.appendChild(repOpt);
+    }
 
     if(b.type==="turm"){
       const wHead = document.createElement("div");
@@ -654,6 +823,17 @@ function openBuildMenu(c,r){
         box.appendChild(wOpt);
       });
     }
+
+    const refund = sellRefund(b.type,b.level);
+    const sellOpt = document.createElement("div");
+    sellOpt.className = "buildopt"; sellOpt.style.marginTop="6px";
+    sellOpt.innerHTML = `<span>Verkaufen</span><b>+${formatCost(refund)}</b>`;
+    sellOpt.addEventListener("click", ()=>{
+      state.resources.holz+=refund.holz; state.resources.stein+=refund.stein;
+      slot.building = null;
+      save(); document.body.removeChild(overlay); render();
+    });
+    box.appendChild(sellOpt);
   } else {
     box.innerHTML = `<h3>Feld bebauen</h3>`;
     Object.entries(BUILDABLE_TYPES).forEach(([type,def])=>{
@@ -663,7 +843,8 @@ function openBuildMenu(c,r){
       opt.addEventListener("click", ()=>{
         if(canAfford(def.cost)){
           payCost(def.cost);
-          slot.building = type==="turm" ? {type,level:1,weapon:"bogen"} : {type,level:1};
+          const hp = maxHpFor(type,1);
+          slot.building = type==="turm" ? {type,level:1,weapon:"bogen",hp} : {type,level:1,hp};
           save(); document.body.removeChild(overlay); render();
         }
       });
@@ -683,7 +864,15 @@ function addCloseBtn(box, overlay){
   box.appendChild(close);
 }
 
-render();
+let lastT = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now-lastT)/1000);
+  lastT = now;
+  updateWave(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
 
 })();
 </script>
