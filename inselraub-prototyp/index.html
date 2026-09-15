@@ -239,6 +239,12 @@ function upgradeBasis(){
       remapped[(c+shift)+","+(r+shift)] = val;
     });
     state.cellsByCoord = remapped;
+    // Ein laufender Reparatur-Auftrag zeigt sonst nach dem Raster-Umzug auf
+    // ein falsches/nicht mehr existierendes Feld.
+    if(state.repairJob){
+      const [c,r] = state.repairJob.key.split(",").map(Number);
+      state.repairJob.key = (c+shift)+","+(r+shift);
+    }
   }
   applyUnlocksForCurrentLevel();
   save();
@@ -905,27 +911,70 @@ function drawRepairIndicator(gridSize){
   const [c,r] = state.repairJob.key.split(",").map(Number);
   const p = cellCenter(c,r,gridSize);
   const t = performance.now()/1000;
+  const progress = Math.max(0, Math.min(1, 1-(state.repairJob.timeLeft/state.repairJob.totalTime)));
+  const ix = p.x+20, iy = p.y-26+Math.sin(t*4)*3;
+
+  // Fortschrittsring, damit ein Abschluss nie "aus dem Nichts" kommt
+  ctx.beginPath(); ctx.arc(ix,iy,11,0,Math.PI*2);
+  ctx.fillStyle="rgba(15,25,35,0.6)"; ctx.fill();
+  ctx.beginPath(); ctx.arc(ix,iy,11,-Math.PI/2,-Math.PI/2+Math.PI*2*progress);
+  ctx.strokeStyle="#6ad46a"; ctx.lineWidth=2.5; ctx.stroke();
+
   ctx.save();
-  ctx.translate(p.x+20, p.y-26+Math.sin(t*4)*3);
+  ctx.translate(ix, iy);
   ctx.rotate(Math.sin(t*3)*0.3);
   ctx.strokeStyle="#f2c94c"; ctx.lineWidth=3; ctx.lineCap="round";
-  ctx.beginPath(); ctx.moveTo(-6,6); ctx.lineTo(6,-6); ctx.stroke();
-  ctx.beginPath(); ctx.arc(6,-6,4,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-5,5); ctx.lineTo(5,-5); ctx.stroke();
+  ctx.beginPath(); ctx.arc(5,-5,3.2,0,Math.PI*2); ctx.stroke();
   ctx.restore();
 }
 
-function drawAngreiferUnits(){
+function findKaserneSlot(){
+  for(const [key,slot] of Object.entries(state.cellsByCoord)){
+    if(slot.building && slot.building.type==="kaserne"){
+      const [c,r] = key.split(",").map(Number);
+      return {c,r};
+    }
+  }
+  return null;
+}
+
+function drawAngreiferUnits(gridSize){
   const active = state.npc.angreifer.filter(a=>a.status==="aktiv");
   const n = active.length;
   active.forEach((a,i)=>{
     const ang = (i/Math.max(n,1))*Math.PI*2 - Math.PI/2;
-    const x = Math.cos(ang)*40, y = Math.sin(ang)*40;
-    drawShadow(x,y+7,9,3);
-    ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2);
+    const x = Math.cos(ang)*46, y = Math.sin(ang)*46;
+    drawShadow(x,y+10,11,3);
+    ctx.beginPath(); ctx.arc(x,y,10,0,Math.PI*2);
     ctx.fillStyle="#4a8f5a"; ctx.fill();
-    ctx.strokeStyle="#204a2c"; ctx.lineWidth=1.5; ctx.stroke();
-    drawHpBar(x,y-14,a.hp,a.maxHp,16);
+    ctx.strokeStyle="#204a2c"; ctx.lineWidth=1.8; ctx.stroke();
+    // kleiner Bogen als Erkennungsmerkmal, damit sie nicht wie beliebige Punkte wirken
+    ctx.strokeStyle="#eafff0"; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(x+3,y,4.5,-0.9,0.9); ctx.stroke();
+    drawHpBar(x,y-18,a.hp,a.maxHp,18);
   });
+
+  // Verletzte liegen sichtbar bei der Kaserne, mit Heil-Fortschrittsring,
+  // statt einfach unsichtbar zu sein
+  const verletzt = state.npc.angreifer.filter(a=>a.status==="verletzt");
+  if(verletzt.length>0){
+    const kSlot = findKaserneSlot();
+    if(kSlot){
+      const p = cellCenter(kSlot.c, kSlot.r, gridSize);
+      const totalHeal = healTimeFor();
+      verletzt.forEach((a,i)=>{
+        const x = p.x-24+i*16, y = p.y+34;
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath(); ctx.ellipse(x,y,8,5,0,0,Math.PI*2);
+        ctx.fillStyle="#8a3a3a"; ctx.fill();
+        ctx.globalAlpha = 1;
+        const ratio = Math.max(0, Math.min(1, 1-(a.healLeft/totalHeal)));
+        ctx.beginPath(); ctx.arc(x,y-9,5,-Math.PI/2,-Math.PI/2+Math.PI*2*ratio);
+        ctx.strokeStyle="#6ad46a"; ctx.lineWidth=2; ctx.stroke();
+      });
+    }
+  }
 }
 
 function drawLogNode(x,y,node,def){
@@ -1081,11 +1130,16 @@ function render(){
     drawHpBar(p.x, p.y+30, state.baseHp, maxBaseHp(), 40);
   }
 
-  drawAngreiferUnits();
+  drawAngreiferUnits(gridSize);
   drawRepairIndicator(gridSize);
 
   projectiles.forEach(drawProjectile);
   enemies.forEach(drawEnemy);
+
+  if(moveSource){
+    const p = cellCenter(moveSource.c, moveSource.r, gridSize);
+    drawTutorialHighlight(p.x, p.y, "Zielfeld antippen");
+  }
 
   const tut = nextTutorialTarget();
   if(tut){
@@ -1104,9 +1158,33 @@ function render(){
 
 // ================= Eingabe / Menues =================
 
+// Waehrend "Verschieben" aktiv ist, wartet der naechste Tap auf ein Zielfeld
+// statt normal ein Menue zu oeffnen.
+let moveSource = null;
+
 function handleTap(wx,wy){
   const gridSize = gridSizeForLevel(state.basisLevel);
   const c0 = centerOf(gridSize);
+
+  if(moveSource){
+    const c = Math.round(wx/CELL + c0);
+    const r = Math.round(wy/CELL + c0);
+    const srcSlot = state.cellsByCoord[moveSource.c+","+moveSource.r];
+    const validTarget = c>=0 && c<gridSize && r>=0 && r<gridSize && !(c===c0 && r===c0) && !(c===moveSource.c && r===moveSource.r);
+    if(validTarget && srcSlot && srcSlot.building){
+      const destSlot = state.cellsByCoord[c+","+r];
+      const req = requiredTypeForCell(c,r);
+      const destOk = destSlot && destSlot.unlocked && !destSlot.building && (!req || req===srcSlot.building.type);
+      if(destOk){
+        destSlot.building = srcSlot.building;
+        srcSlot.building = null;
+        save();
+      }
+    }
+    moveSource = null;
+    render();
+    return;
+  }
 
   // Wasser-Knoten treffen?
   for(const n of state.nodes){
@@ -1275,6 +1353,15 @@ function openBuildMenu(c,r){
         box.appendChild(wOpt);
       });
     }
+
+    const moveOpt = document.createElement("div");
+    moveOpt.className = "buildopt"; moveOpt.style.marginTop="6px";
+    moveOpt.innerHTML = `<span>Verschieben<small>Tippe danach ein freies Feld an</small></span>`;
+    moveOpt.addEventListener("click", ()=>{
+      moveSource = {c,r};
+      document.body.removeChild(overlay); render();
+    });
+    box.appendChild(moveOpt);
 
     const refund = sellRefund(b.type,b.level);
     const sellOpt = document.createElement("div");
