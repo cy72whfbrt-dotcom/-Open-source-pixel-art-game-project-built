@@ -496,12 +496,21 @@ function updateWave(dt){
       if(e.attackCd<=0){
         e.attackCd = 1;
         if(target.isBase){
+          const wasAlive = state.baseHp>0;
           state.baseHp = Math.max(0, state.baseHp-e.dmg);
+          if(wasAlive && state.baseHp<=0){
+            // Base ueberrannt: alle Gebaeude gehen kaputt (nicht weg - muessen
+            // repariert werden) statt dass einfach nichts passiert, wenn man
+            // die Base sterben laesst hat das jetzt echte Konsequenzen.
+            Object.values(state.cellsByCoord).forEach(s=>{ if(s.building) s.building.hp = 0; });
+            state.baseHp = maxBaseHp();
+            enemies = [];
+            waveActive = false;
+          }
         } else if(target.isAngreifer){
           damageRandomAngreifer(e.dmg);
         } else {
-          target.slot.building.hp -= e.dmg;
-          if(target.slot.building.hp<=0) target.slot.building = null;
+          target.slot.building.hp = Math.max(0, target.slot.building.hp-e.dmg);
         }
         save();
       }
@@ -588,7 +597,7 @@ function updateRepairJob(dt){
   }
   let targetKey=null, worstRatio=1;
   Object.entries(state.cellsByCoord).forEach(([key,slot])=>{
-    if(!slot.building || slot.building.hp<=0) return;
+    if(!slot.building) return;
     const max = maxHpFor(slot.building.type, slot.building.level);
     if(slot.building.hp<max){
       const ratio = slot.building.hp/max;
@@ -907,10 +916,28 @@ function drawKaserneSprite(x,y,b){
   drawHpBar(x, y+22, b.hp, maxHpFor("kaserne",b.level), 34);
 }
 
+function drawDestroyedOverlay(x,y){
+  const s=25;
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = "#15181c";
+  ctx.fillRect(x-s,y-s,s*2,s*2);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "rgba(255,80,60,0.85)"; ctx.lineWidth=2.5; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(x-14,y-14); ctx.lineTo(x+10,y+12); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+12,y-16); ctx.lineTo(x-8,y+14); ctx.stroke();
+  ctx.fillStyle="#3a2f28";
+  [[-10,10,5],[8,14,4],[4,-12,3]].forEach(([dx,dy,rr])=>{
+    ctx.beginPath(); ctx.arc(x+dx,y+dy,rr,0,Math.PI*2); ctx.fill();
+  });
+  ctx.restore();
+}
+
 function drawBuildingSprite(x,y,building){
   if(building.type==="turm") drawTowerSprite(x,y,building);
   else if(building.type==="mauer") drawWallSprite(x,y,building);
   else if(building.type==="kaserne") drawKaserneSprite(x,y,building);
+  if(building.hp<=0) drawDestroyedOverlay(x,y);
 }
 
 function drawRepairIndicator(gridSize){
@@ -1272,7 +1299,11 @@ function openBuildMenu(c,r){
     const def = BUILDABLE_TYPES[b.type];
     const cost = upgradeCost(b.type, b.level);
     const maxHp = maxHpFor(b.type, b.level);
-    box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level} · HP ${Math.round(b.hp)}/${maxHp}</div>`;
+    // Zerstoerte Gebaeude (0 HP) bleiben stehen statt zu verschwinden - sie
+    // muessen erst repariert werden, bevor man sie hochstuft, umruestet
+    // oder verschiebt.
+    const isDestroyed = b.hp<=0;
+    box.innerHTML = `<h3>${def.name}${isDestroyed?" (kaputt)":""}</h3><div class="hint2">Level ${b.level} · HP ${Math.round(b.hp)}/${maxHp}</div>`;
 
     // Gebaeude-Level darf das aktuelle Basis-Level nie ueberholen - sonst
     // koennte man wieder einen einzelnen Turm isoliert hochpumpen, egal wie
@@ -1280,12 +1311,14 @@ function openBuildMenu(c,r){
     // vorher hatte).
     const atLevelCap = b.level>=state.basisLevel;
     const upOpt = document.createElement("div");
-    upOpt.className = "buildopt" + (atLevelCap || !canAfford(cost) ? " disabled":"");
-    upOpt.innerHTML = atLevelCap
+    upOpt.className = "buildopt" + (isDestroyed || atLevelCap || !canAfford(cost) ? " disabled":"");
+    upOpt.innerHTML = isDestroyed
+      ? `<span>Verbessern auf Level ${b.level+1}<small>Erst reparieren</small></span>`
+      : atLevelCap
       ? `<span>Verbessern auf Level ${b.level+1}<small>Erst ab Basis-Level ${b.level+1} möglich</small></span>`
       : `<span>Verbessern auf Level ${b.level+1}<small>Repariert dabei auch komplett</small></span><b>${formatCost(cost)}</b>`;
     upOpt.addEventListener("click", ()=>{
-      if(!atLevelCap && canAfford(cost)){ payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level); save(); document.body.removeChild(overlay); render(); }
+      if(!isDestroyed && !atLevelCap && canAfford(cost)){ payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level); save(); document.body.removeChild(overlay); render(); }
     });
     box.appendChild(upOpt);
 
@@ -1305,7 +1338,11 @@ function openBuildMenu(c,r){
       head.className="hint2"; head.style.marginTop="6px"; head.textContent="Ausbildung:";
       box.appendChild(head);
 
-      if(state.npc.training){
+      if(isDestroyed){
+        const info = document.createElement("div");
+        info.className="hint2"; info.textContent = "Erst reparieren, bevor hier weiter ausgebildet werden kann.";
+        box.appendChild(info);
+      } else if(state.npc.training){
         const trainDef = NPC_TRAIN_DEFS[state.npc.training.kind];
         const info = document.createElement("div");
         info.className="hint2";
@@ -1346,14 +1383,15 @@ function openBuildMenu(c,r){
         // Kanone quasi geschenkt, sobald die Basis hoch genug ist.
         const basisOk = state.basisLevel>=w.unlockLevel;
         const turmOk = b.level>=w.unlockLevel;
-        const unlocked = basisOk && turmOk;
+        const unlocked = basisOk && turmOk && !isDestroyed;
         const selected = b.weapon===key2;
         const wOpt = document.createElement("div");
         wOpt.className = "buildopt"+(!unlocked?" disabled":"");
         wOpt.style.border = selected ? "1px solid #7aa2f7" : "";
         let hint = w.desc;
         if(!unlocked){
-          hint = !basisOk && !turmOk ? "Braucht Basis-Level "+w.unlockLevel+" und Turm-Level "+w.unlockLevel
+          hint = isDestroyed ? "Erst reparieren"
+               : !basisOk && !turmOk ? "Braucht Basis-Level "+w.unlockLevel+" und Turm-Level "+w.unlockLevel
                : !basisOk ? "Braucht Basis-Level "+w.unlockLevel
                : "Braucht Turm-Level "+w.unlockLevel;
         }
@@ -1364,9 +1402,12 @@ function openBuildMenu(c,r){
     }
 
     const moveOpt = document.createElement("div");
-    moveOpt.className = "buildopt"; moveOpt.style.marginTop="6px";
-    moveOpt.innerHTML = `<span>Verschieben<small>Tippe danach ein freies Feld an</small></span>`;
+    moveOpt.className = "buildopt" + (isDestroyed ? " disabled":""); moveOpt.style.marginTop="6px";
+    moveOpt.innerHTML = isDestroyed
+      ? `<span>Verschieben<small>Erst reparieren</small></span>`
+      : `<span>Verschieben<small>Tippe danach ein freies Feld an</small></span>`;
     moveOpt.addEventListener("click", ()=>{
+      if(isDestroyed) return;
       moveSource = {c,r};
       document.body.removeChild(overlay); render();
     });
