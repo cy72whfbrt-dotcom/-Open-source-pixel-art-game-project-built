@@ -167,6 +167,9 @@ function repairCost(type, b){
   return scaleCost(BUILDABLE_TYPES[type].cost, (missing/max)*0.7);
 }
 
+// unlockLevel bezieht sich auf das BASIS-Level, nicht auf das Level des
+// einzelnen Turms - sonst koennte man die Kanone einfach an einem
+// beliebigen Turm hochkaufen, unabhaengig vom eigentlichen Spielfortschritt.
 const WEAPONS = {
   bogen:  { name:"Bogen",  desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
   kanone: { name:"Kanone", desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 }
@@ -1032,12 +1035,12 @@ function openBuildMenu(c,r){
       wHead.className="hint2"; wHead.style.marginTop="6px"; wHead.textContent="Waffe auswählen:";
       box.appendChild(wHead);
       Object.entries(WEAPONS).forEach(([key2,w])=>{
-        const unlocked = b.level>=w.unlockLevel;
+        const unlocked = state.basisLevel>=w.unlockLevel;
         const selected = b.weapon===key2;
         const wOpt = document.createElement("div");
         wOpt.className = "buildopt"+(!unlocked?" disabled":"");
         wOpt.style.border = selected ? "1px solid #7aa2f7" : "";
-        wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${unlocked?w.desc:"Verfügbar ab Level "+w.unlockLevel}</small></span>`;
+        wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${unlocked?w.desc:"Verfügbar ab Basis-Level "+w.unlockLevel}</small></span>`;
         if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ b.weapon=key2; save(); document.body.removeChild(overlay); render(); });
         box.appendChild(wOpt);
       });
