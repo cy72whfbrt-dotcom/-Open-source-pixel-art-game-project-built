@@ -25,14 +25,14 @@
   #stage { position:relative; }
   canvas { background:#123145; border:2px solid #2e4358; border-radius:8px; display:block; touch-action:none; }
 
-  #zoomCtrls { position:absolute; right:8px; bottom:8px; display:flex; flex-direction:column; gap:6px; }
+  #ctrlBar { width:100%; max-width:380px; display:flex; justify-content:space-between; align-items:center; margin-top:8px; }
+  #zoomCtrls { display:flex; gap:6px; }
   #zoomCtrls button {
-    width:34px; height:34px; border-radius:8px; border:1px solid #3a5570; background:rgba(28,43,58,.9);
+    width:34px; height:34px; border-radius:8px; border:1px solid #3a5570; background:#1c2b3a;
     color:#eee; font-size:16px; cursor:pointer;
   }
   #centerBtn {
-    position:absolute; left:8px; bottom:8px; border-radius:8px; border:1px solid #3a5570;
-    background:rgba(28,43,58,.9); color:#eee; font-size:11px; padding:7px 10px; cursor:pointer;
+    border-radius:8px; border:1px solid #3a5570; background:#1c2b3a; color:#eee; font-size:11.5px; padding:8px 12px; cursor:pointer;
   }
 
   .legend { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:10px; font-size:11px; color:#9aa3b2; }
@@ -57,28 +57,30 @@
 
 <div id="app">
   <h1>Basis-Raster-Prototyp</h1>
-  <div class="sub">Ziehen zum Verschieben, Scrollrad/Zwei-Finger-Pinch zum Zoomen. Rundherum ist Wasser – der Ring markiert die Grenze zur offenen See (kommt später).</div>
+  <div class="sub">Ziehen zum Verschieben, Scrollrad/Pinch zum Zoomen. Rohstoff-Punkte im Wasser antippen zum Einsammeln. Basis antippen, um neue Bauplätze freizuschalten.</div>
 
   <div id="hud">
     <div class="pill holz">Holz: <b id="hudHolz">0</b></div>
     <div class="pill stein">Stein: <b id="hudStein">0</b></div>
-    <div class="pill">Basis-HP: <b id="hudHp">100</b></div>
+    <div class="pill">Basis-Lvl: <b id="hudLevel">1</b></div>
   </div>
 
   <div id="stage">
     <canvas id="c" width="380" height="380"></canvas>
+  </div>
+  <div id="ctrlBar">
+    <button id="centerBtn">Zentrieren</button>
     <div id="zoomCtrls">
       <button id="zoomIn">+</button>
       <button id="zoomOut">−</button>
     </div>
-    <button id="centerBtn">Zentrieren</button>
   </div>
 
   <div class="legend">
     <span><i class="swatch" style="background:#c94a4a"></i>Turm</span>
     <span><i class="swatch" style="background:#8a5a3a"></i>Mauer</span>
-    <span><i class="swatch" style="background:#7a5a3a"></i>Holzfäller</span>
-    <span><i class="swatch" style="background:#6b7280"></i>Steinbruch</span>
+    <span><i class="swatch" style="background:#7a5a3a"></i>Holz (Wasser)</span>
+    <span><i class="swatch" style="background:#6b7280"></i>Stein (Wasser)</span>
     <span><i class="swatch" style="background:#a5533a"></i>Base</span>
   </div>
 </div>
@@ -87,33 +89,56 @@
 (function(){
 "use strict";
 
-const GRID = 5, CELL = 62;
+const CELL = 62;
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const W = canvas.width, H = canvas.height;
 
-// Weltkoordinaten: Basis-Mitte liegt bei (0,0)
-function cellCenter(c,r){ return { x:(c-GRID/2+0.5)*CELL, y:(r-GRID/2+0.5)*CELL }; }
-const CENTER = [2,2];
+const WATER_RADIUS = 320;
+const UNLOCK_BATCH = 4;      // pro Basis-Level werden 4 neue Felder frei
+const GRID_GROW_AT_LEVEL = 7; // ab diesem Level waechst das Raster von 5x5 auf 7x7
 
-const NEIGHBOR_CELLS = [[1,1],[2,1],[3,1],[1,2],[3,2],[1,3],[2,3],[3,3]];
-const OUTER_CELLS = [];
-for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
-  if(r===0||r===GRID-1||c===0||c===GRID-1) OUTER_CELLS.push([c,r]);
+// ================= Raster-Geometrie (Groesse haengt vom Basis-Level ab) =================
+
+function gridSizeForLevel(level){ return level>=GRID_GROW_AT_LEVEL ? 7 : 5; }
+function centerOf(gridSize){ return Math.floor(gridSize/2); }
+
+// Alle Felder ausser der Mitte, sortiert nach Abstand zur Mitte (naeher zuerst) -
+// so wachsen neue Freischaltungen immer ringfoermig von innen nach aussen.
+function cellList(gridSize){
+  const c0 = centerOf(gridSize);
+  const all = [];
+  for(let r=0;r<gridSize;r++) for(let c=0;c<gridSize;c++){
+    if(c===c0 && r===c0) continue;
+    all.push([c,r]);
+  }
+  all.sort((a,b)=>{
+    const da = Math.max(Math.abs(a[0]-c0),Math.abs(a[1]-c0));
+    const db = Math.max(Math.abs(b[0]-c0),Math.abs(b[1]-c0));
+    return da-db;
+  });
+  return all;
 }
-const CELLS = NEIGHBOR_CELLS.concat(OUTER_CELLS);
-
-const WATER_RADIUS = 290;
+function cellCenter(c,r,gridSize){ const c0=centerOf(gridSize); return { x:(c-c0)*CELL, y:(r-c0)*CELL }; }
 
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v4";
+const SAVE_KEY = "basis_raster_proto_v5";
+
+const WATER_NODE_DEFS = [
+  { id:"holz1", type:"holz", angle:35,  capacity:20, regenMs:1600 },
+  { id:"holz2", type:"holz", angle:200, capacity:20, regenMs:1600 },
+  { id:"stein1", type:"stein", angle:120, capacity:16, regenMs:2200 },
+  { id:"stein2", type:"stein", angle:305, capacity:16, regenMs:2200 }
+];
+const NODE_RADIUS_WORLD = 220;
 
 function defaultState(){
   return {
     resources: { holz: 60, stein: 30 },
-    baseHp: 100,
-    cells: CELLS.map((_,i)=>({ unlocked: i<4, building:null }))
+    basisLevel: 1,
+    cellsByCoord: {},
+    nodes: WATER_NODE_DEFS.map(n=>({ id:n.id, amount:n.capacity }))
   };
 }
 let state = load();
@@ -122,14 +147,12 @@ function load(){
     const raw = localStorage.getItem(SAVE_KEY);
     if(raw){
       const d = JSON.parse(raw);
-      if(d.resources && typeof d.resources.holz==="number") return d;
+      if(d.resources && typeof d.resources.holz==="number" && d.cellsByCoord) return d;
     }
   } catch(e){}
   return defaultState();
 }
 function save(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch(e){} }
-
-function unlockCost(i){ return { holz: 18+i*9, stein: 8+i*6 }; }
 
 function canAfford(cost){ return state.resources.holz>=cost.holz && state.resources.stein>=cost.stein; }
 function payCost(cost){ state.resources.holz-=cost.holz; state.resources.stein-=cost.stein; }
@@ -142,43 +165,88 @@ function formatCost(cost){
 }
 
 const BUILDABLE_TYPES = {
-  turm:  { name:"Turm",  desc:"Verteidigungsturm, greift Angreifer an.", cost:{holz:20,stein:30}, color:"#c94a4a", baseHp:100, hpPerLevel:25 },
-  mauer: { name:"Mauer", desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", cost:{holz:16,stein:8}, color:"#8a5a3a", baseHp:150, hpPerLevel:35 },
-  holzfaeller: { name:"Holzfäller", desc:"Produziert Holz über Zeit.", cost:{holz:12,stein:10}, color:"#7a5a3a", produce:{holz:2} },
-  steinbruch:  { name:"Steinbruch", desc:"Produziert Stein über Zeit.", cost:{holz:16,stein:6}, color:"#6b7280", produce:{stein:2} }
+  turm:  { name:"Turm",  desc:"Verteidigungsturm, greift Angreifer an.", cost:{holz:20,stein:30}, baseHp:100, hpPerLevel:25 },
+  mauer: { name:"Mauer", desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", cost:{holz:16,stein:8}, baseHp:150, hpPerLevel:35 }
 };
 function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)); }
-function hpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp ? d.baseHp+(level-1)*d.hpPerLevel : null; }
+function hpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp+(level-1)*d.hpPerLevel; }
 
 const WEAPONS = {
   bogen:  { name:"Bogen",  desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
   kanone: { name:"Kanone", desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 }
 };
 
-// ================= Ressourcen-Produktion =================
+function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,level-1)), stein: Math.round(45*Math.pow(1.55,level-1)) }; }
+
+// ================= Basis-Level: schaltet Felder frei, laesst das Raster wachsen =================
+
+function applyUnlocksForCurrentLevel(){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const list = cellList(gridSize);
+  const unlockCount = Math.min(state.basisLevel*UNLOCK_BATCH, list.length);
+  list.forEach(([c,r],i)=>{
+    const key=c+","+r;
+    if(!state.cellsByCoord[key]) state.cellsByCoord[key]={unlocked:false,building:null};
+    if(i<unlockCount) state.cellsByCoord[key].unlocked = true;
+  });
+}
+applyUnlocksForCurrentLevel();
+
+function upgradeBasis(){
+  const cost = basisUpgradeCost(state.basisLevel);
+  if(!canAfford(cost)) return false;
+  payCost(cost);
+  const oldSize = gridSizeForLevel(state.basisLevel);
+  state.basisLevel++;
+  const newSize = gridSizeForLevel(state.basisLevel);
+  if(newSize>oldSize){
+    const shift = centerOf(newSize)-centerOf(oldSize);
+    const remapped = {};
+    Object.entries(state.cellsByCoord).forEach(([key,val])=>{
+      const [c,r] = key.split(",").map(Number);
+      remapped[(c+shift)+","+(r+shift)] = val;
+    });
+    state.cellsByCoord = remapped;
+  }
+  applyUnlocksForCurrentLevel();
+  save();
+  return true;
+}
+
+function nextLevelDescription(){
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const list = cellList(gridSize);
+  const currentUnlocked = Math.min(state.basisLevel*UNLOCK_BATCH, list.length);
+  const newSize = gridSizeForLevel(state.basisLevel+1);
+  if(newSize>gridSize) return "Vergrößert das Raster auf "+newSize+"x"+newSize+"!";
+  const nextUnlocked = Math.min((state.basisLevel+1)*UNLOCK_BATCH, list.length);
+  return "+"+(nextUnlocked-currentUnlocked)+" neue Bauplätze";
+}
+
+// ================= Ressourcen-Knoten im Wasser =================
 
 setInterval(()=>{
   let changed=false;
-  state.cells.forEach(slot=>{
-    if(!slot.building) return;
-    const def = BUILDABLE_TYPES[slot.building.type];
-    if(!def.produce) return;
-    Object.entries(def.produce).forEach(([res,amt])=>{
-      state.resources[res] += amt*slot.building.level;
-      changed=true;
-    });
+  state.nodes.forEach(n=>{
+    const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
+    if(n.amount<def.capacity){ n.amount++; changed=true; }
   });
   if(changed){ save(); render(); }
-}, 3000);
+}, 900);
+
+function nodeWorldPos(def){
+  const rad = def.angle*Math.PI/180;
+  return { x: Math.cos(rad)*NODE_RADIUS_WORLD, y: Math.sin(rad)*NODE_RADIUS_WORLD };
+}
 
 // ================= Kamera (Zoom & Verschieben) =================
 
 const camera = { x:0, y:0, scale:1 };
 function clampCamera(){
   const d = Math.hypot(camera.x,camera.y);
-  const max = WATER_RADIUS-60;
+  const max = WATER_RADIUS-40;
   if(d>max){ camera.x = camera.x/d*max; camera.y = camera.y/d*max; }
-  camera.scale = Math.max(0.55, Math.min(2.4, camera.scale));
+  camera.scale = Math.max(0.5, Math.min(2.4, camera.scale));
 }
 function screenToWorld(sx,sy){
   return { x:(sx-W/2)/camera.scale + camera.x, y:(sy-H/2)/camera.scale + camera.y };
@@ -212,11 +280,7 @@ canvas.addEventListener("pointermove", e=>{
   if(pointers.size===2){
     const pts = [...pointers.values()];
     const dist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
-    if(pinchStartDist>10){
-      camera.scale = pinchStartScale * (dist/pinchStartDist);
-      clampCamera();
-      render();
-    }
+    if(pinchStartDist>10){ camera.scale = pinchStartScale * (dist/pinchStartDist); clampCamera(); render(); }
   } else if(pointers.size===1){
     const dx = cur.x-prev.x, dy = cur.y-prev.y;
     dragTotal += Math.hypot(dx,dy);
@@ -242,8 +306,7 @@ canvas.addEventListener("pointercancel", pointerEnd);
 canvas.addEventListener("wheel", e=>{
   e.preventDefault();
   camera.scale *= (e.deltaY<0) ? 1.1 : 0.9;
-  clampCamera();
-  render();
+  clampCamera(); render();
 }, {passive:false});
 
 document.getElementById("zoomIn").addEventListener("click", ()=>{ camera.scale*=1.2; clampCamera(); render(); });
@@ -307,7 +370,6 @@ function drawLockedButton(x,y){
   ctx.setLineDash([]);
   ctx.strokeStyle="rgba(210,220,235,0.55)"; ctx.lineWidth=2.2;
   ctx.beginPath(); ctx.arc(x,y-3,5,Math.PI,0); ctx.stroke();
-  ctx.fillStyle="rgba(210,220,235,0.55)";
   drawRoundRect(x-7,y-3,14,10,2,"rgba(210,220,235,0.55)");
 }
 
@@ -356,49 +418,59 @@ function drawWallSprite(x,y,b){
   drawLevelPips(x, y+18, b.level);
 }
 
-function drawHolzfaellerSprite(x,y,b){
-  const s=25;
-  drawRoundRect(x-s,y-s,s*2,s*2,7,"#3f5a3a");
-  ctx.strokeStyle="#26361f"; ctx.lineWidth=2; ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
-  // Baumstamm-Stapel
-  ["#8a5a34","#a06d3f","#8a5a34"].forEach((col,i)=>{
-    ctx.fillStyle=col;
-    drawRoundRect(x-16, y+2+i*6-9, 32, 6, 3, col);
-    ctx.fillStyle="rgba(0,0,0,0.25)";
-    ctx.beginPath(); ctx.arc(x-14,y+5+i*6-9,2,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(x+14,y+5+i*6-9,2,0,Math.PI*2); ctx.fill();
-  });
-  // Nadelbaum
-  ctx.fillStyle="#2f6b3a";
-  ctx.beginPath(); ctx.moveTo(x,y-22); ctx.lineTo(x-11,y-4); ctx.lineTo(x+11,y-4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle="#5a3a24"; ctx.fillRect(x-2,y-6,4,6);
-  drawLevelPips(x, y+18, b.level);
-}
-
-function drawSteinbruchSprite(x,y,b){
-  const s=25;
-  drawRoundRect(x-s,y-s,s*2,s*2,7,"#4a5560");
-  ctx.strokeStyle="#2c343c"; ctx.lineWidth=2; ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
-  // Felsbrocken-Cluster
-  [[-8,4,10,"#9aa3ac"],[6,6,9,"#7c8590"],[0,-6,8,"#b3bcc4"]].forEach(([dx,dy,rr,col])=>{
-    ctx.beginPath(); ctx.arc(x+dx,y+dy,rr,0,Math.PI*2);
-    ctx.fillStyle=col; ctx.fill();
-    ctx.strokeStyle="rgba(0,0,0,0.25)"; ctx.lineWidth=1.5; ctx.stroke();
-  });
-  drawLevelPips(x, y+18, b.level);
-}
-
 function drawBuildingSprite(x,y,building){
   if(building.type==="turm") drawTowerSprite(x,y,building);
   else if(building.type==="mauer") drawWallSprite(x,y,building);
-  else if(building.type==="holzfaeller") drawHolzfaellerSprite(x,y,building);
-  else if(building.type==="steinbruch") drawSteinbruchSprite(x,y,building);
+}
+
+function drawLogNode(x,y,node,def){
+  const full = node.amount>=def.capacity;
+  const empty = node.amount<=0;
+  ctx.globalAlpha = empty ? 0.4 : 1;
+  ctx.beginPath(); ctx.arc(x,y,22,0,Math.PI*2);
+  ctx.fillStyle="rgba(20,40,55,0.5)"; ctx.fill();
+  ["#8a5a34","#a06d3f"].forEach((col,i)=>{
+    ctx.fillStyle=col;
+    drawRoundRect(x-15, y-4+i*7, 30, 6, 3, col);
+    ctx.fillStyle="rgba(0,0,0,0.25)";
+    ctx.beginPath(); ctx.arc(x-13,y-1+i*7,2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+13,y-1+i*7,2,0,Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  // Fuellstand-Ring
+  ctx.beginPath(); ctx.arc(x,y,26,-Math.PI/2, -Math.PI/2 + Math.PI*2*(node.amount/def.capacity));
+  ctx.strokeStyle = full ? "#f2c94c" : "#c99a5a"; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle="#fff"; ctx.font="10px sans-serif"; ctx.textAlign="center";
+  ctx.fillText(node.amount, x, y+22);
+  ctx.textAlign="left";
+}
+
+function drawRockNode(x,y,node,def){
+  const full = node.amount>=def.capacity;
+  const empty = node.amount<=0;
+  ctx.globalAlpha = empty ? 0.4 : 1;
+  ctx.beginPath(); ctx.arc(x,y,22,0,Math.PI*2);
+  ctx.fillStyle="rgba(20,40,55,0.5)"; ctx.fill();
+  [[-7,3,9,"#9aa3ac"],[6,4,8,"#7c8590"],[0,-5,7,"#b3bcc4"]].forEach(([dx,dy,rr,col])=>{
+    ctx.beginPath(); ctx.arc(x+dx,y+dy,rr,0,Math.PI*2);
+    ctx.fillStyle=col; ctx.fill();
+    ctx.strokeStyle="rgba(0,0,0,0.25)"; ctx.lineWidth=1.2; ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.arc(x,y,26,-Math.PI/2, -Math.PI/2 + Math.PI*2*(node.amount/def.capacity));
+  ctx.strokeStyle = full ? "#f2c94c" : "#b7c2cf"; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle="#fff"; ctx.font="10px sans-serif"; ctx.textAlign="center";
+  ctx.fillText(node.amount, x, y+22);
+  ctx.textAlign="left";
 }
 
 function render(){
   document.getElementById("hudHolz").textContent = state.resources.holz;
   document.getElementById("hudStein").textContent = state.resources.stein;
-  document.getElementById("hudHp").textContent = state.baseHp;
+  document.getElementById("hudLevel").textContent = state.basisLevel;
+
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const list = cellList(gridSize);
 
   ctx.clearRect(0,0,W,H);
   ctx.save();
@@ -408,68 +480,101 @@ function render(){
 
   drawWater();
 
-  CELLS.forEach(([c,r])=>{ const p=cellCenter(c,r); drawGrassTile(p.x,p.y,c,r); });
-  {
-    const p = cellCenter(CENTER[0],CENTER[1]);
-    drawGrassTile(p.x,p.y,CENTER[0],CENTER[1]);
-  }
+  list.forEach(([c,r])=>{ const p=cellCenter(c,r,gridSize); drawGrassTile(p.x,p.y,c,r); });
+  { const p = cellCenter(centerOf(gridSize),centerOf(gridSize),gridSize); drawGrassTile(p.x,p.y,0,0); }
 
-  CELLS.forEach(([c,r],i)=>{
-    const p = cellCenter(c,r);
-    const slot = state.cells[i];
+  list.forEach(([c,r])=>{
+    const p = cellCenter(c,r,gridSize);
+    const slot = state.cellsByCoord[c+","+r] || {unlocked:false,building:null};
     if(slot.building) drawBuildingSprite(p.x,p.y,slot.building);
     else if(!slot.unlocked) drawLockedButton(p.x,p.y);
     else drawPlusButton(p.x,p.y);
   });
 
+  // Wasser-Ressourcenknoten
+  state.nodes.forEach(n=>{
+    const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
+    const p = nodeWorldPos(def);
+    if(def.type==="holz") drawLogNode(p.x,p.y,n,def); else drawRockNode(p.x,p.y,n,def);
+  });
+
+  // Base in der Mitte
   {
-    const p = cellCenter(CENTER[0], CENTER[1]);
+    const p = cellCenter(centerOf(gridSize),centerOf(gridSize),gridSize);
     drawRoundRect(p.x-27,p.y-27,54,54,8,"#a5533a");
     ctx.fillStyle="#1a0d0d"; ctx.font="9px sans-serif"; ctx.textAlign="center";
-    ctx.fillText("Base", p.x, p.y+3);
-    ctx.fillText(state.baseHp+"/100", p.x, p.y+14);
+    ctx.fillText("Base", p.x, p.y+2);
+    ctx.fillText("Level "+state.basisLevel, p.x, p.y+13);
     ctx.textAlign="left";
   }
 
   ctx.restore();
 }
 
-// ================= Eingabe / Bau-Menue =================
-
-function findCellIndex(c,r){ return CELLS.findIndex(cell=>cell[0]===c&&cell[1]===r); }
+// ================= Eingabe / Menues =================
 
 function handleTap(wx,wy){
-  const c = Math.round(wx/CELL + GRID/2 - 0.5);
-  const r = Math.round(wy/CELL + GRID/2 - 0.5);
-  if(c<0||c>=GRID||r<0||r>=GRID) return;
-  if(c===CENTER[0] && r===CENTER[1]) return;
-  const i = findCellIndex(c,r);
-  if(i>=0) openBuildMenu(i);
+  const gridSize = gridSizeForLevel(state.basisLevel);
+  const c0 = centerOf(gridSize);
+
+  // Wasser-Knoten treffen?
+  for(const n of state.nodes){
+    const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
+    const p = nodeWorldPos(def);
+    if(Math.hypot(wx-p.x,wy-p.y) < 26){ collectNode(n,def); return; }
+  }
+
+  const c = Math.round(wx/CELL + c0);
+  const r = Math.round(wy/CELL + c0);
+  if(c<0||c>=gridSize||r<0||r>=gridSize) return;
+  if(c===c0 && r===c0){ openBasisMenu(); return; }
+  openBuildMenu(c,r);
 }
 
-function openBuildMenu(i){
-  const slot = state.cells[i];
+function collectNode(n,def){
+  if(n.amount<=0) return;
+  state.resources[def.type] += n.amount;
+  n.amount = 0;
+  save(); render();
+}
+
+function openBasisMenu(){
+  const cost = basisUpgradeCost(state.basisLevel);
+  const overlay = document.createElement("div");
+  overlay.className="buildmenu";
+  const box = document.createElement("div");
+  box.className="box";
+  box.innerHTML = `<h3>Base</h3><div class="hint2">Level ${state.basisLevel}</div>`;
+  const opt = document.createElement("div");
+  opt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
+  opt.innerHTML = `<span>Verbessern auf Level ${state.basisLevel+1}<small>${nextLevelDescription()}</small></span><b>${formatCost(cost)}</b>`;
+  opt.addEventListener("click", ()=>{
+    if(upgradeBasis()){ document.body.removeChild(overlay); render(); }
+  });
+  box.appendChild(opt);
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function openBuildMenu(c,r){
+  const key = c+","+r;
+  const slot = state.cellsByCoord[key] || {unlocked:false, building:null};
+  state.cellsByCoord[key] = slot;
+
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
   box.className = "box";
 
   if(!slot.unlocked){
-    const cost = unlockCost(i);
-    box.innerHTML = `<h3>Feld freischalten</h3>`;
-    const opt = document.createElement("div");
-    opt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
-    opt.innerHTML = `<span>Freischalten</span><b>${formatCost(cost)}</b>`;
-    opt.addEventListener("click", ()=>{
-      if(canAfford(cost)){ payCost(cost); slot.unlocked=true; save(); document.body.removeChild(overlay); render(); }
-    });
-    box.appendChild(opt);
+    box.innerHTML = `<h3>Noch gesperrt</h3><div class="hint2">Verbessere deine Base, um weitere Felder freizuschalten.</div>`;
   } else if(slot.building){
     const b = slot.building;
     const def = BUILDABLE_TYPES[b.type];
     const cost = upgradeCost(b.type, b.level);
     const hp = hpFor(b.type, b.level);
-    box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level}${hp?" · HP "+hp+"/"+hp:""}${def.produce?" · +"+Object.entries(def.produce).map(([k,v])=>(v*b.level)+" "+(k==="holz"?"Holz":"Stein")).join(", ")+" pro Tick":""}</div>`;
+    box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level} · HP ${hp}/${hp}</div>`;
 
     const upOpt = document.createElement("div");
     upOpt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
@@ -483,14 +588,14 @@ function openBuildMenu(i){
       const wHead = document.createElement("div");
       wHead.className="hint2"; wHead.style.marginTop="6px"; wHead.textContent="Waffe auswählen:";
       box.appendChild(wHead);
-      Object.entries(WEAPONS).forEach(([key,w])=>{
+      Object.entries(WEAPONS).forEach(([key2,w])=>{
         const unlocked = b.level>=w.unlockLevel;
-        const selected = b.weapon===key;
+        const selected = b.weapon===key2;
         const wOpt = document.createElement("div");
         wOpt.className = "buildopt"+(!unlocked?" disabled":"");
         wOpt.style.border = selected ? "1px solid #7aa2f7" : "";
         wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${unlocked?w.desc:"Verfügbar ab Level "+w.unlockLevel}</small></span>`;
-        if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ b.weapon=key; save(); document.body.removeChild(overlay); render(); });
+        if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ b.weapon=key2; save(); document.body.removeChild(overlay); render(); });
         box.appendChild(wOpt);
       });
     }
@@ -511,13 +616,16 @@ function openBuildMenu(i){
     });
   }
 
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function addCloseBtn(box, overlay){
   const close = document.createElement("div");
   close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
   close.addEventListener("click", ()=> document.body.removeChild(overlay));
   box.appendChild(close);
-
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
 }
 
 render();
