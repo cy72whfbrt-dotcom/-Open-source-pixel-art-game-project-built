@@ -333,13 +333,28 @@ let enemies = [];
 let projectiles = [];
 let waveActive = false;
 
+// Nur wer bereits eine Kanone gebaut hat, kann Bruecher ueberhaupt kontern -
+// deshalb tauchen sie nicht einfach ab einem festen Basis-Level auf, sondern
+// erst, wenn der Spieler die Kanone tatsaechlich freigeschaltet hat.
+function hasKanoneTower(){
+  return Object.values(state.cellsByCoord).some(slot=>
+    slot.building && slot.building.type==="turm" && slot.building.weapon==="kanone"
+  );
+}
+
+// HP/Schaden wachsen nur bis zu diesem Level linear mit - danach wird die
+// Schwierigkeit ueber neue Gegnertypen/Zusammensetzung geloest, nicht ueber
+// endlos steigende Zahlen (sonst wird's bei einem sehr lang angelegten Spiel
+// irgendwann absurd).
+const STAT_SCALING_CAP_LEVEL = 15;
+
 function pickWaveComposition(){
   const level = state.basisLevel;
   const count = Math.min(3+Math.floor(level/2), 10);
+  const canFaceBrecher = hasKanoneTower();
+  const brecherChance = canFaceBrecher ? Math.min(0.45, 0.1+level*0.03) : 0;
   const types = [];
   for(let i=0;i<count;i++){
-    // ab Level 2 mischen sich Brecher rein, nie mehr als grob die Haelfte der Welle
-    const brecherChance = level<2 ? 0 : Math.min(0.45, 0.15+level*0.05);
     types.push(Math.random()<brecherChance ? "brecher" : "laeufer");
   }
   return types;
@@ -348,8 +363,9 @@ function pickWaveComposition(){
 function spawnWave(){
   const gridSize = gridSizeForLevel(state.basisLevel);
   const spawnRadius = gridHalfExtent(gridSize) + NODE_WATER_MARGIN + 40;
-  const baseHp = 26+state.basisLevel*6;
-  const baseDmg = 5+Math.floor(state.basisLevel/2);
+  const scalingLevel = Math.min(state.basisLevel, STAT_SCALING_CAP_LEVEL);
+  const baseHp = 26+scalingLevel*6;
+  const baseDmg = 5+Math.floor(scalingLevel/2);
   pickWaveComposition().forEach(typeKey=>{
     const type = ENEMY_TYPES[typeKey];
     const angle = Math.random()*Math.PI*2;
