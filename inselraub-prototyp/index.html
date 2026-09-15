@@ -314,29 +314,59 @@ function nodeWorldPos(node){
 // ================= Wellen: Gegner spawnen, Tuerme feuern =================
 
 const WEAPON_STATS = {
-  bogen:  { dmg: 6,  range: 130, rate: 0.9 },
-  kanone: { dmg: 14, range: 150, rate: 1.6 }
+  bogen:  { dmg: 6,  range: 130, rate: 0.9,  pierce:false },
+  kanone: { dmg: 14, range: 150, rate: 1.6,  pierce:true  }
 };
 function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return w.dmg + (b.level-1)*2; }
 function maxBaseHp(){ return 100 + (state.basisLevel-1)*20; }
 
+// Zwei Gegnertypen mit echten Gegenspielern statt nur unterschiedlicher Zahlen:
+// Laeufer ist schnell/schwach -> stirbt an der schnellen Feuerrate vom Bogen.
+// Brecher ist langsam/zaeh und traegt Ruestung, die Bogen-Treffer stark
+// abschwaecht - nur die durchschlagende Kanone macht bei ihm vollen Schaden.
+const ENEMY_TYPES = {
+  laeufer: { name:"Läufer", hpMult:0.55, speedMult:1.7, dmgMult:0.6, r:8,  armor:0, color:"#c9843a" },
+  brecher: { name:"Brecher", hpMult:2.6, speedMult:0.55, dmgMult:1.8, r:13, armor:5, color:"#5a3a6a" }
+};
+
 let enemies = [];
 let projectiles = [];
+let waveActive = false;
+
+function pickWaveComposition(){
+  const level = state.basisLevel;
+  const count = Math.min(3+Math.floor(level/2), 10);
+  const types = [];
+  for(let i=0;i<count;i++){
+    // ab Level 2 mischen sich Brecher rein, nie mehr als grob die Haelfte der Welle
+    const brecherChance = level<2 ? 0 : Math.min(0.45, 0.15+level*0.05);
+    types.push(Math.random()<brecherChance ? "brecher" : "laeufer");
+  }
+  return types;
+}
 
 function spawnWave(){
   const gridSize = gridSizeForLevel(state.basisLevel);
   const spawnRadius = gridHalfExtent(gridSize) + NODE_WATER_MARGIN + 40;
-  const count = Math.min(3+Math.floor(state.basisLevel/2), 10);
-  for(let i=0;i<count;i++){
+  const baseHp = 26+state.basisLevel*6;
+  const baseDmg = 5+Math.floor(state.basisLevel/2);
+  pickWaveComposition().forEach(typeKey=>{
+    const type = ENEMY_TYPES[typeKey];
     const angle = Math.random()*Math.PI*2;
-    const hp = 26+state.basisLevel*6;
+    const hp = Math.round(baseHp*type.hpMult);
     enemies.push({
       x: Math.cos(angle)*spawnRadius, y: Math.sin(angle)*spawnRadius,
-      hp, maxHp: hp,
-      dmg: 5+Math.floor(state.basisLevel/2), speed: 24+Math.random()*8, r:10,
+      hp, maxHp: hp, typeKey, armor: type.armor, r: type.r,
+      dmg: Math.round(baseDmg*type.dmgMult) || 1,
+      speed: (24+Math.random()*8)*type.speedMult,
       attackCd: 0
     });
-  }
+  });
+  waveActive = true;
+}
+
+function waveLoot(){
+  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3 };
 }
 
 function findEnemyTarget(e){
@@ -406,7 +436,7 @@ function updateWave(dt){
     if(nearest){
       b.fireCd = w.rate;
       const ang = Math.atan2(nearest.y-p.y, nearest.x-p.x);
-      projectiles.push({x:p.x,y:p.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b)});
+      projectiles.push({x:p.x,y:p.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b),pierce:w.pierce});
     }
   });
 
@@ -415,11 +445,23 @@ function updateWave(dt){
     const pr = projectiles[i];
     let hit = pr.life<=0;
     enemies.forEach(e=>{
-      if(!hit && Math.hypot(pr.x-e.x,pr.y-e.y)<e.r+4){ e.hp-=pr.dmg; hit=true; }
+      if(!hit && Math.hypot(pr.x-e.x,pr.y-e.y)<e.r+4){
+        const dmg = (e.armor && !pr.pierce) ? Math.max(1, pr.dmg-e.armor) : pr.dmg;
+        e.hp -= dmg;
+        hit = true;
+      }
     });
     if(hit) projectiles.splice(i,1);
   }
   enemies = enemies.filter(e=>e.hp>0);
+
+  if(waveActive && enemies.length===0){
+    const loot = waveLoot();
+    state.resources.holz += loot.holz;
+    state.resources.stein += loot.stein;
+    waveActive = false;
+    save();
+  }
 }
 
 // ================= Kamera (Zoom & Verschieben) =================
@@ -608,13 +650,20 @@ function drawHpBar(x,y,hp,maxHp,w){
 }
 
 function drawEnemy(e){
+  const type = ENEMY_TYPES[e.typeKey] || {color:"#8a2f2f"};
   drawShadow(e.x,e.y+e.r,e.r*1.3,4);
   ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
-  ctx.fillStyle="#8a2f2f"; ctx.fill();
-  ctx.strokeStyle="#3a1010"; ctx.lineWidth=2; ctx.stroke();
-  ctx.beginPath(); ctx.arc(e.x-3,e.y-3,2,0,Math.PI*2);
+  ctx.fillStyle=type.color; ctx.fill();
+  ctx.strokeStyle="rgba(0,0,0,0.4)"; ctx.lineWidth=2; ctx.stroke();
+  if(e.armor){
+    // kleine Ruestungsplatten andeuten
+    ctx.strokeStyle="rgba(220,220,230,0.7)"; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(e.x,e.y,e.r-3,0.4,1.6); ctx.stroke();
+    ctx.beginPath(); ctx.arc(e.x,e.y,e.r-3,Math.PI+0.4,Math.PI+1.6); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(e.x-e.r*0.3,e.y-e.r*0.3,e.r*0.2,0,Math.PI*2);
   ctx.fillStyle="rgba(255,255,255,0.3)"; ctx.fill();
-  const w=22, ratio=Math.max(0,e.hp/e.maxHp), by=e.y-e.r-9;
+  const w=e.r*2.2, ratio=Math.max(0,e.hp/e.maxHp), by=e.y-e.r-9;
   ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(e.x-w/2,by,w,4);
   ctx.fillStyle = ratio>0.5 ? "#6ad46a" : ratio>0.25 ? "#e0c34a" : "#e04a4a";
   ctx.fillRect(e.x-w/2,by,w*ratio,4);
