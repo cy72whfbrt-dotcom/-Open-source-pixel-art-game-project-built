@@ -122,6 +122,67 @@ function drawRoundRect(x,y,w,h,r,fill){
   ctx.fillStyle = fill; ctx.fill();
 }
 
+function drawLevelPips(x,y,level){
+  const n = Math.min(level,5);
+  const w = n*7-3;
+  for(let i=0;i<n;i++){
+    ctx.beginPath(); ctx.arc(x-w/2+i*7, y, 2.1, 0, Math.PI*2);
+    ctx.fillStyle = "#f2c94c"; ctx.fill();
+  }
+}
+
+function drawTowerSprite(x,y,building){
+  const s=25;
+  // Steinsockel
+  drawRoundRect(x-s,y-s,s*2,s*2,7,"#5a6472");
+  ctx.strokeStyle="#333a42"; ctx.lineWidth=2;
+  ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
+  // Zinnen an den Ecken
+  ctx.fillStyle="#454e59";
+  const cz=6;
+  [[-s+1,-s+1],[s-cz-1,-s+1],[-s+1,s-cz-1],[s-cz-1,s-cz-1]].forEach(([dx,dy])=>{
+    ctx.fillRect(x+dx,y+dy,cz,cz);
+  });
+  // Turmkoerper
+  ctx.beginPath(); ctx.arc(x,y-3,13,0,Math.PI*2);
+  ctx.fillStyle="#c94a4a"; ctx.fill();
+  ctx.strokeStyle="#7a2424"; ctx.lineWidth=2; ctx.stroke();
+  ctx.beginPath(); ctx.arc(x-4,y-7,3,0,Math.PI*2);
+  ctx.fillStyle="rgba(255,255,255,0.25)"; ctx.fill();
+  // Waffe (Lauf oben) - Farbe zeigt, welche Waffe ausgeruestet ist
+  const weaponColor = building.weapon==="kanone" ? "#3a3a42" : "#8a6a3a";
+  ctx.fillStyle = weaponColor;
+  ctx.fillRect(x-3,y-19,6,11);
+  ctx.fillStyle = building.weapon==="kanone" ? "#55555f" : "#a5825a";
+  ctx.fillRect(x-3,y-19,6,3);
+  drawLevelPips(x, y+18, building.level);
+}
+
+function drawWallSprite(x,y,building){
+  const s=25;
+  drawRoundRect(x-s,y-s,s*2,s*2,4,"#8a5a3a");
+  // Ziegel-Fugen im Laufverband
+  ctx.strokeStyle="rgba(0,0,0,0.35)"; ctx.lineWidth=1.3;
+  const rows=4, rowH=(s*2)/rows;
+  for(let i=1;i<rows;i++){
+    const yy = y-s+i*rowH;
+    ctx.beginPath(); ctx.moveTo(x-s+2,yy); ctx.lineTo(x+s-2,yy); ctx.stroke();
+  }
+  for(let i=0;i<rows;i++){
+    const yy0=y-s+i*rowH, yy1=yy0+rowH;
+    const offset = (i%2===0) ? 0 : (s*2)/4;
+    for(let xx=x-s+offset; xx<x+s-1; xx+=(s*2)/2){
+      ctx.beginPath(); ctx.moveTo(xx,yy0+1.5); ctx.lineTo(xx,yy1-1.5); ctx.stroke();
+    }
+  }
+  // Kanten-Schattierung fuer 3D-Look
+  ctx.fillStyle="rgba(255,255,255,0.10)"; ctx.fillRect(x-s,y-s,s*2,4);
+  ctx.fillStyle="rgba(0,0,0,0.28)"; ctx.fillRect(x-s,y+s-4,s*2,4);
+  ctx.strokeStyle="#4a2f1c"; ctx.lineWidth=2;
+  ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
+  drawLevelPips(x, y+18, building.level);
+}
+
 function render(){
   document.getElementById("hudRes").textContent = state.resources;
   document.getElementById("hudHp").textContent = state.baseHp;
@@ -142,14 +203,9 @@ function render(){
     const p = cellCenter(c,r);
     const slot = state.cells[i];
     if(slot.building){
-      const def = BUILDABLE_TYPES[slot.building.type];
-      drawRoundRect(p.x-26,p.y-26,52,52,8,def.color);
-      ctx.fillStyle="#1a0d0d"; ctx.font="bold 19px sans-serif"; ctx.textAlign="center";
-      ctx.fillText(def.icon, p.x, p.y+3);
-      ctx.font="9px sans-serif"; ctx.fillText("Lv"+slot.building.level, p.x, p.y+16);
-      const barW=40, hp=hpFor(slot.building.type, slot.building.level);
-      ctx.fillStyle="#000"; ctx.fillRect(p.x-barW/2, p.y+20, barW, 4);
-      ctx.fillStyle="#6ad46a"; ctx.fillRect(p.x-barW/2, p.y+20, barW, 4);
+      ctx.textAlign="center";
+      if(slot.building.type==="turm") drawTowerSprite(p.x,p.y,slot.building);
+      else drawWallSprite(p.x,p.y,slot.building);
     } else if(!slot.unlocked){
       ctx.strokeStyle="#3a5570"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
       ctx.strokeRect(p.x-24,p.y-24,48,48); ctx.setLineDash([]);
