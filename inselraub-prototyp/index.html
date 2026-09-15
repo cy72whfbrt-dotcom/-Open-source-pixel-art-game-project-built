@@ -16,11 +16,24 @@
   h1 { margin:4px 0 2px; font-size:17px; text-align:center; }
   .sub { color:#8b96a5; font-size:11.5px; text-align:center; margin-bottom:8px; padding:0 6px; }
 
-  #hud { width:100%; max-width:380px; display:flex; justify-content:space-between; font-size:13px; margin-bottom:8px; }
-  #hud .pill { background:#1c2b3a; border:1px solid #2e4358; padding:5px 10px; border-radius:11px; }
+  #hud { width:100%; max-width:380px; display:flex; justify-content:space-between; gap:6px; font-size:12.5px; margin-bottom:8px; flex-wrap:wrap; }
+  #hud .pill { background:#1c2b3a; border:1px solid #2e4358; padding:5px 9px; border-radius:11px; }
   #hud .pill b { color:#f2c94c; }
+  #hud .pill.holz b { color:#c99a5a; }
+  #hud .pill.stein b { color:#b7c2cf; }
 
-  canvas { background:#0f2233; border:2px solid #2e4358; border-radius:8px; display:block; }
+  #stage { position:relative; }
+  canvas { background:#123145; border:2px solid #2e4358; border-radius:8px; display:block; touch-action:none; }
+
+  #zoomCtrls { position:absolute; right:8px; bottom:8px; display:flex; flex-direction:column; gap:6px; }
+  #zoomCtrls button {
+    width:34px; height:34px; border-radius:8px; border:1px solid #3a5570; background:rgba(28,43,58,.9);
+    color:#eee; font-size:16px; cursor:pointer;
+  }
+  #centerBtn {
+    position:absolute; left:8px; bottom:8px; border-radius:8px; border:1px solid #3a5570;
+    background:rgba(28,43,58,.9); color:#eee; font-size:11px; padding:7px 10px; cursor:pointer;
+  }
 
   .legend { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:10px; font-size:11px; color:#9aa3b2; }
   .legend span { display:flex; align-items:center; gap:4px; }
@@ -44,20 +57,29 @@
 
 <div id="app">
   <h1>Basis-Raster-Prototyp</h1>
-  <div class="sub">5x5 Raster, deine Base in der Mitte. Auf jedem freien Feld kannst du selbst wählen: Turm oder Mauer.</div>
+  <div class="sub">Ziehen zum Verschieben, Scrollrad/Zwei-Finger-Pinch zum Zoomen. Rundherum ist Wasser – der Ring markiert die Grenze zur offenen See (kommt später).</div>
 
   <div id="hud">
-    <div class="pill">Vorräte: <b id="hudRes">0</b></div>
+    <div class="pill holz">Holz: <b id="hudHolz">0</b></div>
+    <div class="pill stein">Stein: <b id="hudStein">0</b></div>
     <div class="pill">Basis-HP: <b id="hudHp">100</b></div>
   </div>
 
-  <canvas id="c" width="380" height="380"></canvas>
+  <div id="stage">
+    <canvas id="c" width="380" height="380"></canvas>
+    <div id="zoomCtrls">
+      <button id="zoomIn">+</button>
+      <button id="zoomOut">−</button>
+    </div>
+    <button id="centerBtn">Zentrieren</button>
+  </div>
 
   <div class="legend">
     <span><i class="swatch" style="background:#c94a4a"></i>Turm</span>
     <span><i class="swatch" style="background:#8a5a3a"></i>Mauer</span>
+    <span><i class="swatch" style="background:#7a5a3a"></i>Holzfäller</span>
+    <span><i class="swatch" style="background:#6b7280"></i>Steinbruch</span>
     <span><i class="swatch" style="background:#a5533a"></i>Base</span>
-    <span><i class="swatch" style="background:#33502f"></i>Grün / frei</span>
   </div>
 </div>
 
@@ -65,16 +87,15 @@
 (function(){
 "use strict";
 
-const GRID = 5, CELL = 62, ORIGIN = {x:35, y:35};
+const GRID = 5, CELL = 62;
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
 
-function cellCenter(c,r){ return { x: ORIGIN.x + c*CELL + CELL/2, y: ORIGIN.y + r*CELL + CELL/2 }; }
-
+// Weltkoordinaten: Basis-Mitte liegt bei (0,0)
+function cellCenter(c,r){ return { x:(c-GRID/2+0.5)*CELL, y:(r-GRID/2+0.5)*CELL }; }
 const CENTER = [2,2];
 
-// Alle 24 Felder auSSer der Mitte - die 8 direkten Nachbarn zuerst
-// (die schaltest du zuerst frei), danach der aeuSSere Rand des 5x5-Rasters.
 const NEIGHBOR_CELLS = [[1,1],[2,1],[3,1],[1,2],[3,2],[1,3],[2,3],[3,3]];
 const OUTER_CELLS = [];
 for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
@@ -82,37 +103,152 @@ for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
 }
 const CELLS = NEIGHBOR_CELLS.concat(OUTER_CELLS);
 
+const WATER_RADIUS = 290;
+
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v3";
+const SAVE_KEY = "basis_raster_proto_v4";
 
 function defaultState(){
   return {
-    resources: 70,
+    resources: { holz: 60, stein: 30 },
     baseHp: 100,
     cells: CELLS.map((_,i)=>({ unlocked: i<4, building:null }))
   };
 }
 let state = load();
 function load(){
-  try { const raw = localStorage.getItem(SAVE_KEY); if(raw) return JSON.parse(raw); } catch(e){}
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(d.resources && typeof d.resources.holz==="number") return d;
+    }
+  } catch(e){}
   return defaultState();
 }
 function save(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch(e){} }
 
-function unlockCost(i){ return 30 + i*18; }
+function unlockCost(i){ return { holz: 18+i*9, stein: 8+i*6 }; }
+
+function canAfford(cost){ return state.resources.holz>=cost.holz && state.resources.stein>=cost.stein; }
+function payCost(cost){ state.resources.holz-=cost.holz; state.resources.stein-=cost.stein; }
+function scaleCost(cost, factor){ return { holz: Math.round(cost.holz*factor), stein: Math.round(cost.stein*factor) }; }
+function formatCost(cost){
+  const parts=[];
+  if(cost.holz) parts.push(cost.holz+" Holz");
+  if(cost.stein) parts.push(cost.stein+" Stein");
+  return parts.join(" · ") || "kostenlos";
+}
 
 const BUILDABLE_TYPES = {
-  turm:  { name:"Turm",  desc:"Verteidigungsturm, greift Angreifer an.", baseCost:40, icon:"⚔", color:"#c94a4a", baseHp:100, hpPerLevel:25 },
-  mauer: { name:"Mauer", desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", baseCost:15, icon:"▮", color:"#8a5a3a", baseHp:150, hpPerLevel:35 }
+  turm:  { name:"Turm",  desc:"Verteidigungsturm, greift Angreifer an.", cost:{holz:20,stein:30}, color:"#c94a4a", baseHp:100, hpPerLevel:25 },
+  mauer: { name:"Mauer", desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", cost:{holz:16,stein:8}, color:"#8a5a3a", baseHp:150, hpPerLevel:35 },
+  holzfaeller: { name:"Holzfäller", desc:"Produziert Holz über Zeit.", cost:{holz:12,stein:10}, color:"#7a5a3a", produce:{holz:2} },
+  steinbruch:  { name:"Steinbruch", desc:"Produziert Stein über Zeit.", cost:{holz:16,stein:6}, color:"#6b7280", produce:{stein:2} }
 };
-function upgradeCost(type, level){ return Math.round(BUILDABLE_TYPES[type].baseCost * Math.pow(1.5, level)); }
-function hpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp + (level-1)*d.hpPerLevel; }
+function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)); }
+function hpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp ? d.baseHp+(level-1)*d.hpPerLevel : null; }
 
 const WEAPONS = {
   bogen:  { name:"Bogen",  desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
   kanone: { name:"Kanone", desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 }
 };
+
+// ================= Ressourcen-Produktion =================
+
+setInterval(()=>{
+  let changed=false;
+  state.cells.forEach(slot=>{
+    if(!slot.building) return;
+    const def = BUILDABLE_TYPES[slot.building.type];
+    if(!def.produce) return;
+    Object.entries(def.produce).forEach(([res,amt])=>{
+      state.resources[res] += amt*slot.building.level;
+      changed=true;
+    });
+  });
+  if(changed){ save(); render(); }
+}, 3000);
+
+// ================= Kamera (Zoom & Verschieben) =================
+
+const camera = { x:0, y:0, scale:1 };
+function clampCamera(){
+  const d = Math.hypot(camera.x,camera.y);
+  const max = WATER_RADIUS-60;
+  if(d>max){ camera.x = camera.x/d*max; camera.y = camera.y/d*max; }
+  camera.scale = Math.max(0.55, Math.min(2.4, camera.scale));
+}
+function screenToWorld(sx,sy){
+  return { x:(sx-W/2)/camera.scale + camera.x, y:(sy-H/2)/camera.scale + camera.y };
+}
+
+const pointers = new Map();
+let dragTotal = 0;
+let pinchStartDist = 0, pinchStartScale = 1;
+
+function canvasPos(e){
+  const rect = canvas.getBoundingClientRect();
+  return { x:(e.clientX-rect.left)*(W/rect.width), y:(e.clientY-rect.top)*(H/rect.height) };
+}
+
+canvas.addEventListener("pointerdown", e=>{
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, canvasPos(e));
+  dragTotal = 0;
+  if(pointers.size===2){
+    const pts = [...pointers.values()];
+    pinchStartDist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+    pinchStartScale = camera.scale;
+  }
+});
+canvas.addEventListener("pointermove", e=>{
+  if(!pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId);
+  const cur = canvasPos(e);
+  pointers.set(e.pointerId, cur);
+
+  if(pointers.size===2){
+    const pts = [...pointers.values()];
+    const dist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+    if(pinchStartDist>10){
+      camera.scale = pinchStartScale * (dist/pinchStartDist);
+      clampCamera();
+      render();
+    }
+  } else if(pointers.size===1){
+    const dx = cur.x-prev.x, dy = cur.y-prev.y;
+    dragTotal += Math.hypot(dx,dy);
+    camera.x -= dx/camera.scale;
+    camera.y -= dy/camera.scale;
+    clampCamera();
+    render();
+  }
+});
+function pointerEnd(e){
+  const wasSingle = pointers.size===1;
+  const pos = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  if(wasSingle && dragTotal<8 && pos){
+    const w = screenToWorld(pos.x,pos.y);
+    handleTap(w.x,w.y);
+  }
+  if(pointers.size<2) pinchStartDist=0;
+}
+canvas.addEventListener("pointerup", pointerEnd);
+canvas.addEventListener("pointercancel", pointerEnd);
+
+canvas.addEventListener("wheel", e=>{
+  e.preventDefault();
+  camera.scale *= (e.deltaY<0) ? 1.1 : 0.9;
+  clampCamera();
+  render();
+}, {passive:false});
+
+document.getElementById("zoomIn").addEventListener("click", ()=>{ camera.scale*=1.2; clampCamera(); render(); });
+document.getElementById("zoomOut").addEventListener("click", ()=>{ camera.scale*=0.83; clampCamera(); render(); });
+document.getElementById("centerBtn").addEventListener("click", ()=>{ camera.x=0; camera.y=0; camera.scale=1; render(); });
 
 // ================= Rendern =================
 
@@ -120,6 +256,59 @@ function drawRoundRect(x,y,w,h,r,fill){
   ctx.beginPath();
   if(ctx.roundRect) ctx.roundRect(x,y,w,h,r); else ctx.rect(x,y,w,h);
   ctx.fillStyle = fill; ctx.fill();
+}
+function hashRand(seed){ const x=Math.sin(seed*12.9898)*43758.5453; return x-Math.floor(x); }
+
+function drawWater(){
+  ctx.fillStyle = "#123145";
+  ctx.fillRect(-3000,-3000,6000,6000);
+  ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 3;
+  for(let i=-25;i<25;i++){
+    ctx.beginPath();
+    ctx.moveTo(-1500, i*45);
+    ctx.quadraticCurveTo(0, i*45+18, 1500, i*45);
+    ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(0,0,WATER_RADIUS,0,Math.PI*2);
+  ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 4/camera.scale;
+  ctx.setLineDash([14/camera.scale,10/camera.scale]); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = (13/camera.scale)+"px sans-serif"; ctx.textAlign="center";
+  ctx.fillText("offene See →", 0, -WATER_RADIUS+24/camera.scale);
+  ctx.textAlign="left";
+}
+
+function drawGrassTile(x,y,c,r){
+  ctx.fillStyle = "#33502f";
+  ctx.fillRect(x-CELL/2, y-CELL/2, CELL, CELL);
+  const seed = c*131+r*911;
+  for(let k=0;k<4;k++){
+    const rx = (hashRand(seed+k)-0.5)*CELL*0.8;
+    const ry = (hashRand(seed+k+40)-0.5)*CELL*0.8;
+    ctx.fillStyle = k%2===0 ? "rgba(255,255,255,0.045)" : "rgba(0,0,0,0.09)";
+    ctx.beginPath(); ctx.arc(x+rx,y+ry, 2.5+hashRand(seed+k+80)*3, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;
+  ctx.strokeRect(x-CELL/2, y-CELL/2, CELL, CELL);
+}
+
+function drawPlusButton(x,y){
+  drawRoundRect(x-22,y-22,44,44,9,"rgba(255,255,255,0.10)");
+  ctx.strokeStyle="rgba(255,255,255,0.32)"; ctx.lineWidth=1.5;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,9); ctx.stroke();
+  ctx.strokeStyle="#cfe3f7"; ctx.lineWidth=3; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(x-8,y); ctx.lineTo(x+8,y); ctx.moveTo(x,y-8); ctx.lineTo(x,y+8); ctx.stroke();
+  ctx.lineCap="butt";
+}
+
+function drawLockedButton(x,y){
+  drawRoundRect(x-22,y-22,44,44,9,"rgba(255,255,255,0.03)");
+  ctx.strokeStyle="rgba(255,255,255,0.14)"; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,9); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle="rgba(210,220,235,0.55)"; ctx.lineWidth=2.2;
+  ctx.beginPath(); ctx.arc(x,y-3,5,Math.PI,0); ctx.stroke();
+  ctx.fillStyle="rgba(210,220,235,0.55)";
+  drawRoundRect(x-7,y-3,14,10,2,"rgba(210,220,235,0.55)");
 }
 
 function drawLevelPips(x,y,level){
@@ -131,121 +320,132 @@ function drawLevelPips(x,y,level){
   }
 }
 
-function drawTowerSprite(x,y,building){
+function drawTowerSprite(x,y,b){
   const s=25;
-  // Steinsockel
   drawRoundRect(x-s,y-s,s*2,s*2,7,"#5a6472");
   ctx.strokeStyle="#333a42"; ctx.lineWidth=2;
   ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
-  // Zinnen an den Ecken
   ctx.fillStyle="#454e59";
   const cz=6;
-  [[-s+1,-s+1],[s-cz-1,-s+1],[-s+1,s-cz-1],[s-cz-1,s-cz-1]].forEach(([dx,dy])=>{
-    ctx.fillRect(x+dx,y+dy,cz,cz);
-  });
-  // Turmkoerper
+  [[-s+1,-s+1],[s-cz-1,-s+1],[-s+1,s-cz-1],[s-cz-1,s-cz-1]].forEach(([dx,dy])=>{ ctx.fillRect(x+dx,y+dy,cz,cz); });
   ctx.beginPath(); ctx.arc(x,y-3,13,0,Math.PI*2);
   ctx.fillStyle="#c94a4a"; ctx.fill();
   ctx.strokeStyle="#7a2424"; ctx.lineWidth=2; ctx.stroke();
   ctx.beginPath(); ctx.arc(x-4,y-7,3,0,Math.PI*2);
   ctx.fillStyle="rgba(255,255,255,0.25)"; ctx.fill();
-  // Waffe (Lauf oben) - Farbe zeigt, welche Waffe ausgeruestet ist
-  const weaponColor = building.weapon==="kanone" ? "#3a3a42" : "#8a6a3a";
-  ctx.fillStyle = weaponColor;
-  ctx.fillRect(x-3,y-19,6,11);
-  ctx.fillStyle = building.weapon==="kanone" ? "#55555f" : "#a5825a";
-  ctx.fillRect(x-3,y-19,6,3);
-  drawLevelPips(x, y+18, building.level);
+  const weaponColor = b.weapon==="kanone" ? "#3a3a42" : "#8a6a3a";
+  ctx.fillStyle = weaponColor; ctx.fillRect(x-3,y-19,6,11);
+  ctx.fillStyle = b.weapon==="kanone" ? "#55555f" : "#a5825a"; ctx.fillRect(x-3,y-19,6,3);
+  drawLevelPips(x, y+18, b.level);
 }
 
-function drawWallSprite(x,y,building){
+function drawWallSprite(x,y,b){
   const s=25;
   drawRoundRect(x-s,y-s,s*2,s*2,4,"#8a5a3a");
-  // Ziegel-Fugen im Laufverband
   ctx.strokeStyle="rgba(0,0,0,0.35)"; ctx.lineWidth=1.3;
   const rows=4, rowH=(s*2)/rows;
-  for(let i=1;i<rows;i++){
-    const yy = y-s+i*rowH;
-    ctx.beginPath(); ctx.moveTo(x-s+2,yy); ctx.lineTo(x+s-2,yy); ctx.stroke();
-  }
+  for(let i=1;i<rows;i++){ const yy=y-s+i*rowH; ctx.beginPath(); ctx.moveTo(x-s+2,yy); ctx.lineTo(x+s-2,yy); ctx.stroke(); }
   for(let i=0;i<rows;i++){
     const yy0=y-s+i*rowH, yy1=yy0+rowH;
-    const offset = (i%2===0) ? 0 : (s*2)/4;
-    for(let xx=x-s+offset; xx<x+s-1; xx+=(s*2)/2){
-      ctx.beginPath(); ctx.moveTo(xx,yy0+1.5); ctx.lineTo(xx,yy1-1.5); ctx.stroke();
-    }
+    const offset=(i%2===0)?0:(s*2)/4;
+    for(let xx=x-s+offset; xx<x+s-1; xx+=(s*2)/2){ ctx.beginPath(); ctx.moveTo(xx,yy0+1.5); ctx.lineTo(xx,yy1-1.5); ctx.stroke(); }
   }
-  // Kanten-Schattierung fuer 3D-Look
   ctx.fillStyle="rgba(255,255,255,0.10)"; ctx.fillRect(x-s,y-s,s*2,4);
   ctx.fillStyle="rgba(0,0,0,0.28)"; ctx.fillRect(x-s,y+s-4,s*2,4);
-  ctx.strokeStyle="#4a2f1c"; ctx.lineWidth=2;
-  ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
-  drawLevelPips(x, y+18, building.level);
+  ctx.strokeStyle="#4a2f1c"; ctx.lineWidth=2; ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
+  drawLevelPips(x, y+18, b.level);
+}
+
+function drawHolzfaellerSprite(x,y,b){
+  const s=25;
+  drawRoundRect(x-s,y-s,s*2,s*2,7,"#3f5a3a");
+  ctx.strokeStyle="#26361f"; ctx.lineWidth=2; ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
+  // Baumstamm-Stapel
+  ["#8a5a34","#a06d3f","#8a5a34"].forEach((col,i)=>{
+    ctx.fillStyle=col;
+    drawRoundRect(x-16, y+2+i*6-9, 32, 6, 3, col);
+    ctx.fillStyle="rgba(0,0,0,0.25)";
+    ctx.beginPath(); ctx.arc(x-14,y+5+i*6-9,2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+14,y+5+i*6-9,2,0,Math.PI*2); ctx.fill();
+  });
+  // Nadelbaum
+  ctx.fillStyle="#2f6b3a";
+  ctx.beginPath(); ctx.moveTo(x,y-22); ctx.lineTo(x-11,y-4); ctx.lineTo(x+11,y-4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle="#5a3a24"; ctx.fillRect(x-2,y-6,4,6);
+  drawLevelPips(x, y+18, b.level);
+}
+
+function drawSteinbruchSprite(x,y,b){
+  const s=25;
+  drawRoundRect(x-s,y-s,s*2,s*2,7,"#4a5560");
+  ctx.strokeStyle="#2c343c"; ctx.lineWidth=2; ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
+  // Felsbrocken-Cluster
+  [[-8,4,10,"#9aa3ac"],[6,6,9,"#7c8590"],[0,-6,8,"#b3bcc4"]].forEach(([dx,dy,rr,col])=>{
+    ctx.beginPath(); ctx.arc(x+dx,y+dy,rr,0,Math.PI*2);
+    ctx.fillStyle=col; ctx.fill();
+    ctx.strokeStyle="rgba(0,0,0,0.25)"; ctx.lineWidth=1.5; ctx.stroke();
+  });
+  drawLevelPips(x, y+18, b.level);
+}
+
+function drawBuildingSprite(x,y,building){
+  if(building.type==="turm") drawTowerSprite(x,y,building);
+  else if(building.type==="mauer") drawWallSprite(x,y,building);
+  else if(building.type==="holzfaeller") drawHolzfaellerSprite(x,y,building);
+  else if(building.type==="steinbruch") drawSteinbruchSprite(x,y,building);
 }
 
 function render(){
-  document.getElementById("hudRes").textContent = state.resources;
+  document.getElementById("hudHolz").textContent = state.resources.holz;
+  document.getElementById("hudStein").textContent = state.resources.stein;
   document.getElementById("hudHp").textContent = state.baseHp;
 
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(W/2, H/2);
+  ctx.scale(camera.scale, camera.scale);
+  ctx.translate(-camera.x, -camera.y);
 
-  // Gruenes 5x5-Feld als Untergrund
-  ctx.fillStyle = "#33502f";
-  ctx.fillRect(ORIGIN.x, ORIGIN.y, CELL*GRID, CELL*GRID);
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  for(let i=0;i<=GRID;i++){
-    ctx.beginPath(); ctx.moveTo(ORIGIN.x+i*CELL, ORIGIN.y); ctx.lineTo(ORIGIN.x+i*CELL, ORIGIN.y+CELL*GRID); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ORIGIN.x, ORIGIN.y+i*CELL); ctx.lineTo(ORIGIN.x+CELL*GRID, ORIGIN.y+i*CELL); ctx.stroke();
+  drawWater();
+
+  CELLS.forEach(([c,r])=>{ const p=cellCenter(c,r); drawGrassTile(p.x,p.y,c,r); });
+  {
+    const p = cellCenter(CENTER[0],CENTER[1]);
+    drawGrassTile(p.x,p.y,CENTER[0],CENTER[1]);
   }
 
-  // Bau-Felder
   CELLS.forEach(([c,r],i)=>{
     const p = cellCenter(c,r);
     const slot = state.cells[i];
-    if(slot.building){
-      ctx.textAlign="center";
-      if(slot.building.type==="turm") drawTowerSprite(p.x,p.y,slot.building);
-      else drawWallSprite(p.x,p.y,slot.building);
-    } else if(!slot.unlocked){
-      ctx.strokeStyle="#3a5570"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
-      ctx.strokeRect(p.x-24,p.y-24,48,48); ctx.setLineDash([]);
-      ctx.fillStyle="#5f7180"; ctx.font="17px sans-serif"; ctx.textAlign="center";
-      ctx.fillText("+", p.x, p.y+6);
-    } else {
-      ctx.strokeStyle="#cfe3f7"; ctx.lineWidth=1.5;
-      ctx.strokeRect(p.x-24,p.y-24,48,48);
-      ctx.fillStyle="#cfe3f7"; ctx.font="17px sans-serif"; ctx.textAlign="center";
-      ctx.fillText("+", p.x, p.y+6);
-    }
+    if(slot.building) drawBuildingSprite(p.x,p.y,slot.building);
+    else if(!slot.unlocked) drawLockedButton(p.x,p.y);
+    else drawPlusButton(p.x,p.y);
   });
 
-  // Base in der Mitte
   {
     const p = cellCenter(CENTER[0], CENTER[1]);
     drawRoundRect(p.x-27,p.y-27,54,54,8,"#a5533a");
     ctx.fillStyle="#1a0d0d"; ctx.font="9px sans-serif"; ctx.textAlign="center";
     ctx.fillText("Base", p.x, p.y+3);
     ctx.fillText(state.baseHp+"/100", p.x, p.y+14);
+    ctx.textAlign="left";
   }
 
-  ctx.textAlign="left";
+  ctx.restore();
 }
 
-// ================= Eingabe =================
+// ================= Eingabe / Bau-Menue =================
 
 function findCellIndex(c,r){ return CELLS.findIndex(cell=>cell[0]===c&&cell[1]===r); }
 
-canvas.addEventListener("click", e=>{
-  const rect = canvas.getBoundingClientRect();
-  const x = (e.clientX-rect.left)*(canvas.width/rect.width);
-  const y = (e.clientY-rect.top)*(canvas.height/rect.height);
-  const c = Math.floor((x-ORIGIN.x)/CELL), r = Math.floor((y-ORIGIN.y)/CELL);
+function handleTap(wx,wy){
+  const c = Math.round(wx/CELL + GRID/2 - 0.5);
+  const r = Math.round(wy/CELL + GRID/2 - 0.5);
   if(c<0||c>=GRID||r<0||r>=GRID) return;
   if(c===CENTER[0] && r===CENTER[1]) return;
-
   const i = findCellIndex(c,r);
   if(i>=0) openBuildMenu(i);
-});
+}
 
 function openBuildMenu(i){
   const slot = state.cells[i];
@@ -258,44 +458,39 @@ function openBuildMenu(i){
     const cost = unlockCost(i);
     box.innerHTML = `<h3>Feld freischalten</h3>`;
     const opt = document.createElement("div");
-    opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
-    opt.innerHTML = `<span>Freischalten</span><b>${cost}g</b>`;
+    opt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
+    opt.innerHTML = `<span>Freischalten</span><b>${formatCost(cost)}</b>`;
     opt.addEventListener("click", ()=>{
-      if(state.resources>=cost){ state.resources-=cost; slot.unlocked=true; save(); document.body.removeChild(overlay); render(); }
+      if(canAfford(cost)){ payCost(cost); slot.unlocked=true; save(); document.body.removeChild(overlay); render(); }
     });
     box.appendChild(opt);
   } else if(slot.building){
     const b = slot.building;
     const def = BUILDABLE_TYPES[b.type];
-    const hp = hpFor(b.type, b.level);
     const cost = upgradeCost(b.type, b.level);
-    box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level} · HP ${hp}/${hp}</div>`;
+    const hp = hpFor(b.type, b.level);
+    box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level}${hp?" · HP "+hp+"/"+hp:""}${def.produce?" · +"+Object.entries(def.produce).map(([k,v])=>(v*b.level)+" "+(k==="holz"?"Holz":"Stein")).join(", ")+" pro Tick":""}</div>`;
 
     const upOpt = document.createElement("div");
-    upOpt.className = "buildopt" + (state.resources<cost ? " disabled":"");
-    upOpt.innerHTML = `<span>Verbessern auf Level ${b.level+1}<small>Erhöht HP auf ${hpFor(b.type,b.level+1)}</small></span><b>${cost}g</b>`;
+    upOpt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
+    upOpt.innerHTML = `<span>Verbessern auf Level ${b.level+1}</span><b>${formatCost(cost)}</b>`;
     upOpt.addEventListener("click", ()=>{
-      if(state.resources>=cost){ state.resources-=cost; b.level++; save(); document.body.removeChild(overlay); render(); }
+      if(canAfford(cost)){ payCost(cost); b.level++; save(); document.body.removeChild(overlay); render(); }
     });
     box.appendChild(upOpt);
 
     if(b.type==="turm"){
       const wHead = document.createElement("div");
-      wHead.className = "hint2"; wHead.style.marginTop = "6px"; wHead.textContent = "Waffe auswählen:";
+      wHead.className="hint2"; wHead.style.marginTop="6px"; wHead.textContent="Waffe auswählen:";
       box.appendChild(wHead);
-
       Object.entries(WEAPONS).forEach(([key,w])=>{
-        const unlocked = b.level >= w.unlockLevel;
-        const selected = b.weapon === key;
+        const unlocked = b.level>=w.unlockLevel;
+        const selected = b.weapon===key;
         const wOpt = document.createElement("div");
-        wOpt.className = "buildopt" + (!unlocked ? " disabled" : "");
+        wOpt.className = "buildopt"+(!unlocked?" disabled":"");
         wOpt.style.border = selected ? "1px solid #7aa2f7" : "";
-        wOpt.innerHTML = `<span>${w.name}${selected ? " (aktiv)" : ""}<small>${unlocked ? w.desc : "Verfügbar ab Level "+w.unlockLevel}</small></span>`;
-        if(unlocked && !selected){
-          wOpt.addEventListener("click", ()=>{
-            b.weapon = key; save(); document.body.removeChild(overlay); render();
-          });
-        }
+        wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${unlocked?w.desc:"Verfügbar ab Level "+w.unlockLevel}</small></span>`;
+        if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ b.weapon=key; save(); document.body.removeChild(overlay); render(); });
         box.appendChild(wOpt);
       });
     }
@@ -303,11 +498,11 @@ function openBuildMenu(i){
     box.innerHTML = `<h3>Feld bebauen</h3>`;
     Object.entries(BUILDABLE_TYPES).forEach(([type,def])=>{
       const opt = document.createElement("div");
-      opt.className = "buildopt" + (state.resources<def.baseCost ? " disabled":"");
-      opt.innerHTML = `<span>${def.name}<small>${def.desc}</small></span><b>${def.baseCost}g</b>`;
+      opt.className = "buildopt" + (!canAfford(def.cost) ? " disabled":"");
+      opt.innerHTML = `<span>${def.name}<small>${def.desc}</small></span><b>${formatCost(def.cost)}</b>`;
       opt.addEventListener("click", ()=>{
-        if(state.resources>=def.baseCost){
-          state.resources-=def.baseCost;
+        if(canAfford(def.cost)){
+          payCost(def.cost);
           slot.building = type==="turm" ? {type,level:1,weapon:"bogen"} : {type,level:1};
           save(); document.body.removeChild(overlay); render();
         }
@@ -317,7 +512,7 @@ function openBuildMenu(i){
   }
 
   const close = document.createElement("div");
-  close.className = "buildopt"; close.style.justifyContent = "center"; close.textContent = "Schließen";
+  close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
   close.addEventListener("click", ()=> document.body.removeChild(overlay));
   box.appendChild(close);
 
