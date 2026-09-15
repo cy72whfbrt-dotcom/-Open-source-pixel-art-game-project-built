@@ -167,9 +167,12 @@ function repairCost(type, b){
   return scaleCost(BUILDABLE_TYPES[type].cost, (missing/max)*0.7);
 }
 
-// unlockLevel bezieht sich auf das BASIS-Level, nicht auf das Level des
-// einzelnen Turms - sonst koennte man die Kanone einfach an einem
-// beliebigen Turm hochkaufen, unabhaengig vom eigentlichen Spielfortschritt.
+// unlockLevel gilt fuer BEIDE Bedingungen zugleich: Basis-Level (genereller
+// Spielfortschritt) UND das Level des einzelnen Turms (Investition in genau
+// diesen Turm). Nur eins davon zu pruefen erlaubt jeweils einen Exploit:
+// nur Basis-Level -> Kanone quasi geschenkt sobald die Basis hoch genug ist;
+// nur Turm-Level -> ein einzelner Turm laesst sich unabhaengig vom
+// Spielfortschritt hochkaufen.
 const WEAPONS = {
   bogen:  { name:"Bogen",  desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
   kanone: { name:"Kanone", desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 }
@@ -1042,12 +1045,24 @@ function openBuildMenu(c,r){
       wHead.className="hint2"; wHead.style.marginTop="6px"; wHead.textContent="Waffe auswählen:";
       box.appendChild(wHead);
       Object.entries(WEAPONS).forEach(([key2,w])=>{
-        const unlocked = state.basisLevel>=w.unlockLevel;
+        // Beides muss stimmen: die Basis muss weit genug sein (Fortschritt
+        // insgesamt) UND DIESER Turm muss selbst auf das Level hochgekauft
+        // sein (Investition in genau diesen Turm) - sonst bekommt man die
+        // Kanone quasi geschenkt, sobald die Basis hoch genug ist.
+        const basisOk = state.basisLevel>=w.unlockLevel;
+        const turmOk = b.level>=w.unlockLevel;
+        const unlocked = basisOk && turmOk;
         const selected = b.weapon===key2;
         const wOpt = document.createElement("div");
         wOpt.className = "buildopt"+(!unlocked?" disabled":"");
         wOpt.style.border = selected ? "1px solid #7aa2f7" : "";
-        wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${unlocked?w.desc:"Verfügbar ab Basis-Level "+w.unlockLevel}</small></span>`;
+        let hint = w.desc;
+        if(!unlocked){
+          hint = !basisOk && !turmOk ? "Braucht Basis-Level "+w.unlockLevel+" und Turm-Level "+w.unlockLevel
+               : !basisOk ? "Braucht Basis-Level "+w.unlockLevel
+               : "Braucht Turm-Level "+w.unlockLevel;
+        }
+        wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${hint}</small></span>`;
         if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ b.weapon=key2; save(); document.body.removeChild(overlay); render(); });
         box.appendChild(wOpt);
       });
