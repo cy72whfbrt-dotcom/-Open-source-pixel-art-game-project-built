@@ -1883,33 +1883,42 @@ function drawAvatarPortrait(cx,cy,r){
   });
 }
 
-function drawLevelBadge(x,y,level){
-  const w=44,h=17;
+// Level-Chip haengt unten am Avatar-Ring, ueberlappt ihn leicht - genau wie
+// in der Sword x Staff-Referenz, statt daneben in der Namenszeile zu sitzen.
+function drawLevelBadge(cx,y,level){
+  const w=36,h=17;
+  const x = cx-w/2;
   ctx.save();
-  ctx.shadowColor="rgba(0,0,0,0.4)"; ctx.shadowBlur=3; ctx.shadowOffsetY=1;
-  const grad = ctx.createLinearGradient(x,y,x,y+h);
-  grad.addColorStop(0,"#5a3fa0"); grad.addColorStop(1,"#3a2570");
-  drawRoundRect(x,y,w,h,h/2,grad);
+  ctx.shadowColor="rgba(0,0,0,0.5)"; ctx.shadowBlur=3; ctx.shadowOffsetY=1;
+  drawRoundRect(x,y,w,h,h/2,"rgba(12,10,20,0.92)");
   ctx.restore();
   ctx.strokeStyle="#f4cf6e"; ctx.lineWidth=1.3;
   ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.stroke();
-  ctx.fillStyle="#fff"; ctx.font="bold 10.5px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
-  ctx.fillText("Lv. "+level, x+w/2, y+h/2+1);
+  ctx.fillStyle="#fff"; ctx.font="bold 11px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(level, cx, y+h/2+1);
   ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+}
+
+// Grosse Zahlen (Kraft kann mit vielen Gebaeuden/NPCs schnell vierstellig
+// werden) als 16K/1.2M statt einer langen Ziffernkette, wie im Referenzbild.
+function formatCompactNumber(v){
+  if(v>=1000000) return (v/1000000).toFixed(v%1000000===0?0:1)+"M";
+  if(v>=1000) return (v/1000).toFixed(v%1000===0?0:1)+"K";
+  return String(v);
 }
 
 function drawExpBar(x,y,w,h,ratio){
   drawRoundRect(x,y,w,h,h/2,"rgba(10,8,18,0.75)");
-  ctx.strokeStyle="#c9922f"; ctx.lineWidth=1.1;
+  ctx.strokeStyle="#8a6a1f"; ctx.lineWidth=1.2;
   ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.stroke();
   const rr = Math.max(0,Math.min(1,ratio));
   if(rr>0.01){
     ctx.save();
     ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.clip();
     const fillGrad = ctx.createLinearGradient(x,y,x+w,y);
-    fillGrad.addColorStop(0,"#5ec9ff"); fillGrad.addColorStop(1,"#9a6bff");
+    fillGrad.addColorStop(0,"#c7e83a"); fillGrad.addColorStop(1,"#e8f26a");
     ctx.fillStyle=fillGrad; ctx.fillRect(x,y,w*rr,h);
-    ctx.fillStyle="rgba(255,255,255,0.35)"; ctx.fillRect(x,y,w*rr,h*0.45);
+    ctx.fillStyle="rgba(255,255,255,0.4)"; ctx.fillRect(x,y,w*rr,h*0.4);
     ctx.restore();
   }
 }
@@ -1920,7 +1929,7 @@ function drawKraftPill(x,y,w,h,value){
   ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,h/2); ctx.stroke();
   ctx.save(); ctx.translate(x+h/2,y+h/2); drawKraftIcon(h*0.38); ctx.restore();
   ctx.fillStyle="#ffe9b8"; ctx.font="bold 10.5px sans-serif"; ctx.textAlign="left"; ctx.textBaseline="middle";
-  ctx.fillText(value, x+h+3, y+h/2+1);
+  ctx.fillText(formatCompactNumber(value), x+h+3, y+h/2+1);
   ctx.textAlign="left"; ctx.textBaseline="alphabetic";
 }
 
@@ -2056,10 +2065,12 @@ function drawInGameHud(){
   const panelX = avatarCx+avatarR*0.35, panelY = barY, panelW = 150, panelH = avatarR*2+8;
   drawFantasyPanel(panelX, panelY, panelW, panelH, 12);
   drawAvatarPortrait(avatarCx, avatarCy, avatarR);
+  // Level-Chip haengt unten am Avatar, statt in der Namenszeile Platz
+  // wegzunehmen - so wie in der Referenz.
+  drawLevelBadge(avatarCx, avatarCy+avatarR-8, state.playerLevel);
 
   const textX = panelX+avatarR*1.1;
-  const badgeX = panelX+panelW-46;
-  const nameMaxW = badgeX-textX-6;
+  const nameMaxW = panelX+panelW-14-textX;
   ctx.textAlign="left"; ctx.textBaseline="middle";
   ctx.shadowColor="rgba(0,0,0,0.6)"; ctx.shadowBlur=3;
   ctx.fillStyle="#fff";
@@ -2068,13 +2079,12 @@ function drawInGameHud(){
   while(nameSize>10 && ctx.measureText(name).width>nameMaxW){ nameSize--; ctx.font="bold "+nameSize+"px sans-serif"; }
   while(ctx.measureText(name).width>nameMaxW && name.length>1){ name = name.slice(0,-1); ctx.font="bold "+nameSize+"px sans-serif"; }
   if(name!==state.playerName) name = name.replace(/.$/,"…");
-  ctx.fillText(name, textX, panelY+15);
+  ctx.fillText(name, textX, panelY+16);
   ctx.shadowBlur=0; ctx.textBaseline="alphabetic";
-  drawLevelBadge(badgeX, panelY+6, state.playerLevel);
 
   const xpRatio = state.playerXp/xpForLevel(state.playerLevel);
-  drawExpBar(textX, panelY+27, panelX+panelW-14-textX, 8, xpRatio);
-  drawKraftPill(textX, panelY+40, 92, 17, computeKraft());
+  drawExpBar(textX, panelY+30, panelX+panelW-14-textX, 11, xpRatio);
+  drawKraftPill(textX, panelY+45, 92, 17, computeKraft());
   drawPlayerLevelUpFx(avatarCx, panelY+panelH);
 
   let leftEnd = panelX+panelW;
