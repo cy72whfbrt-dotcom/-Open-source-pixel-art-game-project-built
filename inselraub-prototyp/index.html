@@ -110,7 +110,7 @@ function cellCenter(c,r,gridSize){ const c0=centerOf(gridSize); return { x:(c-c0
 
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v10";
+const SAVE_KEY = "basis_raster_proto_v11";
 const TUTORIAL_START_UNLOCK = 8; // das ganze 3x3-Feld um die Base ist von Anfang an frei
 const MIN_WAVE_GAP = 30; // Sekunden Mindestabstand zwischen zwei Wellen
 // Die 8 Nachbarfelder: 4 gerade (Turm-Plaetze im Tutorial), 4 diagonal (Mauer-Plaetze)
@@ -143,7 +143,8 @@ function defaultState(){
     tutorialCollected: false,
     npc: { reparaturCount: 0, angreifer: [], training: null },
     repairJob: null,
-    nextWaveComposition: null
+    nextWaveComposition: null,
+    player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null }
   };
 }
 let state = load();
@@ -254,8 +255,9 @@ function tradeRate(level){ return Math.min(0.75, 0.5+level*0.05); }
 // nur Turm-Level -> ein einzelner Turm laesst sich unabhaengig vom
 // Spielfortschritt hochkaufen.
 const WEAPONS = {
-  bogen:  { name:"Bogen",  desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
-  kanone: { name:"Kanone", desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 }
+  bogen:   { name:"Bogen",   desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
+  kanone:  { name:"Kanone",  desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 },
+  moerser: { name:"Mörser",  desc:"Flächenschaden, aber Mindestreichweite - trifft nichts direkt daneben.", unlockLevel:6 }
 };
 
 function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,level-1)), stein: Math.round(45*Math.pow(1.55,level-1)) }; }
@@ -406,8 +408,12 @@ function nodeWorldPos(node){
 // ================= Wellen: Gegner spawnen, Tuerme feuern =================
 
 const WEAPON_STATS = {
-  bogen:  { dmg: 6,  range: 130, rate: 0.9,  pierce:false },
-  kanone: { dmg: 14, range: 150, rate: 1.6,  pierce:true  }
+  bogen:   { dmg: 6,  range: 130, rate: 0.9,  pierce:false },
+  kanone:  { dmg: 14, range: 150, rate: 1.6,  pierce:true  },
+  // Moerser: Flaechenschaden statt Einzelziel, aber mit Mindestreichweite
+  // (kann nichts direkt neben sich treffen) und langsamer Feuerrate - stark
+  // gegen mehrere Laeufer auf einmal, schwach gegen ein einzelnes Ziel.
+  moerser: { dmg: 8,  range: 190, minRange: 55, rate: 2.4, pierce:false, splash: 42 }
 };
 function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return w.dmg + (b.level-1)*2; }
 function maxBaseHp(){ return 100 + (state.basisLevel-1)*20; }
@@ -589,12 +595,12 @@ function updateWave(dt){
     let nearest=null, nd=Infinity;
     enemies.forEach(e=>{
       const d = Math.hypot(e.x-p.x,e.y-p.y);
-      if(d<=w.range && d<nd){ nd=d; nearest=e; }
+      if(d<=w.range && (!w.minRange || d>=w.minRange) && d<nd){ nd=d; nearest=e; }
     });
     if(nearest){
       b.fireCd = w.rate;
       const ang = Math.atan2(nearest.y-p.y, nearest.x-p.x);
-      projectiles.push({x:p.x,y:p.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b),pierce:w.pierce});
+      projectiles.push({x:p.x,y:p.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b),pierce:w.pierce,splash:w.splash});
     }
   });
 
@@ -623,8 +629,20 @@ function updateWave(dt){
     let hit = pr.life<=0;
     enemies.forEach(e=>{
       if(!hit && Math.hypot(pr.x-e.x,pr.y-e.y)<e.r+4){
-        const dmg = (e.armor && !pr.pierce) ? Math.max(1, pr.dmg-e.armor) : pr.dmg;
-        e.hp -= dmg;
+        if(pr.splash){
+          // Flaechenschaden: alle Gegner im Radius um den Einschlag treffen,
+          // nicht nur das eine Ziel
+          const ix=pr.x, iy=pr.y;
+          enemies.forEach(e2=>{
+            if(Math.hypot(ix-e2.x,iy-e2.y)<=pr.splash){
+              const d2 = (e2.armor && !pr.pierce) ? Math.max(1, pr.dmg-e2.armor) : pr.dmg;
+              e2.hp -= d2;
+            }
+          });
+        } else {
+          const dmg = (e.armor && !pr.pierce) ? Math.max(1, pr.dmg-e.armor) : pr.dmg;
+          e.hp -= dmg;
+        }
         hit = true;
       }
     });
@@ -943,6 +961,48 @@ function shadeColor(hex, amt){
   return "rgb("+r+","+g+","+b+")";
 }
 
+function drawPlayerSprite(){
+  const pl = state.player;
+  const x=pl.x, y=pl.y;
+
+  if(pl.moveTarget){
+    ctx.strokeStyle="rgba(255,255,255,0.35)"; ctx.lineWidth=1.6;
+    ctx.setLineDash([5,5]);
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(pl.moveTarget.x,pl.moveTarget.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  drawShadow(x,y+13,10,4);
+  // Rucksack (hinter dem Koerper), Fuellstand als kleiner Ring
+  const total = backpackTotal();
+  const fillRatio = Math.max(0, Math.min(1, total/BACKPACK_CAPACITY));
+  const bpX = x-9, bpY = y-2;
+  drawRoundRect(bpX-6,bpY-7,12,15,3,"#6a4c2a");
+  ctx.strokeStyle="#3a2612"; ctx.lineWidth=1.2; ctx.strokeRect(bpX-6,bpY-7,12,15);
+  if(total>0){
+    ctx.beginPath(); ctx.arc(bpX,bpY,9,-Math.PI/2,-Math.PI/2+Math.PI*2*fillRatio);
+    ctx.strokeStyle = fillRatio>=1 ? "#e04a4a" : "#f2c94c"; ctx.lineWidth=2; ctx.lineCap="round"; ctx.stroke(); ctx.lineCap="butt";
+  }
+  // Beine
+  ctx.fillStyle="#3a3f5a";
+  ctx.fillRect(x-5,y+6,4,9); ctx.fillRect(x+1,y+6,4,9);
+  // Koerper
+  const bodyGrad = ctx.createLinearGradient(x,y-8,x,y+8);
+  bodyGrad.addColorStop(0,"#5a8fd6"); bodyGrad.addColorStop(1,"#3f6aad");
+  drawRoundRect(x-8,y-8,16,15,4,bodyGrad);
+  ctx.strokeStyle="#2a4a7a"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-8,y-8,16,15,4); ctx.stroke();
+  // Kopf
+  ctx.beginPath(); ctx.arc(x,y-13,7,0,Math.PI*2);
+  ctx.fillStyle="#e8b48a"; ctx.fill();
+  ctx.strokeStyle="#a5764f"; ctx.lineWidth=1; ctx.stroke();
+  // Haare
+  ctx.beginPath(); ctx.arc(x,y-16,6,Math.PI,0); ctx.fillStyle="#5a3a22"; ctx.fill();
+  // Augen
+  ctx.fillStyle="#2a1f18";
+  ctx.beginPath(); ctx.arc(x-2.5,y-13,1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+2.5,y-13,1,0,Math.PI*2); ctx.fill();
+}
+
 function drawEnemy(e){
   const type = ENEMY_TYPES[e.typeKey] || {color:"#8a2f2f"};
   drawShadow(e.x,e.y+e.r,e.r*1.3,4);
@@ -1037,16 +1097,24 @@ function drawTowerSprite(x,y,b){
   ctx.fillStyle="rgba(20,10,10,0.5)"; drawRoundRect(x-4,y-6,8,5,2,"rgba(20,10,10,0.5)");
   ctx.beginPath(); ctx.arc(x-4,y-7,3,0,Math.PI*2);
   ctx.fillStyle="rgba(255,255,255,0.3)"; ctx.fill();
-  const weaponColor = b.weapon==="kanone" ? "#3a3a42" : "#8a6a3a";
-  ctx.fillStyle = weaponColor; ctx.fillRect(x-3,y-19,6,11);
-  ctx.fillStyle = b.weapon==="kanone" ? "#6a6a75" : "#c9a06a"; ctx.fillRect(x-3,y-19,6,3);
+  if(b.weapon==="moerser"){
+    // Dicke, leicht schraeg nach oben zeigende Moerser-Roehre
+    ctx.save(); ctx.translate(x,y-9); ctx.rotate(-0.35);
+    ctx.fillStyle="#2f4a34"; drawRoundRect(-5,-3,10,15,3,"#2f4a34");
+    ctx.fillStyle="#4a6f52"; ctx.fillRect(-5,-3,10,4);
+    ctx.strokeStyle="#1a2e1f"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(-5,-3,10,15,3); ctx.stroke();
+    ctx.restore();
+  } else {
+    const weaponColor = b.weapon==="kanone" ? "#3a3a42" : "#8a6a3a";
+    ctx.fillStyle = weaponColor; ctx.fillRect(x-3,y-19,6,11);
+    ctx.fillStyle = b.weapon==="kanone" ? "#6a6a75" : "#c9a06a"; ctx.fillRect(x-3,y-19,6,3);
+  }
   drawLevelPips(x, y+18, b.level);
   drawHpBar(x, y+22, b.hp, maxHpFor("turm",b.level), 34);
 }
 
-function drawWallSprite(x,y,b){
+function drawWallSpriteWood(x,y,b){
   const s=25;
-  drawShadow(x,y+s-4,20,6);
   const grad = ctx.createLinearGradient(x,y-s,x,y+s);
   grad.addColorStop(0,"#9a6a45"); grad.addColorStop(1,"#7a4c2e");
   drawRoundRect(x-s,y-s,s*2,s*2,4,grad);
@@ -1060,10 +1128,39 @@ function drawWallSprite(x,y,b){
   }
   ctx.fillStyle="rgba(255,255,255,0.12)"; ctx.fillRect(x-s,y-s,s*2,4);
   ctx.fillStyle="rgba(0,0,0,0.28)"; ctx.fillRect(x-s,y+s-4,s*2,4);
-  // etwas Moos in den Ritzen
   ctx.fillStyle="rgba(90,140,50,0.25)";
   [[-s+6,y-2],[s-10,y+6]].forEach(([dx,dy])=>{ ctx.beginPath(); ctx.arc(x+dx,dy,3,0,Math.PI*2); ctx.fill(); });
   ctx.strokeStyle="#3f2814"; ctx.lineWidth=2; ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
+}
+
+function drawWallSpriteStone(x,y,b){
+  // Ab Level 3: verstaerkte Steinmauer statt Holzpalisade - sichtbare
+  // Belohnung fuers Investieren, kein neuer Mechanismus.
+  const s=25;
+  const grad = ctx.createLinearGradient(x,y-s,x,y+s);
+  grad.addColorStop(0,"#9aa3ac"); grad.addColorStop(1,"#6a7278");
+  drawRoundRect(x-s,y-s,s*2,s*2,4,grad);
+  ctx.strokeStyle="rgba(0,0,0,0.3)"; ctx.lineWidth=1.3;
+  const rows=4, rowH=(s*2)/rows;
+  for(let i=1;i<rows;i++){ const yy=y-s+i*rowH; ctx.beginPath(); ctx.moveTo(x-s+2,yy); ctx.lineTo(x+s-2,yy); ctx.stroke(); }
+  for(let i=0;i<rows;i++){
+    const yy0=y-s+i*rowH, yy1=yy0+rowH;
+    const offset=(i%2===0)?0:(s*2)/4;
+    for(let xx=x-s+offset; xx<x+s-1; xx+=(s*2)/2){ ctx.beginPath(); ctx.moveTo(xx,yy0+1.5); ctx.lineTo(xx,yy1-1.5); ctx.stroke(); }
+  }
+  ctx.fillStyle="rgba(255,255,255,0.18)"; ctx.fillRect(x-s,y-s,s*2,4);
+  ctx.fillStyle="rgba(0,0,0,0.3)"; ctx.fillRect(x-s,y+s-4,s*2,4);
+  // Eisenverstaerkung als Band
+  ctx.fillStyle="#4a4038"; ctx.fillRect(x-s,y-3,s*2,6);
+  ctx.strokeStyle="#2a241e"; ctx.lineWidth=1; ctx.strokeRect(x-s,y-3,s*2,6);
+  [-14,0,14].forEach(dx=>{ ctx.beginPath(); ctx.arc(x+dx,y,1.6,0,Math.PI*2); ctx.fillStyle="#8a8078"; ctx.fill(); });
+  ctx.strokeStyle="#2c333b"; ctx.lineWidth=2; ctx.strokeRect(x-s+1,y-s+1,s*2-2,s*2-2);
+}
+
+function drawWallSprite(x,y,b){
+  const s=25;
+  drawShadow(x,y+s-4,20,6);
+  if(b.level>=3) drawWallSpriteStone(x,y,b); else drawWallSpriteWood(x,y,b);
   drawLevelPips(x, y+18, b.level);
   drawHpBar(x, y+22, b.hp, maxHpFor("mauer",b.level), 34);
 }
@@ -1641,6 +1738,7 @@ function render(){
 
   drawAngreiferUnits(gridSize);
   drawRepairIndicator(gridSize);
+  drawPlayerSprite();
 
   projectiles.forEach(drawProjectile);
   enemies.forEach(drawEnemy);
@@ -1695,10 +1793,16 @@ function handleTap(wx,wy){
     return;
   }
 
-  // Wasser-Knoten treffen?
+  // Wasser-Knoten treffen? Der Spieler laeuft erst hin, sammelt nicht mehr
+  // sofort per Fingertipp - Rucksack-Kapazitaet macht das erst zur Reise.
   for(const n of state.nodes){
     const p = nodeWorldPos(n);
-    if(Math.hypot(wx-p.x,wy-p.y) < 26){ collectNode(n); return; }
+    if(Math.hypot(wx-p.x,wy-p.y) < 26){
+      if(n.amount<=0) return;
+      state.player.moveTarget = { x:p.x, y:p.y, nodeId:n.id };
+      save(); render();
+      return;
+    }
   }
 
   const c = Math.round(wx/CELL + c0);
@@ -1708,19 +1812,64 @@ function handleTap(wx,wy){
   openBuildMenu(c,r);
 }
 
-function collectNode(n){
-  if(n.amount<=0) return;
-  const def = WATER_NODE_DEFS.find(d=>d.id===n.id);
-  state.resources[def.type] = Math.min(storageCap(), state.resources[def.type]+n.amount);
-  n.amount = 0;
+function relocateNode(n){
   // an eine neue Stelle im Wasser versetzen, mit Abstand zu den anderen Knoten
   let tries=0, angle;
   do { angle = Math.random()*360; tries++; }
   while(tries<10 && state.nodes.some(o=>o!==n && Math.abs(((o.angle-angle+540)%360)-180)<35));
   n.angle = angle;
-  state.tutorialCollected = true;
-  checkTutorial();
-  save(); render();
+}
+
+const PLAYER_SPEED = 130;       // px/s - deutlich schneller als jeder Gegner
+const BACKPACK_CAPACITY = 40;   // Gesamt an Holz+Stein, die der Spieler gleichzeitig tragen kann
+const PLAYER_ARRIVE_RADIUS = 22;
+const BASE_DEPOSIT_RADIUS = 40;
+
+function backpackTotal(){ return state.player.backpack.holz + state.player.backpack.stein; }
+
+function updatePlayer(dt){
+  const pl = state.player;
+  if(pl.moveTarget){
+    const dx = pl.moveTarget.x-pl.x, dy = pl.moveTarget.y-pl.y;
+    const dist = Math.hypot(dx,dy);
+    if(dist>PLAYER_ARRIVE_RADIUS){
+      const ang = Math.atan2(dy,dx);
+      pl.x += Math.cos(ang)*PLAYER_SPEED*dt;
+      pl.y += Math.sin(ang)*PLAYER_SPEED*dt;
+    } else {
+      if(pl.moveTarget.nodeId){
+        const node = state.nodes.find(n=>n.id===pl.moveTarget.nodeId);
+        if(node && node.amount>0){
+          const def = WATER_NODE_DEFS.find(d=>d.id===node.id);
+          const room = BACKPACK_CAPACITY - backpackTotal();
+          const take = Math.min(node.amount, room);
+          if(take>0){
+            pl.backpack[def.type] += take;
+            node.amount -= take;
+            if(node.amount<=0){
+              relocateNode(node);
+              state.tutorialCollected = true;
+              checkTutorial();
+            }
+          }
+        }
+      }
+      pl.moveTarget = null;
+      // Rucksack voll -> automatisch zur Base zurücklaufen, statt extra Klick
+      if(backpackTotal()>=BACKPACK_CAPACITY){
+        pl.moveTarget = { x:0, y:0, nodeId:null };
+      }
+      save();
+    }
+  }
+  // In der Naehe der Base automatisch entleeren
+  if(backpackTotal()>0 && Math.hypot(pl.x,pl.y)<=BASE_DEPOSIT_RADIUS){
+    const cap = storageCap();
+    state.resources.holz = Math.min(cap, state.resources.holz+pl.backpack.holz);
+    state.resources.stein = Math.min(cap, state.resources.stein+pl.backpack.stein);
+    pl.backpack.holz = 0; pl.backpack.stein = 0;
+    save();
+  }
 }
 
 function requiredTypeForCell(c,r){
@@ -2052,6 +2201,7 @@ function loop(now){
   updateRepairJob(dt);
   updateTraining(dt);
   updateHospital(dt);
+  updatePlayer(dt);
   render();
   requestAnimationFrame(loop);
 }
