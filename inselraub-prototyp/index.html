@@ -1011,11 +1011,18 @@ function openBuildMenu(c,r){
     const maxHp = maxHpFor(b.type, b.level);
     box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level} · HP ${Math.round(b.hp)}/${maxHp}</div>`;
 
+    // Gebaeude-Level darf das aktuelle Basis-Level nie ueberholen - sonst
+    // koennte man wieder einen einzelnen Turm isoliert hochpumpen, egal wie
+    // weit die Basis eigentlich ist (genau das Problem, das die Kanone
+    // vorher hatte).
+    const atLevelCap = b.level>=state.basisLevel;
     const upOpt = document.createElement("div");
-    upOpt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
-    upOpt.innerHTML = `<span>Verbessern auf Level ${b.level+1}<small>Repariert dabei auch komplett</small></span><b>${formatCost(cost)}</b>`;
+    upOpt.className = "buildopt" + (atLevelCap || !canAfford(cost) ? " disabled":"");
+    upOpt.innerHTML = atLevelCap
+      ? `<span>Verbessern auf Level ${b.level+1}<small>Erst ab Basis-Level ${b.level+1} möglich</small></span>`
+      : `<span>Verbessern auf Level ${b.level+1}<small>Repariert dabei auch komplett</small></span><b>${formatCost(cost)}</b>`;
     upOpt.addEventListener("click", ()=>{
-      if(canAfford(cost)){ payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level); save(); document.body.removeChild(overlay); render(); }
+      if(!atLevelCap && canAfford(cost)){ payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level); save(); document.body.removeChild(overlay); render(); }
     });
     box.appendChild(upOpt);
 
