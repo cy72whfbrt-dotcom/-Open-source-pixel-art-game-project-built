@@ -83,11 +83,18 @@ window.addEventListener("orientationchange", resizeCanvas);
 
 const WATER_RADIUS = 700;
 const UNLOCK_BATCH = 4;      // pro Basis-Level werden 4 neue Felder frei
-const GRID_GROW_AT_LEVEL = 7; // ab diesem Level waechst das Raster von 5x5 auf 7x7
+// Das Raster waechst in mehreren Stufen ueber die Basis-Level verteilt (bis
+// Level 20 angelegt), nicht nur einmal - je hoeher das Level, desto mehr
+// Platz zum Bauen und desto mehr Raum fuer echte Pfad-Entscheidungen.
+const GRID_GROWTH_STEPS = [ {level:1,size:5}, {level:7,size:7}, {level:14,size:9} ];
 
 // ================= Raster-Geometrie (Groesse haengt vom Basis-Level ab) =================
 
-function gridSizeForLevel(level){ return level>=GRID_GROW_AT_LEVEL ? 7 : 5; }
+function gridSizeForLevel(level){
+  let size = GRID_GROWTH_STEPS[0].size;
+  for(const step of GRID_GROWTH_STEPS){ if(level>=step.level) size = step.size; }
+  return size;
+}
 function centerOf(gridSize){ return Math.floor(gridSize/2); }
 
 // Alle Felder ausser der Mitte, sortiert nach Abstand zur Mitte (naeher zuerst) -
@@ -483,13 +490,18 @@ function spawnWave(){
     const type = ENEMY_TYPES[typeKey];
     const angle = Math.random()*Math.PI*2;
     const hp = Math.round(baseHp*type.hpMult);
-    enemies.push({
+    const enemy = {
       x: Math.cos(angle)*spawnRadius, y: Math.sin(angle)*spawnRadius,
       hp, maxHp: hp, typeKey, armor: type.armor, r: type.r,
       dmg: Math.round(baseDmg*type.dmgMult) || 1,
       speed: (24+Math.random()*8)*type.speedMult,
-      attackCd: 0
-    });
+      attackCd: 0,
+      pathIndex: 0
+    };
+    // Weg wird einmal beim Spawn berechnet (nicht live neu geplant, wenn
+    // spaeter noch etwas gebaut wird) - reicht fuer eine einzelne Welle.
+    enemy.path = buildEnemyPath(enemy, gridSize);
+    enemies.push(enemy);
   });
   waveActive = true;
 }
@@ -498,24 +510,66 @@ function waveLoot(){
   return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3 };
 }
 
-function findEnemyTarget(e){
-  const gridSize = gridSizeForLevel(state.basisLevel);
-  let best=null, bestDist=Infinity;
-  Object.entries(state.cellsByCoord).forEach(([key,slot])=>{
-    if(!slot.building || slot.building.hp<=0) return;
-    const [c,r] = key.split(",").map(Number);
-    const p = cellCenter(c,r,gridSize);
-    const d = Math.hypot(e.x-p.x,e.y-p.y);
-    if(d<bestDist){ bestDist=d; best={x:p.x,y:p.y,r:27,slot}; }
-  });
-  // Aktive Angreifer stehen an der Base und koennen von Laeufern als Ziel
-  // gewaehlt werden statt eines Gebaeudes - sie nehmen dann Schaden.
-  if(e.typeKey==="laeufer" && activeAngreiferCount()>0){
-    const d = Math.hypot(e.x,e.y);
-    if(d<bestDist){ bestDist=d; best={x:0,y:0,r:24,isAngreifer:true}; }
+// ================= Wegfindung: Gegner suchen sich einen Weg zur Base statt =================
+// ================= wahllos das naechste Gebaeude anzugreifen =================
+
+function gridCellBlocked(c,r,gridSize){
+  const slot = state.cellsByCoord[c+","+r];
+  return !!(slot && slot.building && slot.building.hp>0);
+}
+
+// Dijkstra ueber das Raster: freie Zellen kosten 1, Zellen mit einem noch
+// lebenden Gebaeude kosten deutlich mehr - der Pfad weicht Gebaeuden also
+// aus, WENN es einen freien Weg gibt, und zerstoert nur das, was wirklich
+// im Weg steht (der guenstigste Weg durch, falls kein Umweg existiert).
+function computeGridPath(gridSize, startC, startR){
+  const c0 = centerOf(gridSize);
+  const key = (c,r)=>c+","+r;
+  const dist = {}, prev = {}, visited = {};
+  const startKey = key(startC,startR);
+  dist[startKey] = 0;
+  const queue = [[0,startC,startR]];
+  while(queue.length){
+    let bi=0; for(let i=1;i<queue.length;i++){ if(queue[i][0]<queue[bi][0]) bi=i; }
+    const [d,c,r] = queue.splice(bi,1)[0];
+    const k = key(c,r);
+    if(visited[k]) continue;
+    visited[k] = true;
+    if(c===c0 && r===c0) break;
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dc,dr])=>{
+      const nc=c+dc, nr=r+dr;
+      if(nc<0||nc>=gridSize||nr<0||nr>=gridSize) return;
+      const nk = key(nc,nr);
+      if(visited[nk]) return;
+      const isBase = (nc===c0 && nr===c0);
+      const cost = (!isBase && gridCellBlocked(nc,nr,gridSize)) ? 40 : 1;
+      const nd = d+cost;
+      if(dist[nk]===undefined || nd<dist[nk]){ dist[nk]=nd; prev[nk]=k; queue.push([nd,nc,nr]); }
+    });
   }
-  if(best) return best;
-  return {x:0,y:0,r:29,isBase:true};
+  const endKey = key(c0,c0);
+  if(dist[endKey]===undefined) return null;
+  const path = []; let cur = endKey;
+  while(cur){ const [cc,rr]=cur.split(",").map(Number); path.unshift({c:cc,r:rr}); cur = prev[cur]; }
+  return path;
+}
+
+function nearestEdgeCell(x,y,gridSize){
+  let best=null, bestD=Infinity;
+  for(let c=0;c<gridSize;c++) for(let r=0;r<gridSize;r++){
+    if(c!==0 && c!==gridSize-1 && r!==0 && r!==gridSize-1) continue;
+    const p = cellCenter(c,r,gridSize);
+    const d = Math.hypot(x-p.x,y-p.y);
+    if(d<bestD){ bestD=d; best={c,r}; }
+  }
+  return best;
+}
+
+function buildEnemyPath(e, gridSize){
+  const edge = nearestEdgeCell(e.x,e.y,gridSize);
+  const raw = computeGridPath(gridSize, edge.c, edge.r);
+  if(!raw) return [];
+  return raw.map(({c,r})=>({c,r,...cellCenter(c,r,gridSize)}));
 }
 
 function damageRandomAngreifer(dmg){
@@ -550,14 +604,48 @@ function updateWave(dt){
 
   const gridSize = gridSizeForLevel(state.basisLevel);
 
+  const c0 = centerOf(gridSize);
   enemies.forEach(e=>{
-    const target = findEnemyTarget(e);
+    if(!e.path) e.path = [];
+    if(e.pathIndex===undefined) e.pathIndex = 0;
+
+    // Naechster Wegpunkt auf dem berechneten Pfad zur Base. Kein Pfad
+    // (Insel komplett zugebaut und unerreichbar) oder Pfad abgelaufen ->
+    // direkt auf die Base zuhalten als Rueckfallebene.
+    let waypoint = e.path[e.pathIndex];
+    if(!waypoint) waypoint = {c:c0, r:c0, x:0, y:0};
+
+    const isBaseCell = waypoint.c===c0 && waypoint.r===c0;
+    const slot = isBaseCell ? null : state.cellsByCoord[waypoint.c+","+waypoint.r];
+    const blockingBuilding = (slot && slot.building && slot.building.hp>0) ? slot.building : null;
+
+    let target;
+    // Aktive Angreifer stehen an der Base und fangen Laeufer ab, sobald sie
+    // in ihre Reichweite kommen - unabhaengig vom Wegpunkt, den der Laeufer
+    // gerade ansteuert.
+    if(e.typeKey==="laeufer" && activeAngreiferCount()>0 &&
+       Math.hypot(e.x,e.y) <= ANGREIFER_STATS.range){
+      target = {x:0,y:0,r:24,isAngreifer:true};
+    } else if(isBaseCell){
+      target = {x:0,y:0,r:29,isBase:true};
+    } else if(blockingBuilding){
+      // Dieses Gebaeude steht wirklich im Weg (guenstigster Pfad fuehrt
+      // durch seine Zelle) - nur DAS wird angegriffen, nicht alles auf der Insel.
+      target = {x:waypoint.x,y:waypoint.y,r:27,slot};
+    } else {
+      // Freies Durchgangsfeld auf dem Weg - hier wird nicht gekaempft,
+      // nur durchgelaufen.
+      target = {x:waypoint.x,y:waypoint.y,r:4,isWaypoint:true};
+    }
+
     const dist = Math.hypot(target.x-e.x, target.y-e.y);
     const stopDist = target.r+e.r+2;
     if(dist>stopDist){
       const ang = Math.atan2(target.y-e.y, target.x-e.x);
       e.x += Math.cos(ang)*e.speed*dt;
       e.y += Math.sin(ang)*e.speed*dt;
+    } else if(target.isWaypoint){
+      e.pathIndex++;
     } else {
       e.attackCd -= dt;
       if(e.attackCd<=0){
@@ -578,6 +666,7 @@ function updateWave(dt){
           damageRandomAngreifer(e.dmg);
         } else {
           target.slot.building.hp = Math.max(0, target.slot.building.hp-e.dmg);
+          if(target.slot.building.hp<=0) e.pathIndex++; // Weg ist jetzt frei -> weiter Richtung Base
         }
         save();
       }
@@ -1346,17 +1435,33 @@ function drawBaseSprite(x,y){
 function drawDestroyedOverlay(x,y){
   const s=25;
   ctx.save();
-  ctx.globalAlpha = 0.55;
-  ctx.fillStyle = "#15181c";
-  ctx.fillRect(x-s,y-s,s*2,s*2);
+  // Verkohlter Schutthaufen statt Gebaeude - kein Kreuz aus zwei Linien mehr.
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = "#1c1712";
+  ctx.beginPath(); ctx.ellipse(x,y+7,s*0.95,s*0.5,0,0,Math.PI*2); ctx.fill();
   ctx.globalAlpha = 1;
-  ctx.strokeStyle = "rgba(255,80,60,0.85)"; ctx.lineWidth=2.5; ctx.lineCap="round";
-  ctx.beginPath(); ctx.moveTo(x-14,y-14); ctx.lineTo(x+10,y+12); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(x+12,y-16); ctx.lineTo(x-8,y+14); ctx.stroke();
-  ctx.fillStyle="#3a2f28";
-  [[-10,10,5],[8,14,4],[4,-12,3]].forEach(([dx,dy,rr])=>{
+
+  // Unregelmaessige Trümmerbrocken (Balken/Steine), verstreut statt symmetrisch.
+  ctx.fillStyle = "#332822";
+  [[-12,3,7,-0.3],[7,7,6,0.55],[-2,-3,5,0.1],[13,-1,5,-0.45]].forEach(([dx,dy,rr,rot])=>{
+    ctx.save();
+    ctx.translate(x+dx,y+dy);
+    ctx.rotate(rot);
+    ctx.fillRect(-rr,-rr*0.5,rr*2,rr);
+    ctx.restore();
+  });
+
+  // Ein paar Glutreste zwischen dem Schutt.
+  ctx.fillStyle = "#ff8a3d"; ctx.globalAlpha = 0.85;
+  [[-6,-1,1.6],[9,4,1.3],[1,-6,1.2]].forEach(([dx,dy,rr])=>{
     ctx.beginPath(); ctx.arc(x+dx,y+dy,rr,0,Math.PI*2); ctx.fill();
   });
+  ctx.globalAlpha = 1;
+
+  // Duenner Rauch, der nach oben zieht.
+  ctx.strokeStyle = "rgba(190,190,190,0.4)"; ctx.lineWidth=3; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(x-4,y-6); ctx.quadraticCurveTo(x-11,y-18,x-4,y-30); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+6,y-4); ctx.quadraticCurveTo(x+13,y-16,x+6,y-28); ctx.stroke();
   ctx.restore();
 }
 
