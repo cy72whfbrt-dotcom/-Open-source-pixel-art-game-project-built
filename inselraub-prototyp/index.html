@@ -995,13 +995,14 @@ function drawShadow(x,y,rx,ry){
 }
 
 function drawWater(){
-  // Tiefenverlauf: helles Tuerkis nahe der Insel, dunkles Blau am Rand
+  // Tiefenverlauf: gedecktes Stahlblau/Tuerkis statt heller Candy-Farben -
+  // wirkt ruhiger und ernster statt wie ein Kinderspiel-Pool.
   const grad = ctx.createRadialGradient(0,0,WATER_RADIUS*0.12, 0,0,WATER_RADIUS*1.2);
-  grad.addColorStop(0,    "#2f96a8");
-  grad.addColorStop(0.22, "#1d7a92");
-  grad.addColorStop(0.5,  "#155f7d");
-  grad.addColorStop(0.78, "#0e4460");
-  grad.addColorStop(1,    "#082c40");
+  grad.addColorStop(0,    "#1f6e7c");
+  grad.addColorStop(0.22, "#155a72");
+  grad.addColorStop(0.5,  "#0f4560");
+  grad.addColorStop(0.78, "#0a3048");
+  grad.addColorStop(1,    "#051c2c");
   ctx.fillStyle = grad;
   ctx.fillRect(-4000,-4000,8000,8000);
 
@@ -1099,10 +1100,12 @@ function drawHafen(gridSize){
 }
 
 function drawGrassTile(x,y,c,r){
+  // Gedecktes Waldgruen statt hellem Candy-Gruen - wirkt weniger nach
+  // Kinder-App und mehr nach ernsthafter Strategie-/RPG-Insel.
   const checker = (c+r)%2===0;
   const grad = ctx.createLinearGradient(x,y-CELL/2,x,y+CELL/2);
-  if(checker){ grad.addColorStop(0,"#63b84b"); grad.addColorStop(1,"#4a9636"); }
-  else { grad.addColorStop(0,"#5aad42"); grad.addColorStop(1,"#438c30"); }
+  if(checker){ grad.addColorStop(0,"#4a8a3f"); grad.addColorStop(1,"#356b2c"); }
+  else { grad.addColorStop(0,"#437f38"); grad.addColorStop(1,"#2f6226"); }
   ctx.fillStyle = grad;
   ctx.fillRect(x-CELL/2, y-CELL/2, CELL, CELL);
 
@@ -1152,11 +1155,11 @@ function drawGrassTile(x,y,c,r){
 function drawPlusButton(x,y){
   drawShadow(x,y+16,20,6);
   const grad = ctx.createLinearGradient(x,y-22,x,y+22);
-  grad.addColorStop(0,"rgba(255,255,255,0.22)"); grad.addColorStop(1,"rgba(255,255,255,0.08)");
-  drawRoundRect(x-22,y-22,44,44,12,grad);
-  ctx.strokeStyle="rgba(255,255,255,0.4)"; ctx.lineWidth=1.5;
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,12); ctx.stroke();
-  ctx.strokeStyle="#eafff0"; ctx.lineWidth=3.2; ctx.lineCap="round";
+  grad.addColorStop(0,"rgba(255,255,255,0.16)"); grad.addColorStop(1,"rgba(0,0,0,0.12)");
+  drawRoundRect(x-22,y-22,44,44,8,grad);
+  ctx.strokeStyle="rgba(255,255,255,0.32)"; ctx.lineWidth=1.5;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,8); ctx.stroke();
+  ctx.strokeStyle="rgba(230,255,235,0.9)"; ctx.lineWidth=3; ctx.lineCap="round";
   ctx.beginPath(); ctx.moveTo(x-8,y); ctx.lineTo(x+8,y); ctx.moveTo(x,y-8); ctx.lineTo(x,y+8); ctx.stroke();
   ctx.lineCap="butt";
 }
@@ -1164,14 +1167,14 @@ function drawPlusButton(x,y){
 function drawLockedButton(x,y){
   drawShadow(x,y+16,20,6);
   const grad = ctx.createLinearGradient(x,y-22,x,y+22);
-  grad.addColorStop(0,"rgba(20,30,25,0.30)"); grad.addColorStop(1,"rgba(20,30,25,0.15)");
-  drawRoundRect(x-22,y-22,44,44,12,grad);
-  ctx.strokeStyle="rgba(255,255,255,0.18)"; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,12); ctx.stroke();
+  grad.addColorStop(0,"rgba(10,16,14,0.38)"); grad.addColorStop(1,"rgba(10,16,14,0.2)");
+  drawRoundRect(x-22,y-22,44,44,8,grad);
+  ctx.strokeStyle="rgba(255,255,255,0.14)"; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-22,y-22,44,44,8); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.strokeStyle="rgba(220,228,238,0.65)"; ctx.lineWidth=2.2;
+  ctx.strokeStyle="rgba(200,208,218,0.55)"; ctx.lineWidth=2.2;
   ctx.beginPath(); ctx.arc(x,y-3,5,Math.PI,0); ctx.stroke();
-  drawRoundRect(x-7,y-3,14,10,2,"rgba(220,228,238,0.65)");
+  drawRoundRect(x-7,y-3,14,10,2,"rgba(200,208,218,0.55)");
 }
 
 function drawLevelPips(x,y,level){
@@ -1228,11 +1231,11 @@ function drawPlayerSprite(){
   // Beine
   ctx.fillStyle="#3a3f5a";
   ctx.fillRect(x-5,y+6,4,9); ctx.fillRect(x+1,y+6,4,9);
-  // Koerper
+  // Koerper - gedecktes Stahlblau statt Comic-Hellblau
   const bodyGrad = ctx.createLinearGradient(x,y-8,x,y+8);
-  bodyGrad.addColorStop(0,"#5a8fd6"); bodyGrad.addColorStop(1,"#3f6aad");
+  bodyGrad.addColorStop(0,"#3f6699"); bodyGrad.addColorStop(1,"#2a4a73");
   drawRoundRect(x-8,y-8,16,15,4,bodyGrad);
-  ctx.strokeStyle="#2a4a7a"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-8,y-8,16,15,4); ctx.stroke();
+  ctx.strokeStyle="#1c3350"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-8,y-8,16,15,4); ctx.stroke();
   // Kopf
   ctx.beginPath(); ctx.arc(x,y-13,7,0,Math.PI*2);
   ctx.fillStyle="#e8b48a"; ctx.fill();
@@ -1379,12 +1382,12 @@ function drawTowerSprite(x,y,b){
   ctx.fillStyle="#4a5560";
   const cz=6.5;
   [-s+2, -s+2+cz*2.2, s-cz*3.2, s-cz-2].forEach(dx=>{ ctx.fillRect(x+dx,y-s-3,cz,7); });
-  // Wach-Kuppel mit Verlauf
+  // Wach-Kuppel mit Verlauf - gedecktes Rostrot statt Comic-Rot
   const domeGrad = ctx.createRadialGradient(x-4,y-8,2,x,y-3,14);
-  domeGrad.addColorStop(0,"#e07070"); domeGrad.addColorStop(1,"#a83a3a");
+  domeGrad.addColorStop(0,"#a44a44"); domeGrad.addColorStop(1,"#6e2c28");
   ctx.beginPath(); ctx.arc(x,y-3,13,0,Math.PI*2);
   ctx.fillStyle=domeGrad; ctx.fill();
-  ctx.strokeStyle="#7a2424"; ctx.lineWidth=2; ctx.stroke();
+  ctx.strokeStyle="#421a18"; ctx.lineWidth=2; ctx.stroke();
   // Sichtschlitz
   ctx.fillStyle="rgba(20,10,10,0.5)"; drawRoundRect(x-4,y-6,8,5,2,"rgba(20,10,10,0.5)");
   ctx.beginPath(); ctx.arc(x-4,y-7,3,0,Math.PI*2);
@@ -1489,15 +1492,15 @@ function drawKrankenhausSprite(x,y,b){
   drawRoundRect(x-s,y-s,s*2,s*2,6,grad);
   ctx.strokeStyle="#9a9890"; ctx.lineWidth=2;
   ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s+1,y-s+1,s*2-2,s*2-2,5); ctx.stroke();
-  // Flaches Dach
-  ctx.fillStyle="#c94a4a"; ctx.fillRect(x-s-1,y-s-4,s*2+2,5);
-  ctx.strokeStyle="#7a2424"; ctx.lineWidth=1.2; ctx.strokeRect(x-s-1,y-s-4,s*2+2,5);
+  // Flaches Dach - gedecktes Rot statt Comic-Rot
+  ctx.fillStyle="#9c3d3d"; ctx.fillRect(x-s-1,y-s-4,s*2+2,5);
+  ctx.strokeStyle="#5c2222"; ctx.lineWidth=1.2; ctx.strokeRect(x-s-1,y-s-4,s*2+2,5);
   // Rotes Kreuz mit leichtem Schatten
   ctx.fillStyle="rgba(0,0,0,0.12)"; ctx.fillRect(x-2,y-11,7,17); ctx.fillRect(x-10,y-4,22,7);
-  ctx.fillStyle="#d94a4a";
+  ctx.fillStyle="#a83e3e";
   ctx.fillRect(x-3,y-13,6,16);
   ctx.fillRect(x-11,y-5,22,6);
-  ctx.strokeStyle="#8a2a2a"; ctx.lineWidth=1; ctx.strokeRect(x-3,y-13,6,16); ctx.strokeRect(x-11,y-5,22,6);
+  ctx.strokeStyle="#652424"; ctx.lineWidth=1; ctx.strokeRect(x-3,y-13,6,16); ctx.strokeRect(x-11,y-5,22,6);
   // Fenster links/rechts
   ["#bfe0ec"].forEach(col=>{
     drawRoundRect(x-19,y+2,6,7,1.5,col); ctx.strokeStyle="#9a9890"; ctx.strokeRect(x-19,y+2,6,7);
@@ -1566,8 +1569,8 @@ function drawHandelspostenSprite(x,y,b){
   drawRoundRect(x-s,y-s+6,s*2,s*2-6,5,grad);
   ctx.strokeStyle="#4a341c"; ctx.lineWidth=2;
   ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s+1,y-s+7,s*2-2,s*2-7,4); ctx.stroke();
-  // Gestreiftes Markisen-Dach
-  ["#d95a5a","#eaeaea"].forEach((col,i)=>{
+  // Gestreiftes Markisen-Dach - gedecktes Rot/Beige statt Comic-Zirkuszelt
+  ["#9c4a3f","#d9cfb8"].forEach((col,i)=>{
     ctx.fillStyle=col;
     for(let k=0;k<4;k++){
       if((k+i)%2===0) ctx.fillRect(x-s+k*(s/2), y-s-6, s/2, 8);
@@ -1575,7 +1578,7 @@ function drawHandelspostenSprite(x,y,b){
   });
   ctx.strokeStyle="#4a341c"; ctx.lineWidth=1; ctx.strokeRect(x-s,y-s-6,s*2,8);
   // Zickzack-Volant unter der Markise
-  ctx.fillStyle="#c94a4a";
+  ctx.fillStyle="#9c4a3f";
   for(let k=0;k<6;k++){
     ctx.beginPath(); ctx.moveTo(x-s+k*(s/3), y-s+2); ctx.lineTo(x-s+(k+0.5)*(s/3), y-s+7); ctx.lineTo(x-s+(k+1)*(s/3), y-s+2); ctx.closePath(); ctx.fill();
   }
