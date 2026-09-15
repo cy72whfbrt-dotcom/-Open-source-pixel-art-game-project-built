@@ -262,16 +262,33 @@ function tutorialProgressText(){
 }
 
 // Naechstes Tutorial-Ziel: welches Feld/Element muss der Spieler als Naechstes antippen?
+function nodeForResource(resType){
+  return state.nodes
+    .filter(n=>WATER_NODE_DEFS.find(d=>d.id===n.id).type===resType)
+    .sort((a,b)=>b.amount-a.amount)[0];
+}
+
+// Wenn das naechste Pflichtgebaeude gerade nicht bezahlbar ist, zeigt die
+// Markierung stattdessen auf den Rohstoff, der noch fehlt - bis es reicht.
+function targetForBuilding(type, c, r, label){
+  const cost = BUILDABLE_TYPES[type].cost;
+  if(canAfford(cost)) return {kind:"cell", c, r, label};
+  const missingHolz = Math.max(0, cost.holz-state.resources.holz);
+  const missingStein = Math.max(0, cost.stein-state.resources.stein);
+  const resType = missingStein>missingHolz ? "stein" : "holz";
+  return {kind:"node", node:nodeForResource(resType), label:(resType==="holz"?"Holz":"Stein")+" sammeln"};
+}
+
 function nextTutorialTarget(){
   if(state.tutorialDone) return null;
   const t = tutorialTargets();
   for(const [c,r] of t.towers){
     const slot = state.cellsByCoord[c+","+r];
-    if(!(slot && slot.building && slot.building.type==="turm")) return {kind:"cell", c, r, label:"Turm bauen"};
+    if(!(slot && slot.building && slot.building.type==="turm")) return targetForBuilding("turm", c, r, "Turm bauen");
   }
   for(const [c,r] of t.walls){
     const slot = state.cellsByCoord[c+","+r];
-    if(!(slot && slot.building && slot.building.type==="mauer")) return {kind:"cell", c, r, label:"Mauer bauen"};
+    if(!(slot && slot.building && slot.building.type==="mauer")) return targetForBuilding("mauer", c, r, "Mauer bauen");
   }
   if(!state.tutorialCollected) return {kind:"node", label:"Rohstoffe sammeln"};
   return null;
@@ -831,7 +848,7 @@ function render(){
     let tp;
     if(tut.kind==="cell") tp = cellCenter(tut.c,tut.r,gridSize);
     else {
-      const n = state.nodes.find(x=>x.amount>0) || state.nodes[0];
+      const n = tut.node || state.nodes.find(x=>x.amount>0) || state.nodes[0];
       tp = nodeWorldPos(n);
     }
     drawTutorialHighlight(tp.x, tp.y, tut.label);
