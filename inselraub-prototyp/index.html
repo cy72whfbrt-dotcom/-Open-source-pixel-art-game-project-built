@@ -96,7 +96,8 @@ const WATER_NODE_DEFS = [
   { id:"stein1", type:"stein", angle:120, capacity:16, regenMs:2200 },
   { id:"stein2", type:"stein", angle:305, capacity:16, regenMs:2200 }
 ];
-const NODE_RADIUS_WORLD = 220;
+const NODE_WATER_MARGIN = 65; // Abstand der Ressourcen-Punkte zum Rastrand, immer im Wasser
+function gridHalfExtent(gridSize){ return centerOf(gridSize)*CELL + CELL/2; }
 
 function defaultState(){
   return {
@@ -200,8 +201,9 @@ setInterval(()=>{
 }, 900);
 
 function nodeWorldPos(def){
+  const radius = gridHalfExtent(gridSizeForLevel(state.basisLevel)) + NODE_WATER_MARGIN;
   const rad = def.angle*Math.PI/180;
-  return { x: Math.cos(rad)*NODE_RADIUS_WORLD, y: Math.sin(rad)*NODE_RADIUS_WORLD };
+  return { x: Math.cos(rad)*radius, y: Math.sin(rad)*radius };
 }
 
 // ================= Kamera (Zoom & Verschieben) =================
