@@ -84,7 +84,7 @@ const CELLS = NEIGHBOR_CELLS.concat(OUTER_CELLS);
 
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v2";
+const SAVE_KEY = "basis_raster_proto_v3";
 
 function defaultState(){
   return {
@@ -103,10 +103,16 @@ function save(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } 
 function unlockCost(i){ return 30 + i*18; }
 
 const BUILDABLE_TYPES = {
-  turm:  { name:"Turm",  desc:"Verteidigungsturm, greift Angreifer an.", baseCost:40, icon:"⚔", color:"#c94a4a" },
-  mauer: { name:"Mauer", desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", baseCost:15, icon:"▮", color:"#8a5a3a" }
+  turm:  { name:"Turm",  desc:"Verteidigungsturm, greift Angreifer an.", baseCost:40, icon:"⚔", color:"#c94a4a", baseHp:100, hpPerLevel:25 },
+  mauer: { name:"Mauer", desc:"Blockiert den Weg, hat aber selbst keinen Angriff.", baseCost:15, icon:"▮", color:"#8a5a3a", baseHp:150, hpPerLevel:35 }
 };
 function upgradeCost(type, level){ return Math.round(BUILDABLE_TYPES[type].baseCost * Math.pow(1.5, level)); }
+function hpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp + (level-1)*d.hpPerLevel; }
+
+const WEAPONS = {
+  bogen:  { name:"Bogen",  desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
+  kanone: { name:"Kanone", desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 }
+};
 
 // ================= Rendern =================
 
@@ -139,8 +145,11 @@ function render(){
       const def = BUILDABLE_TYPES[slot.building.type];
       drawRoundRect(p.x-26,p.y-26,52,52,8,def.color);
       ctx.fillStyle="#1a0d0d"; ctx.font="bold 19px sans-serif"; ctx.textAlign="center";
-      ctx.fillText(def.icon, p.x, p.y+6);
-      ctx.font="9px sans-serif"; ctx.fillText("Lv"+slot.building.level, p.x, p.y+21);
+      ctx.fillText(def.icon, p.x, p.y+3);
+      ctx.font="9px sans-serif"; ctx.fillText("Lv"+slot.building.level, p.x, p.y+16);
+      const barW=40, hp=hpFor(slot.building.type, slot.building.level);
+      ctx.fillStyle="#000"; ctx.fillRect(p.x-barW/2, p.y+20, barW, 4);
+      ctx.fillStyle="#6ad46a"; ctx.fillRect(p.x-barW/2, p.y+20, barW, 4);
     } else if(!slot.unlocked){
       ctx.strokeStyle="#3a5570"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
       ctx.strokeRect(p.x-24,p.y-24,48,48); ctx.setLineDash([]);
@@ -200,16 +209,40 @@ function openBuildMenu(i){
     });
     box.appendChild(opt);
   } else if(slot.building){
-    const def = BUILDABLE_TYPES[slot.building.type];
-    const cost = upgradeCost(slot.building.type, slot.building.level);
-    box.innerHTML = `<h3>${def.name} aufwerten</h3><div class="hint2">Level ${slot.building.level} → ${slot.building.level+1}</div>`;
-    const opt = document.createElement("div");
-    opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
-    opt.innerHTML = `<span>Aufwerten</span><b>${cost}g</b>`;
-    opt.addEventListener("click", ()=>{
-      if(state.resources>=cost){ state.resources-=cost; slot.building.level++; save(); document.body.removeChild(overlay); render(); }
+    const b = slot.building;
+    const def = BUILDABLE_TYPES[b.type];
+    const hp = hpFor(b.type, b.level);
+    const cost = upgradeCost(b.type, b.level);
+    box.innerHTML = `<h3>${def.name}</h3><div class="hint2">Level ${b.level} · HP ${hp}/${hp}</div>`;
+
+    const upOpt = document.createElement("div");
+    upOpt.className = "buildopt" + (state.resources<cost ? " disabled":"");
+    upOpt.innerHTML = `<span>Verbessern auf Level ${b.level+1}<small>Erhöht HP auf ${hpFor(b.type,b.level+1)}</small></span><b>${cost}g</b>`;
+    upOpt.addEventListener("click", ()=>{
+      if(state.resources>=cost){ state.resources-=cost; b.level++; save(); document.body.removeChild(overlay); render(); }
     });
-    box.appendChild(opt);
+    box.appendChild(upOpt);
+
+    if(b.type==="turm"){
+      const wHead = document.createElement("div");
+      wHead.className = "hint2"; wHead.style.marginTop = "6px"; wHead.textContent = "Waffe auswählen:";
+      box.appendChild(wHead);
+
+      Object.entries(WEAPONS).forEach(([key,w])=>{
+        const unlocked = b.level >= w.unlockLevel;
+        const selected = b.weapon === key;
+        const wOpt = document.createElement("div");
+        wOpt.className = "buildopt" + (!unlocked ? " disabled" : "");
+        wOpt.style.border = selected ? "1px solid #7aa2f7" : "";
+        wOpt.innerHTML = `<span>${w.name}${selected ? " (aktiv)" : ""}<small>${unlocked ? w.desc : "Verfügbar ab Level "+w.unlockLevel}</small></span>`;
+        if(unlocked && !selected){
+          wOpt.addEventListener("click", ()=>{
+            b.weapon = key; save(); document.body.removeChild(overlay); render();
+          });
+        }
+        box.appendChild(wOpt);
+      });
+    }
   } else {
     box.innerHTML = `<h3>Feld bebauen</h3>`;
     Object.entries(BUILDABLE_TYPES).forEach(([type,def])=>{
@@ -218,7 +251,8 @@ function openBuildMenu(i){
       opt.innerHTML = `<span>${def.name}<small>${def.desc}</small></span><b>${def.baseCost}g</b>`;
       opt.addEventListener("click", ()=>{
         if(state.resources>=def.baseCost){
-          state.resources-=def.baseCost; slot.building={type,level:1};
+          state.resources-=def.baseCost;
+          slot.building = type==="turm" ? {type,level:1,weapon:"bogen"} : {type,level:1};
           save(); document.body.removeChild(overlay); render();
         }
       });
