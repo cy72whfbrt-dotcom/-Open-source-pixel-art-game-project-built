@@ -88,7 +88,12 @@ function cellCenter(c,r,gridSize){ const c0=centerOf(gridSize); return { x:(c-c0
 
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v6";
+const SAVE_KEY = "basis_raster_proto_v7";
+const TUTORIAL_START_UNLOCK = 8; // das ganze 3x3-Feld um die Base ist von Anfang an frei
+const MIN_WAVE_GAP = 30; // Sekunden Mindestabstand zwischen zwei Wellen
+// Die 8 Nachbarfelder: 4 gerade (Turm-Plaetze im Tutorial), 4 diagonal (Mauer-Plaetze)
+const TUTORIAL_TOWER_IDX = [1,3,4,6];
+const TUTORIAL_WALL_IDX  = [0,2,5,7];
 
 const WATER_NODE_DEFS = [
   { id:"holz1", type:"holz", angle:35,  capacity:20, regenMs:1600 },
@@ -104,9 +109,12 @@ function defaultState(){
     resources: { holz: 60, stein: 30 },
     basisLevel: 1,
     baseHp: 100,
-    waveTimer: 25,
+    waveTimer: 15,
     cellsByCoord: {},
-    nodes: WATER_NODE_DEFS.map(n=>({ id:n.id, amount:n.capacity, angle:n.angle }))
+    nodes: WATER_NODE_DEFS.map(n=>({ id:n.id, amount:n.capacity, angle:n.angle })),
+    tutorialDone: false,
+    tutorialIntroShown: false,
+    tutorialCollected: false
   };
 }
 let state = load();
@@ -154,10 +162,12 @@ function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,lev
 
 // ================= Basis-Level: schaltet Felder frei, laesst das Raster wachsen =================
 
+function unlockCountForLevel(level){ return TUTORIAL_START_UNLOCK + (level-1)*UNLOCK_BATCH; }
+
 function applyUnlocksForCurrentLevel(){
   const gridSize = gridSizeForLevel(state.basisLevel);
   const list = cellList(gridSize);
-  const unlockCount = Math.min(state.basisLevel*UNLOCK_BATCH, list.length);
+  const unlockCount = Math.min(unlockCountForLevel(state.basisLevel), list.length);
   list.forEach(([c,r],i)=>{
     const key=c+","+r;
     if(!state.cellsByCoord[key]) state.cellsByCoord[key]={unlocked:false,building:null};
@@ -190,11 +200,51 @@ function upgradeBasis(){
 function nextLevelDescription(){
   const gridSize = gridSizeForLevel(state.basisLevel);
   const list = cellList(gridSize);
-  const currentUnlocked = Math.min(state.basisLevel*UNLOCK_BATCH, list.length);
+  const currentUnlocked = Math.min(unlockCountForLevel(state.basisLevel), list.length);
   const newSize = gridSizeForLevel(state.basisLevel+1);
   if(newSize>gridSize) return "Vergrößert das Raster auf "+newSize+"x"+newSize+"!";
-  const nextUnlocked = Math.min((state.basisLevel+1)*UNLOCK_BATCH, list.length);
+  const nextUnlocked = Math.min(unlockCountForLevel(state.basisLevel+1), list.length);
   return "+"+(nextUnlocked-currentUnlocked)+" neue Bauplätze";
+}
+
+// ================= Tutorial: erste Verteidigung vor der ersten Welle =================
+
+function tutorialTargets(){
+  const list = cellList(gridSizeForLevel(state.basisLevel));
+  return {
+    towers: TUTORIAL_TOWER_IDX.map(i=>list[i]),
+    walls: TUTORIAL_WALL_IDX.map(i=>list[i])
+  };
+}
+
+function checkTutorial(){
+  if(state.tutorialDone) return;
+  const t = tutorialTargets();
+  const towersOk = t.towers.every(([c,r])=>{
+    const slot = state.cellsByCoord[c+","+r];
+    return slot && slot.building && slot.building.type==="turm";
+  });
+  const wallsOk = t.walls.every(([c,r])=>{
+    const slot = state.cellsByCoord[c+","+r];
+    return slot && slot.building && slot.building.type==="mauer";
+  });
+  if(towersOk && wallsOk && state.tutorialCollected){
+    state.tutorialDone = true;
+    state.waveTimer = 15;
+    save();
+  }
+}
+
+function tutorialProgressText(){
+  const t = tutorialTargets();
+  const towersDone = t.towers.filter(([c,r])=>{
+    const slot = state.cellsByCoord[c+","+r]; return slot && slot.building && slot.building.type==="turm";
+  }).length;
+  const wallsDone = t.walls.filter(([c,r])=>{
+    const slot = state.cellsByCoord[c+","+r]; return slot && slot.building && slot.building.type==="mauer";
+  }).length;
+  const done = towersDone+wallsDone+(state.tutorialCollected?1:0);
+  return done+"/9";
 }
 
 // ================= Ressourcen-Knoten im Wasser =================
@@ -257,9 +307,15 @@ function findEnemyTarget(e){
 }
 
 function updateWave(dt){
+  if(!state.tutorialDone) return;
+
   if(enemies.length===0){
     state.waveTimer -= dt;
-    if(state.waveTimer<=0){ spawnWave(); save(); }
+    if(state.waveTimer<=0){
+      spawnWave();
+      state.waveTimer = MIN_WAVE_GAP + Math.random()*15;
+      save();
+    }
   }
 
   const gridSize = gridSizeForLevel(state.basisLevel);
@@ -653,13 +709,21 @@ function drawInGameHud(){
     ctx.closePath(); ctx.fill();
   }, "Lv "+state.basisLevel);
 
-  const waveLabel = enemies.length>0 ? enemies.length+" Gegner" : Math.max(0,Math.ceil(state.waveTimer))+"s";
-  const chipW = 96;
-  drawChip(W/2-chipW/2, barY, chipW, enemies.length>0 ? "rgba(138,47,47,0.6)" : "rgba(10,16,22,0.55)", ()=>{
-    ctx.strokeStyle="#eee"; ctx.lineWidth=1.6;
-    ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-5); ctx.moveTo(0,0); ctx.lineTo(3,2); ctx.stroke();
-  }, waveLabel);
+  const chipW = 108;
+  if(!state.tutorialDone){
+    drawChip(W/2-chipW/2, barY, chipW, "rgba(74,140,60,0.6)", ()=>{
+      ctx.strokeStyle="#eee"; ctx.lineWidth=1.8; ctx.lineCap="round";
+      ctx.beginPath(); ctx.moveTo(-5,3); ctx.lineTo(-1,7); ctx.lineTo(6,-5); ctx.stroke();
+      ctx.lineCap="butt";
+    }, "Aufbau "+tutorialProgressText());
+  } else {
+    const waveLabel = enemies.length>0 ? enemies.length+" Gegner" : Math.max(0,Math.ceil(state.waveTimer))+"s";
+    drawChip(W/2-chipW/2, barY, chipW, enemies.length>0 ? "rgba(138,47,47,0.6)" : "rgba(10,16,22,0.55)", ()=>{
+      ctx.strokeStyle="#eee"; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-5); ctx.moveTo(0,0); ctx.lineTo(3,2); ctx.stroke();
+    }, waveLabel);
+  }
 }
 
 function render(){
@@ -748,6 +812,8 @@ function collectNode(n){
   do { angle = Math.random()*360; tries++; }
   while(tries<10 && state.nodes.some(o=>o!==n && Math.abs(((o.angle-angle+540)%360)-180)<35));
   n.angle = angle;
+  state.tutorialCollected = true;
+  checkTutorial();
   save(); render();
 }
 
@@ -845,6 +911,7 @@ function openBuildMenu(c,r){
           payCost(def.cost);
           const hp = maxHpFor(type,1);
           slot.building = type==="turm" ? {type,level:1,weapon:"bogen",hp} : {type,level:1,hp};
+          checkTutorial();
           save(); document.body.removeChild(overlay); render();
         }
       });
@@ -863,6 +930,33 @@ function addCloseBtn(box, overlay){
   close.addEventListener("click", ()=> document.body.removeChild(overlay));
   box.appendChild(close);
 }
+
+function showIntroIfNeeded(){
+  if(state.tutorialIntroShown) return;
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>Willkommen auf deiner Insel</h3>
+    <div class="hint2">
+      Sammle zuerst Holz &amp; Stein aus den Punkten im Wasser.<br><br>
+      Baue dann auf den 4 geraden Feldern um deine Base Türme, und auf den 4 Ecken dazwischen Mauern -
+      so ist deine Base rundum geschützt.<br><br>
+      Erst wenn das steht, kommt die erste Gegnerwelle.
+    </div>`;
+  const opt = document.createElement("div");
+  opt.className = "buildopt"; opt.style.justifyContent="center";
+  opt.textContent = "Los geht's";
+  opt.addEventListener("click", ()=>{
+    state.tutorialIntroShown = true;
+    save();
+    document.body.removeChild(overlay);
+  });
+  box.appendChild(opt);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+showIntroIfNeeded();
 
 let lastT = performance.now();
 function loop(now){
