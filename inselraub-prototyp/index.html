@@ -127,9 +127,11 @@ function cellCenter(c,r,gridSize){ const c0=centerOf(gridSize); return { x:(c-c0
 
 // ================= Zustand =================
 
-const SAVE_KEY = "basis_raster_proto_v11";
+const SAVE_KEY = "basis_raster_proto_v12";
 const TUTORIAL_START_UNLOCK = 8; // das ganze 3x3-Feld um die Base ist von Anfang an frei
 const MIN_WAVE_GAP = 30; // Sekunden Mindestabstand zwischen zwei Wellen
+const PLAYER_MAX_HP = 60;
+const HAFEN_UNLOCK_LEVEL = 7;
 // Die 8 Nachbarfelder: 4 gerade (Turm-Plaetze im Tutorial), 4 diagonal (Mauer-Plaetze)
 const TUTORIAL_TOWER_IDX = [1,3,4,6];
 const TUTORIAL_WALL_IDX  = [0,2,5,7];
@@ -161,7 +163,7 @@ function defaultState(){
     npc: { reparaturCount: 0, angreifer: [], training: null },
     repairJob: null,
     nextWaveComposition: null,
-    player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null }
+    player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0 }
   };
 }
 let state = load();
@@ -597,8 +599,15 @@ function damageRandomAngreifer(dmg){
   }
 }
 
+const PLAYER_AGGRO_RADIUS = 90; // Gegner in dieser Naehe lassen kurz von ihrem Weg ab und greifen den Spieler an
+const PLAYER_COMBAT_RADIUS = 10;
+const PLAYER_INVULN_TIME = 1.5; // Sekunden Schonfrist nach einem K.o., damit man nicht sofort wieder erwischt wird
+
 function updateWave(dt){
   if(!state.tutorialDone) return;
+
+  const pl = state.player;
+  if(pl.invulnCd>0) pl.invulnCd = Math.max(0, pl.invulnCd-dt);
 
   if(enemies.length===0){
     // Wachturm rollt die naechste Zusammensetzung vorab aus, damit man sich
@@ -630,10 +639,13 @@ function updateWave(dt){
     const blockingBuilding = (slot && slot.building && slot.building.hp>0) ? slot.building : null;
 
     let target;
-    // Aktive Angreifer stehen an der Base und fangen Laeufer ab, sobald sie
-    // in ihre Reichweite kommen - unabhaengig vom Wegpunkt, den der Laeufer
-    // gerade ansteuert.
-    if(e.typeKey==="laeufer" && activeAngreiferCount()>0 &&
+    // Kommt der Spieler einem Gegner zu nahe, laesst der kurz von seinem Weg
+    // ab und greift ihn an - der Pfad selbst (pathIndex) bleibt dabei
+    // unveraendert, sobald der Spieler wieder ausser Reichweite ist, geht's
+    // exakt da weiter, wo der Gegner stehengeblieben ist.
+    if(pl.invulnCd<=0 && Math.hypot(pl.x-e.x,pl.y-e.y)<=PLAYER_AGGRO_RADIUS){
+      target = {x:pl.x,y:pl.y,r:PLAYER_COMBAT_RADIUS,isPlayer:true};
+    } else if(e.typeKey==="laeufer" && activeAngreiferCount()>0 &&
        Math.hypot(e.x,e.y) <= ANGREIFER_STATS.range){
       target = {x:0,y:0,r:24,isAngreifer:true};
     } else if(isBaseCell){
@@ -674,6 +686,19 @@ function updateWave(dt){
           }
         } else if(target.isAngreifer){
           damageRandomAngreifer(e.dmg);
+        } else if(target.isPlayer){
+          pl.hp = Math.max(0, pl.hp-e.dmg);
+          if(pl.hp<=0){
+            // K.o.: der komplette Rucksack-Inhalt geht verloren (echtes Risiko
+            // beim Sammeln waehrend einer Welle), Respawn an der Base mit
+            // kurzer Unverwundbarkeit statt sofortigem erneuten Treffer.
+            pl.backpack.holz = 0; pl.backpack.stein = 0;
+            pl.x = 0; pl.y = 0;
+            pl.hp = PLAYER_MAX_HP;
+            pl.invulnCd = PLAYER_INVULN_TIME;
+            pl.moveTarget = null;
+            knockoutFx = { startedAt: performance.now() };
+          }
         } else {
           target.slot.building.hp = Math.max(0, target.slot.building.hp-e.dmg);
           if(target.slot.building.hp<=0) e.pathIndex++; // Weg ist jetzt frei -> weiter Richtung Base
@@ -999,6 +1024,54 @@ function drawWater(){
   ctx.textAlign="left";
 }
 
+// ================= Hafen (Steg mit Bootsplaetzen, ab HAFEN_UNLOCK_LEVEL) =================
+// Struktur/Optik erstmal fertig - was Boot 1 konkret tut, ist noch offen
+// und wird erst gebaut, wenn das feststeht (kein Sammel-Loop ohne echte
+// Funktion dahinter).
+
+const HAFEN_BERTH_SIZE = CELL*3;   // Platz fuer ein 3x3-Boot
+const HAFEN_GAP = CELL*0.55;       // Steg-Stueck zwischen den beiden Plaetzen
+
+function hafenLayout(gridSize){
+  const x0 = -gridHalfExtent(gridSize); // linke Kante der Insel
+  const berthW = HAFEN_BERTH_SIZE, berthH = HAFEN_BERTH_SIZE;
+  const totalH = berthH*2 + HAFEN_GAP;
+  const topY = -totalH/2;
+  return {
+    walkway: { x: x0-CELL, y: -CELL*0.35, w: CELL, h: CELL*0.7 },
+    berthA: { x: x0-berthW, y: topY, w: berthW, h: berthH, locked:false },
+    berthB: { x: x0-berthW, y: topY+berthH+HAFEN_GAP, w: berthW, h: berthH, locked:true }
+  };
+}
+
+function drawHafen(gridSize){
+  if(state.basisLevel < HAFEN_UNLOCK_LEVEL) return;
+  const L = hafenLayout(gridSize);
+
+  drawRoundRect(L.walkway.x, L.walkway.y, L.walkway.w, L.walkway.h, 2, "#8a6a3f");
+
+  [L.berthA, L.berthB].forEach(b=>{
+    drawShadow(b.x+b.w/2, b.y+b.h+4, b.w*0.45, 6);
+    drawRoundRect(b.x, b.y, b.w, b.h, 6, b.locked ? "#5c5646" : "#8a6a3f");
+    ctx.strokeStyle = "rgba(0,0,0,0.28)"; ctx.lineWidth = 2;
+    ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(b.x,b.y,b.w,b.h,6); ctx.stroke();
+    // Planken-Linien quer zum Steg
+    ctx.strokeStyle = "rgba(0,0,0,0.15)"; ctx.lineWidth = 1.5;
+    for(let i=1;i<6;i++){
+      const ly = b.y + (b.h/6)*i;
+      ctx.beginPath(); ctx.moveTo(b.x+4, ly); ctx.lineTo(b.x+b.w-4, ly); ctx.stroke();
+    }
+    if(b.locked){
+      ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fillRect(b.x,b.y,b.w,b.h);
+      ctx.font = "18px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("🔒", b.x+b.w/2, b.y+b.h/2-2);
+      ctx.fillStyle = "#eee"; ctx.font = "600 10px sans-serif";
+      ctx.fillText("später", b.x+b.w/2, b.y+b.h/2+16);
+      ctx.textAlign = "left";
+    }
+  });
+}
+
 function drawGrassTile(x,y,c,r){
   const checker = (c+r)%2===0;
   const grad = ctx.createLinearGradient(x,y-CELL/2,x,y+CELL/2);
@@ -1111,6 +1184,10 @@ function drawPlayerSprite(){
     ctx.setLineDash([]);
   }
 
+  ctx.save();
+  // Kurzes Blinken waehrend der Unverwundbarkeit nach einem K.o.
+  if(pl.invulnCd>0) ctx.globalAlpha = (Math.floor(performance.now()/120)%2===0) ? 0.4 : 1;
+
   drawShadow(x,y+13,10,4);
   // Rucksack (hinter dem Koerper), Fuellstand als kleiner Ring
   const total = backpackTotal();
@@ -1150,6 +1227,11 @@ function drawPlayerSprite(){
   ctx.fillStyle = fillRatio>=1 ? "#e04a4a" : "#fff";
   ctx.fillText(capLabel, x, y-24);
   ctx.textAlign = "left";
+
+  ctx.restore();
+  // HP-Leiste (ausserhalb des Blink-Alpha, damit sie auch waehrend der
+  // Unverwundbarkeit klar lesbar bleibt)
+  drawHpBar(x, y-38, pl.hp, PLAYER_MAX_HP, 24);
 }
 
 function drawDepositFx(){
@@ -1167,6 +1249,23 @@ function drawDepositFx(){
   ctx.strokeText(label, 0, -40-rise);
   ctx.fillStyle = "#fff";
   ctx.fillText(label, 0, -40-rise);
+  ctx.restore();
+}
+
+function drawKnockoutFx(){
+  if(!knockoutFx) return;
+  const elapsed = performance.now()-knockoutFx.startedAt;
+  if(elapsed>=KNOCKOUT_FX_DURATION){ knockoutFx = null; return; }
+  const t = elapsed/KNOCKOUT_FX_DURATION;
+  const rise = t*30, alpha = 1-t;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = "bold 12px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+  ctx.strokeText("K.o.! Rucksack verloren", 0, -46-rise);
+  ctx.fillStyle = "#ff6a6a";
+  ctx.fillText("K.o.! Rucksack verloren", 0, -46-rise);
   ctx.restore();
 }
 
@@ -1898,6 +1997,8 @@ function render(){
   list.forEach(([c,r])=>{ const p=cellCenter(c,r,gridSize); drawGrassTile(p.x,p.y,c,r); });
   { const p = cellCenter(centerOf(gridSize),centerOf(gridSize),gridSize); drawGrassTile(p.x,p.y,0,0); }
 
+  drawHafen(gridSize);
+
   list.forEach(([c,r])=>{
     const p = cellCenter(c,r,gridSize);
     const slot = state.cellsByCoord[c+","+r] || {unlocked:false,building:null};
@@ -1923,6 +2024,7 @@ function render(){
   drawRepairIndicator(gridSize);
   drawPlayerSprite();
   drawDepositFx();
+  drawKnockoutFx();
 
   projectiles.forEach(drawProjectile);
   enemies.forEach(drawEnemy);
@@ -2044,6 +2146,10 @@ function collectNearbyNode(pl){
 // darum nicht in state/save, sondern nur lokal fuers Rendern.
 let depositFx = null;
 const DEPOSIT_FX_DURATION = 900;
+
+// Effekt beim K.o. des Spielers, ebenfalls rein visuell.
+let knockoutFx = null;
+const KNOCKOUT_FX_DURATION = 1400;
 
 function updatePlayer(dt){
   const pl = state.player;
