@@ -12,32 +12,16 @@
     min-height:100vh; user-select:none;
   }
   [hidden] { display:none !important; }
-  #app { width:100%; max-width:420px; display:flex; flex-direction:column; align-items:center; padding:10px; }
-  h1 { margin:4px 0 2px; font-size:17px; text-align:center; }
-  .sub { color:#8b96a5; font-size:11.5px; text-align:center; margin-bottom:8px; padding:0 6px; }
+  #app { width:100%; max-width:480px; display:flex; flex-direction:column; align-items:center; }
 
-  #hud { width:100%; max-width:380px; display:flex; justify-content:space-between; gap:6px; font-size:12.5px; margin-bottom:8px; flex-wrap:wrap; }
-  #hud .pill { background:#1c2b3a; border:1px solid #2e4358; padding:5px 9px; border-radius:11px; }
-  #hud .pill b { color:#f2c94c; }
-  #hud .pill.holz b { color:#c99a5a; }
-  #hud .pill.stein b { color:#b7c2cf; }
+  #stage { position:relative; width:100%; line-height:0; }
+  canvas { background:#123145; display:block; touch-action:none; width:100%; height:auto; }
 
-  #stage { position:relative; }
-  canvas { background:#123145; border:2px solid #2e4358; border-radius:8px; display:block; touch-action:none; }
-
-  #ctrlBar { width:100%; max-width:380px; display:flex; justify-content:space-between; align-items:center; margin-top:8px; }
-  #zoomCtrls { display:flex; gap:6px; }
-  #zoomCtrls button {
-    width:34px; height:34px; border-radius:8px; border:1px solid #3a5570; background:#1c2b3a;
-    color:#eee; font-size:16px; cursor:pointer;
+  #ctrlBar { position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:6px; }
+  #ctrlBar button {
+    width:34px; height:34px; border-radius:50%; border:1px solid rgba(255,255,255,0.18);
+    background:rgba(10,16,22,0.55); color:#eee; font-size:15px; cursor:pointer; line-height:1;
   }
-  #centerBtn {
-    border-radius:8px; border:1px solid #3a5570; background:#1c2b3a; color:#eee; font-size:11.5px; padding:8px 12px; cursor:pointer;
-  }
-
-  .legend { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:10px; font-size:11px; color:#9aa3b2; }
-  .legend span { display:flex; align-items:center; gap:4px; }
-  .swatch { width:12px; height:12px; border-radius:3px; display:inline-block; }
 
   .buildmenu {
     position:fixed; inset:0; background:rgba(0,0,0,.65); display:flex; align-items:center; justify-content:center; z-index:20;
@@ -56,32 +40,13 @@
 <body>
 
 <div id="app">
-  <h1>Basis-Raster-Prototyp</h1>
-  <div class="sub">Ziehen zum Verschieben, Scrollrad/Pinch zum Zoomen. Rohstoff-Punkte im Wasser antippen zum Einsammeln. Basis antippen, um neue Bauplätze freizuschalten.</div>
-
-  <div id="hud">
-    <div class="pill holz">Holz: <b id="hudHolz">0</b></div>
-    <div class="pill stein">Stein: <b id="hudStein">0</b></div>
-    <div class="pill">Basis-Lvl: <b id="hudLevel">1</b></div>
-  </div>
-
   <div id="stage">
-    <canvas id="c" width="380" height="380"></canvas>
-  </div>
-  <div id="ctrlBar">
-    <button id="centerBtn">Zentrieren</button>
-    <div id="zoomCtrls">
+    <canvas id="c" width="400" height="620"></canvas>
+    <div id="ctrlBar">
       <button id="zoomIn">+</button>
+      <button id="centerBtn">◎</button>
       <button id="zoomOut">−</button>
     </div>
-  </div>
-
-  <div class="legend">
-    <span><i class="swatch" style="background:#c94a4a"></i>Turm</span>
-    <span><i class="swatch" style="background:#8a5a3a"></i>Mauer</span>
-    <span><i class="swatch" style="background:#7a5a3a"></i>Holz (Wasser)</span>
-    <span><i class="swatch" style="background:#6b7280"></i>Stein (Wasser)</span>
-    <span><i class="swatch" style="background:#a5533a"></i>Base</span>
   </div>
 </div>
 
@@ -464,11 +429,46 @@ function drawRockNode(x,y,node,def){
   ctx.textAlign="left";
 }
 
-function render(){
-  document.getElementById("hudHolz").textContent = state.resources.holz;
-  document.getElementById("hudStein").textContent = state.resources.stein;
-  document.getElementById("hudLevel").textContent = state.basisLevel;
+function drawChip(x,y,w,fill,drawIcon,text){
+  drawRoundRect(x,y,w,30,15,fill);
+  ctx.save();
+  ctx.translate(x+18,y+15);
+  drawIcon();
+  ctx.restore();
+  ctx.fillStyle="#fff"; ctx.font="bold 13px sans-serif"; ctx.textAlign="left"; ctx.textBaseline="middle";
+  ctx.fillText(text, x+32, y+16);
+  ctx.textBaseline="alphabetic";
+}
 
+function drawInGameHud(){
+  ctx.fillStyle="rgba(8,14,20,0.0)";
+  const barY = 12;
+  drawChip(12, barY, 84, "rgba(10,16,22,0.55)", ()=>{
+    ["#8a5a34","#a06d3f"].forEach((col,i)=>{
+      ctx.fillStyle=col; drawRoundRect(-9,-3+i*5,18,4,2,col);
+    });
+  }, state.resources.holz);
+
+  drawChip(104, barY, 84, "rgba(10,16,22,0.55)", ()=>{
+    [[-4,2,6,"#9aa3ac"],[4,3,5,"#7c8590"],[0,-3,5,"#b3bcc4"]].forEach(([dx,dy,rr,col])=>{
+      ctx.beginPath(); ctx.arc(dx,dy,rr,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
+    });
+  }, state.resources.stein);
+
+  drawChip(W-96, barY, 84, "rgba(165,83,58,0.55)", ()=>{
+    ctx.fillStyle="#f2c94c";
+    ctx.beginPath();
+    for(let i=0;i<5;i++){
+      const ang=-Math.PI/2+i*(Math.PI*2/5);
+      const ang2=ang+Math.PI/5;
+      ctx.lineTo(Math.cos(ang)*7,Math.sin(ang)*7);
+      ctx.lineTo(Math.cos(ang2)*3,Math.sin(ang2)*3);
+    }
+    ctx.closePath(); ctx.fill();
+  }, "Lv "+state.basisLevel);
+}
+
+function render(){
   const gridSize = gridSizeForLevel(state.basisLevel);
   const list = cellList(gridSize);
 
@@ -509,6 +509,7 @@ function render(){
   }
 
   ctx.restore();
+  drawInGameHud();
 }
 
 // ================= Eingabe / Menues =================
