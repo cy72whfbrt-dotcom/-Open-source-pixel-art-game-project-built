@@ -8,14 +8,17 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html,body {
     margin:0; padding:0; background:#0d1620; color:#eee;
-    font-family: system-ui, sans-serif; display:flex; flex-direction:column; align-items:center;
-    min-height:100vh; user-select:none;
+    font-family: system-ui, sans-serif; user-select:none;
+    height:100%; overflow:hidden;
   }
   [hidden] { display:none !important; }
-  #app { width:100%; max-width:480px; display:flex; flex-direction:column; align-items:center; }
+  #app {
+    width:100%; max-width:480px; height:100vh; margin:0 auto;
+    display:flex; flex-direction:column; align-items:center;
+  }
 
-  #stage { position:relative; width:100%; line-height:0; }
-  canvas { background:#123145; display:block; touch-action:none; width:100%; height:auto; }
+  #stage { position:relative; width:100%; flex:1; min-height:0; }
+  canvas { background:#123145; display:block; touch-action:none; width:100%; height:100%; }
 
   #ctrlBar { position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:6px; }
   #ctrlBar button {
@@ -57,7 +60,18 @@
 const CELL = 62;
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
-const W = canvas.width, H = canvas.height;
+let W = 400, H = 620;
+
+function resizeCanvas(){
+  const rect = canvas.parentElement.getBoundingClientRect();
+  W = Math.max(1, Math.round(rect.width));
+  H = Math.max(1, Math.round(rect.height));
+  canvas.width = W;
+  canvas.height = H;
+  if(typeof render === "function") render();
+}
+window.addEventListener("resize", resizeCanvas);
+window.addEventListener("orientationchange", resizeCanvas);
 
 const WATER_RADIUS = 320;
 const UNLOCK_BATCH = 4;      // pro Basis-Level werden 4 neue Felder frei
@@ -245,6 +259,22 @@ function tutorialProgressText(){
   }).length;
   const done = towersDone+wallsDone+(state.tutorialCollected?1:0);
   return done+"/9";
+}
+
+// Naechstes Tutorial-Ziel: welches Feld/Element muss der Spieler als Naechstes antippen?
+function nextTutorialTarget(){
+  if(state.tutorialDone) return null;
+  const t = tutorialTargets();
+  for(const [c,r] of t.towers){
+    const slot = state.cellsByCoord[c+","+r];
+    if(!(slot && slot.building && slot.building.type==="turm")) return {kind:"cell", c, r, label:"Turm bauen"};
+  }
+  for(const [c,r] of t.walls){
+    const slot = state.cellsByCoord[c+","+r];
+    if(!(slot && slot.building && slot.building.type==="mauer")) return {kind:"cell", c, r, label:"Mauer bauen"};
+  }
+  if(!state.tutorialCollected) return {kind:"node", label:"Rohstoffe sammeln"};
+  return null;
 }
 
 // ================= Ressourcen-Knoten im Wasser =================
@@ -578,6 +608,23 @@ function drawProjectile(pr){
   ctx.fillStyle="#f2c94c"; ctx.fill();
 }
 
+function drawTutorialHighlight(x,y,label){
+  const t = performance.now()/1000;
+  const pulse = 0.5+0.5*Math.sin(t*3.2);
+  ctx.beginPath(); ctx.arc(x,y,31+pulse*5,0,Math.PI*2);
+  ctx.strokeStyle = `rgba(255,225,90,${0.55+pulse*0.35})`; ctx.lineWidth=3.5; ctx.stroke();
+  ctx.beginPath(); ctx.arc(x,y,31+pulse*5+7,0,Math.PI*2);
+  ctx.strokeStyle = `rgba(255,225,90,${0.18+pulse*0.15})`; ctx.lineWidth=2; ctx.stroke();
+  // Pfeil von oben
+  const ay = y-46-pulse*4;
+  ctx.fillStyle="#ffe15a";
+  ctx.beginPath(); ctx.moveTo(x,ay+14); ctx.lineTo(x-7,ay); ctx.lineTo(x+7,ay); ctx.closePath(); ctx.fill();
+  ctx.font="bold 12px sans-serif"; ctx.textAlign="center";
+  ctx.strokeStyle="rgba(0,0,0,0.6)"; ctx.lineWidth=3; ctx.strokeText(label, x, ay-4);
+  ctx.fillText(label, x, ay-4);
+  ctx.textAlign="left";
+}
+
 function drawTowerSprite(x,y,b){
   const s=25;
   drawShadow(x,y+s-4,20,6);
@@ -779,6 +826,17 @@ function render(){
   projectiles.forEach(drawProjectile);
   enemies.forEach(drawEnemy);
 
+  const tut = nextTutorialTarget();
+  if(tut){
+    let tp;
+    if(tut.kind==="cell") tp = cellCenter(tut.c,tut.r,gridSize);
+    else {
+      const n = state.nodes.find(x=>x.amount>0) || state.nodes[0];
+      tp = nodeWorldPos(n);
+    }
+    drawTutorialHighlight(tp.x, tp.y, tut.label);
+  }
+
   ctx.restore();
   drawInGameHud();
 }
@@ -817,20 +875,33 @@ function collectNode(n){
   save(); render();
 }
 
+function requiredTypeForCell(c,r){
+  if(state.tutorialDone) return null;
+  const t = tutorialTargets();
+  if(t.towers.some(([tc,tr])=>tc===c&&tr===r)) return "turm";
+  if(t.walls.some(([tc,tr])=>tc===c&&tr===r)) return "mauer";
+  return null;
+}
+
 function openBasisMenu(){
-  const cost = basisUpgradeCost(state.basisLevel);
   const overlay = document.createElement("div");
   overlay.className="buildmenu";
   const box = document.createElement("div");
   box.className="box";
   box.innerHTML = `<h3>Base</h3><div class="hint2">Level ${state.basisLevel}</div>`;
-  const opt = document.createElement("div");
-  opt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
-  opt.innerHTML = `<span>Verbessern auf Level ${state.basisLevel+1}<small>${nextLevelDescription()}</small></span><b>${formatCost(cost)}</b>`;
-  opt.addEventListener("click", ()=>{
-    if(upgradeBasis()){ document.body.removeChild(overlay); render(); }
-  });
-  box.appendChild(opt);
+
+  if(!state.tutorialDone){
+    box.innerHTML += `<div class="hint2">Baue zuerst deine Grundverteidigung fertig (${tutorialProgressText()}), bevor du die Base verbessern kannst.</div>`;
+  } else {
+    const cost = basisUpgradeCost(state.basisLevel);
+    const opt = document.createElement("div");
+    opt.className = "buildopt" + (!canAfford(cost) ? " disabled":"");
+    opt.innerHTML = `<span>Verbessern auf Level ${state.basisLevel+1}<small>${nextLevelDescription()}</small></span><b>${formatCost(cost)}</b>`;
+    opt.addEventListener("click", ()=>{
+      if(upgradeBasis()){ document.body.removeChild(overlay); render(); }
+    });
+    box.appendChild(opt);
+  }
   addCloseBtn(box, overlay);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
@@ -901,8 +972,11 @@ function openBuildMenu(c,r){
     });
     box.appendChild(sellOpt);
   } else {
-    box.innerHTML = `<h3>Feld bebauen</h3>`;
-    Object.entries(BUILDABLE_TYPES).forEach(([type,def])=>{
+    const required = requiredTypeForCell(c,r);
+    box.innerHTML = required
+      ? `<h3>${BUILDABLE_TYPES[required].name} bauen</h3><div class="hint2">Für die Grundverteidigung brauchst du hier ${required==="turm"?"einen Turm":"eine Mauer"}.</div>`
+      : `<h3>Feld bebauen</h3>`;
+    Object.entries(BUILDABLE_TYPES).filter(([type])=> !required || type===required).forEach(([type,def])=>{
       const opt = document.createElement("div");
       opt.className = "buildopt" + (!canAfford(def.cost) ? " disabled":"");
       opt.innerHTML = `<span>${def.name}<small>${def.desc}</small></span><b>${formatCost(def.cost)}</b>`;
@@ -939,10 +1013,9 @@ function showIntroIfNeeded(){
   box.className = "box";
   box.innerHTML = `<h3>Willkommen auf deiner Insel</h3>
     <div class="hint2">
-      Sammle zuerst Holz &amp; Stein aus den Punkten im Wasser.<br><br>
-      Baue dann auf den 4 geraden Feldern um deine Base Türme, und auf den 4 Ecken dazwischen Mauern -
-      so ist deine Base rundum geschützt.<br><br>
-      Erst wenn das steht, kommt die erste Gegnerwelle.
+      Folge der markierten Stelle mit dem Pfeil und tippe genau dort drauf -
+      sie zeigt dir Schritt für Schritt, was als Nächstes zu tun ist.
+      Erst wenn deine Grundverteidigung steht, kommt die erste Gegnerwelle.
     </div>`;
   const opt = document.createElement("div");
   opt.className = "buildopt"; opt.style.justifyContent="center";
@@ -956,6 +1029,7 @@ function showIntroIfNeeded(){
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
+resizeCanvas();
 showIntroIfNeeded();
 
 let lastT = performance.now();
