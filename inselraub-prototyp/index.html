@@ -1207,25 +1207,87 @@ function drawProfileSquare(x,y,s){
 }
 
 // Icon liegt bewusst ueber der Leiste (ragt oben drueber raus), statt
-// komplett darin eingebettet zu sein.
-function drawOverlapResourceChip(x,y,iconR,pillW,pillH,iconFill,pillFill,drawIconFn,text){
-  const cx = x+iconR, cy = y+iconR;
-  const pillX = cx-iconR*0.3, pillY = cy+iconR*0.2;
+// komplett darin eingebettet zu sein - orientiert an der Referenz (grosses
+// eigenstaendiges Icon mit kraeftigem Umriss, helle Glas-Pille dahinter).
+function drawOverlapResourceChip(x,y,iconR,pillW,pillH,drawIconFn,text){
+  const cx = x+iconR, cy = y+iconR*0.85;
+  const pillX = cx, pillY = cy-pillH*0.12;
   ctx.save();
-  ctx.shadowColor="rgba(0,0,0,0.35)"; ctx.shadowBlur=5; ctx.shadowOffsetY=2;
-  drawRoundRect(pillX,pillY,pillW,pillH,pillH/2,pillFill);
+  ctx.shadowColor="rgba(0,0,0,0.25)"; ctx.shadowBlur=4; ctx.shadowOffsetY=2;
+  drawRoundRect(pillX,pillY,pillW,pillH,pillH/2,"rgba(150,165,180,0.5)");
   ctx.restore();
-  ctx.strokeStyle="rgba(255,255,255,0.15)"; ctx.lineWidth=1;
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(pillX,pillY,pillW,pillH,pillH/2); ctx.stroke();
-  ctx.fillStyle="#fff"; ctx.font="bold 13px sans-serif"; ctx.textAlign="left"; ctx.textBaseline="middle";
-  ctx.fillText(text, cx+iconR+4, pillY+pillH/2+1);
+  ctx.fillStyle="#fff"; ctx.font="bold 15px sans-serif"; ctx.textAlign="left"; ctx.textBaseline="middle";
+  ctx.fillText(text, pillX+iconR*1.15, pillY+pillH/2+1);
   ctx.textBaseline="alphabetic"; ctx.textAlign="left";
 
-  ctx.beginPath(); ctx.arc(cx,cy,iconR,0,Math.PI*2);
-  ctx.fillStyle=iconFill; ctx.fill();
-  ctx.strokeStyle="rgba(255,255,255,0.3)"; ctx.lineWidth=1.3; ctx.stroke();
   ctx.save(); ctx.translate(cx,cy); drawIconFn(); ctx.restore();
   return pillX+pillW;
+}
+
+function drawStarIcon(r){
+  ctx.beginPath();
+  for(let i=0;i<5;i++){
+    const ang=-Math.PI/2+i*(Math.PI*2/5);
+    const ang2=ang+Math.PI/5;
+    ctx.lineTo(Math.cos(ang)*r,Math.sin(ang)*r);
+    ctx.lineTo(Math.cos(ang2)*r*0.42,Math.sin(ang2)*r*0.42);
+  }
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0,-r,0,r);
+  grad.addColorStop(0,"#6ec3f4"); grad.addColorStop(1,"#2f7fd1");
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.strokeStyle="#1a4a7a"; ctx.lineWidth=2.4; ctx.stroke();
+}
+
+function drawCoinIcon(r){
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  const grad = ctx.createRadialGradient(-r*0.3,-r*0.3,r*0.2,0,0,r);
+  grad.addColorStop(0,"#ffd873"); grad.addColorStop(1,"#e5a219");
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.strokeStyle="#8a5a10"; ctx.lineWidth=2.4; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,r*0.55,0,Math.PI*2);
+  ctx.fillStyle="#f2b93c"; ctx.fill();
+  ctx.strokeStyle="#c98a1a"; ctx.lineWidth=1.4; ctx.stroke();
+}
+
+function drawGemIcon(r){
+  ctx.beginPath();
+  ctx.moveTo(0,-r); ctx.lineTo(r*0.85,-r*0.15); ctx.lineTo(r*0.4,r);
+  ctx.lineTo(-r*0.4,r); ctx.lineTo(-r*0.85,-r*0.15); ctx.closePath();
+  const grad = ctx.createLinearGradient(0,-r,0,r);
+  grad.addColorStop(0,"#8fd8ff"); grad.addColorStop(1,"#2f8fd8");
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.strokeStyle="#1a4a7a"; ctx.lineWidth=2.4; ctx.stroke();
+  ctx.strokeStyle="rgba(255,255,255,0.55)"; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.moveTo(0,-r*0.85); ctx.lineTo(0,r*0.4); ctx.stroke();
+}
+
+function drawLogIcon(r){
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  ctx.fillStyle="#a06d3f"; ctx.fill(); ctx.strokeStyle="#5a3a1c"; ctx.lineWidth=2.4; ctx.stroke();
+  ["#c9a06a","#8a5a34"].forEach((col,i)=>{
+    ctx.fillStyle=col; drawRoundRect(-r*0.65,-r*0.35+i*r*0.45,r*1.3,r*0.32,r*0.16,col);
+  });
+}
+
+function drawStoneIcon(r){
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  ctx.fillStyle="#8a929a"; ctx.fill(); ctx.strokeStyle="#3f4650"; ctx.lineWidth=2.4; ctx.stroke();
+  [[-r*0.28,r*0.1,r*0.4,"#6a7278"],[r*0.3,r*0.18,r*0.36,"#7c8590"],[0,-r*0.2,r*0.36,"#b3bcc4"]].forEach(([dx,dy,rr,col])=>{
+    ctx.beginPath(); ctx.arc(dx,dy,rr,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
+  });
+}
+
+function drawKraftIcon(r){
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  const grad = ctx.createLinearGradient(0,-r,0,r);
+  grad.addColorStop(0,"#f2a35c"); grad.addColorStop(1,"#c9622e");
+  ctx.fillStyle=grad; ctx.fill(); ctx.strokeStyle="#7a3414"; ctx.lineWidth=2.4; ctx.stroke();
+  ctx.fillStyle="#fff3c4";
+  ctx.beginPath();
+  ctx.moveTo(r*0.15,-r*0.6); ctx.lineTo(-r*0.35,r*0.1); ctx.lineTo(r*0.05,r*0.1);
+  ctx.lineTo(-r*0.15,r*0.6); ctx.lineTo(r*0.4,-r*0.1); ctx.lineTo(r*0.02,-r*0.1);
+  ctx.closePath(); ctx.fill();
 }
 
 function drawInGameHud(){
@@ -1238,42 +1300,12 @@ function drawInGameHud(){
   drawProfileSquare(12, barY, s);
 
   let nx = 12+s+gap;
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, "#c96a48", "rgba(10,16,22,0.6)", ()=>{
-    ctx.fillStyle="#ffe9c9";
-    ctx.beginPath(); ctx.moveTo(2.7,-8); ctx.lineTo(-4,1.3); ctx.lineTo(1.3,1.3); ctx.lineTo(-2.7,8); ctx.lineTo(5.4,-1.3); ctx.lineTo(0,-1.3); ctx.closePath(); ctx.fill();
-  }, computeKraft()) + gap;
-
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, "#a06d3f", "rgba(10,16,22,0.6)", ()=>{
-    ["#8a5a34","#c9a06a"].forEach((col,i)=>{ ctx.fillStyle=col; drawRoundRect(-8,-3.4+i*4.6,16,4,2,col); });
-  }, state.resources.holz) + gap;
-
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, "#9aa3ac", "rgba(10,16,22,0.6)", ()=>{
-    [[-3.4,1.3,5,"#7c8590"],[3.4,2.1,4.5,"#6a7278"],[0,-2.1,4.5,"#b3bcc4"]].forEach(([dx,dy,rr,col])=>{
-      ctx.beginPath(); ctx.arc(dx,dy,rr,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
-    });
-  }, state.resources.stein) + gap;
-
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, "#5aa0c9", "rgba(10,16,22,0.6)", ()=>{
-    ctx.fillStyle="#eaf6ff";
-    ctx.beginPath(); ctx.moveTo(0,-8); ctx.lineTo(6.7,-1.3); ctx.lineTo(3.4,8); ctx.lineTo(-3.4,8); ctx.lineTo(-6.7,-1.3); ctx.closePath(); ctx.fill();
-  }, state.resources.gems) + gap;
-
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, "#e0b23c", "rgba(10,16,22,0.6)", ()=>{
-    ctx.fillStyle="#fff3c4"; ctx.beginPath(); ctx.arc(0,0,6.7,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle="#e0b23c"; ctx.beginPath(); ctx.arc(0,0,4.6,0,Math.PI*2); ctx.fill();
-  }, state.resources.coins) + gap;
-
-  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, "#c9a23a", "rgba(165,83,58,0.55)", ()=>{
-    ctx.fillStyle="#f2c94c";
-    ctx.beginPath();
-    for(let i=0;i<5;i++){
-      const ang=-Math.PI/2+i*(Math.PI*2/5);
-      const ang2=ang+Math.PI/5;
-      ctx.lineTo(Math.cos(ang)*5.7,Math.sin(ang)*5.7);
-      ctx.lineTo(Math.cos(ang2)*2.6,Math.sin(ang2)*2.6);
-    }
-    ctx.closePath(); ctx.fill();
-  }, "Lv "+state.basisLevel);
+  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawKraftIcon(iconR), computeKraft()) + gap;
+  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawLogIcon(iconR), state.resources.holz) + gap;
+  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawStoneIcon(iconR), state.resources.stein) + gap;
+  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawGemIcon(iconR), state.resources.gems) + gap;
+  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawCoinIcon(iconR), state.resources.coins) + gap;
+  nx = drawOverlapResourceChip(nx, barY-1, iconR, pillW, pillH, ()=>drawStarIcon(iconR), "Lv "+state.basisLevel);
 
   // Wellen-Status jetzt in einer eigenen Zeile darunter - oben war fuer
   // die komplette Chip-Reihe kein Platz mehr uebrig.
