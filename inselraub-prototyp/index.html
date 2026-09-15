@@ -3,105 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Inselraub-Prototyp</title>
+<title>Basis-Raster-Prototyp</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html,body {
-    margin: 0; padding:0; background: #0d1620; color: #eee;
-    font-family: system-ui, sans-serif; overscroll-behavior: none;
-    display:flex; flex-direction:column; align-items:center;
-    min-height:100vh; touch-action:none; user-select:none;
+    margin:0; padding:0; background:#0d1620; color:#eee;
+    font-family: system-ui, sans-serif; display:flex; flex-direction:column; align-items:center;
+    min-height:100vh; user-select:none;
   }
   [hidden] { display:none !important; }
-
-  #app { width:100%; max-width:420px; display:flex; flex-direction:column; align-items:center; padding:8px; }
+  #app { width:100%; max-width:420px; display:flex; flex-direction:column; align-items:center; padding:10px; }
   h1 { margin:4px 0 2px; font-size:17px; text-align:center; }
-  .sub { color:#8b96a5; font-size:11px; text-align:center; margin-bottom:6px; padding:0 8px; }
+  .sub { color:#8b96a5; font-size:11.5px; text-align:center; margin-bottom:8px; padding:0 6px; }
 
-  #hud {
-    width:100%; max-width:380px; display:flex; justify-content:space-between; gap:6px;
-    font-size:12px; margin-bottom:6px; flex-wrap:wrap;
-  }
-  #hud .pill { background:#1c2b3a; border:1px solid #2e4358; padding:4px 9px; border-radius:11px; }
+  #hud { width:100%; max-width:380px; display:flex; justify-content:space-between; font-size:13px; margin-bottom:8px; }
+  #hud .pill { background:#1c2b3a; border:1px solid #2e4358; padding:5px 10px; border-radius:11px; }
   #hud .pill b { color:#f2c94c; }
 
-  #stage { position:relative; }
-  canvas { background:#274a63; border:2px solid #2e4358; border-radius:8px; display:block; touch-action:none; }
+  canvas { background:#173247; border:2px solid #2e4358; border-radius:8px; display:block; }
 
-  #modeMsg {
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    flex-direction:column; background:rgba(8,12,17,.88); text-align:center; border-radius:8px; padding:16px;
-  }
-  #modeMsg h2 { margin:0 0 8px; font-size:18px; }
-  #modeMsg p { margin:0 0 6px; font-size:13px; color:#c7cedb; max-width:280px; }
-  #modeMsg .row { display:flex; gap:8px; margin-top:12px; }
-  #modeMsg button {
-    padding:10px 18px; font-size:13px; border:1px solid #3a5570; border-radius:6px;
-    background:#213448; color:#eee; cursor:pointer;
-  }
-  #modeMsg button.primary { background:#3a6ea5; border-color:#5a8fc9; }
-
-  #controls {
-    width:100%; max-width:380px; display:flex; justify-content:space-between; align-items:center;
-    margin-top:10px; padding:0 4px;
-  }
-  #joyBase {
-    width:100px; height:100px; border-radius:50%;
-    background:rgba(255,255,255,.06); border:2px solid rgba(255,255,255,.18);
-    position:relative; flex-shrink:0;
-  }
-  #joyKnob {
-    width:42px; height:42px; border-radius:50%; background:rgba(122,162,247,.75);
-    position:absolute; top:29px; left:29px; pointer-events:none;
-  }
-  #sideInfo { font-size:11px; color:#8b96a5; text-align:right; max-width:200px; }
-  #sideInfo b { color:#cfe3f7; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:10px; font-size:11px; color:#9aa3b2; }
+  .legend span { display:flex; align-items:center; gap:4px; }
+  .swatch { width:12px; height:12px; border-radius:3px; display:inline-block; }
 
   .buildmenu {
-    position:fixed; inset:0; background:rgba(0,0,0,.65); display:flex; align-items:center; justify-content:center;
-    z-index:20;
+    position:fixed; inset:0; background:rgba(0,0,0,.65); display:flex; align-items:center; justify-content:center; z-index:20;
   }
   .buildmenu .box { background:#1c2b3a; border:1px solid #3a5570; border-radius:8px; padding:16px; width:300px; max-width:88vw; }
-  .buildmenu h3 { margin:0 0 10px; font-size:15px; }
+  .buildmenu h3 { margin:0 0 4px; font-size:15px; }
+  .buildmenu .hint2 { color:#8b96a5; font-size:11.5px; margin-bottom:10px; }
   .buildopt {
     display:flex; justify-content:space-between; align-items:center; padding:9px; border:1px solid #2e4358;
     border-radius:5px; margin-bottom:7px; cursor:pointer; font-size:12.5px; gap:8px;
   }
   .buildopt.disabled { opacity:.4; }
   .buildopt small { display:block; color:#8b96a5; margin-top:2px; }
-
-  #islandPrompt {
-    position:absolute; left:50%; top:14px; transform:translateX(-50%);
-    background:#1c2b3a; border:1px solid #3a5570; border-radius:8px; padding:10px 12px;
-    font-size:12.5px; text-align:center; z-index:5;
-  }
-  #islandPrompt .row { display:flex; gap:8px; margin-top:8px; justify-content:center; }
-  #islandPrompt button { padding:7px 12px; font-size:12px; border-radius:5px; border:1px solid #3a5570; background:#213448; color:#eee; }
-  #islandPrompt button.primary { background:#a53a3a; border-color:#c95a5a; }
 </style>
 </head>
 <body>
 
 <div id="app">
-  <h1>Inselraub-Prototyp</h1>
-  <div class="sub">Basis bauen, mit dem Boot rausfahren, fremde Inseln plündern. Joystick unten links, Angriff läuft automatisch auf das nächste Ziel in Reichweite.</div>
+  <h1>Basis-Raster-Prototyp</h1>
+  <div class="sub">Türme auf das Raster setzen – die Mauer dazwischen entsteht automatisch und passt sich an, sobald du weitere Türme baust.</div>
 
   <div id="hud">
     <div class="pill">Vorräte: <b id="hudRes">0</b></div>
-    <div class="pill" id="hudHpPill" hidden>HP: <b id="hudHp"></b></div>
-    <div class="pill" id="hudCargoPill" hidden>Fracht: <b id="hudCargo"></b></div>
-    <div class="pill" id="hudModeName"></div>
+    <div class="pill">Basis-HP: <b id="hudHp">100</b></div>
   </div>
 
-  <div id="stage">
-    <canvas id="c" width="380" height="560"></canvas>
-    <div id="islandPrompt" hidden></div>
-    <div id="modeMsg" hidden></div>
-  </div>
+  <canvas id="c" width="380" height="380"></canvas>
 
-  <div id="controls">
-    <div id="joyBase"><div id="joyKnob"></div></div>
-    <div id="sideInfo" id="sideInfoBox"></div>
+  <div class="legend">
+    <span><i class="swatch" style="background:#c94a4a"></i>Turm</span>
+    <span><i class="swatch" style="background:#8a5a3a"></i>Mauer (automatisch)</span>
+    <span><i class="swatch" style="background:#4a7fc9"></i>Lagerhaus</span>
+    <span><i class="swatch" style="background:#7a4ac9"></i>Kaserne</span>
+    <span><i class="swatch" style="background:#a5533a"></i>Kernbau</span>
   </div>
 </div>
 
@@ -109,32 +66,39 @@
 (function(){
 "use strict";
 
-const W = 380, H = 560;
+const CELL = 62, ORIGIN = {x:35, y:35}, GRID = 5;
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-// ================= Persistenter Zustand =================
+function cellCenter(c,r){ return { x: ORIGIN.x + c*CELL + CELL/2, y: ORIGIN.y + r*CELL + CELL/2 }; }
 
-const SAVE_KEY = "inselraub_proto_save_v2";
+// Ring im Uhrzeigersinn ab oben links (16 Randfelder eines 5x5-Rasters)
+const RING_CELLS = [
+  [0,0],[1,0],[2,0],[3,0],[4,0],
+  [4,1],[4,2],[4,3],
+  [4,4],[3,4],[2,4],[1,4],[0,4],
+  [0,3],[0,2],[0,1]
+];
+// Innere 3x3 ohne Mittelpunkt (Kernbau) = 8 Bauplaetze
+const INTERIOR_CELLS = [
+  [1,1],[2,1],[3,1],
+  [1,2],        [3,2],
+  [1,3],[2,3],[3,3]
+];
+const CORE_CELL = [2,2];
 
-const RING_POS = [
-  {x:110,y:78},{x:200,y:66},{x:290,y:78},
-  {x:340,y:170},{x:340,y:270},
-  {x:290,y:362},{x:110,y:362},
-  {x:60,y:270},{x:60,y:170}
-];
-const INNER_POS = [
-  {x:150,y:168},{x:200,y:158},{x:250,y:168},
-  {x:150,y:246},{x:250,y:246}
-];
+// ================= Zustand =================
+
+const SAVE_KEY = "basis_raster_proto_v1";
 
 function defaultState(){
-  const slots = [];
-  RING_POS.forEach((p,i)=> slots.push({zone:"ring", x:p.x, y:p.y, unlocked:i<1, building:null}));
-  INNER_POS.forEach((p,i)=> slots.push({zone:"inner", x:p.x, y:p.y, unlocked:i<2, building:null}));
-  return { resources: 50, slots };
+  return {
+    resources: 70,
+    coreHp: 100,
+    ring: Array.from({length:16}, (_,i)=>({ unlocked: i<3, tower:false, level:0 })),
+    interior: Array.from({length:8}, (_,i)=>({ unlocked: i<2, building:null }))
+  };
 }
-
 let state = load();
 function load(){
   try { const raw = localStorage.getItem(SAVE_KEY); if(raw) return JSON.parse(raw); } catch(e){}
@@ -142,657 +106,239 @@ function load(){
 }
 function save(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch(e){} }
 
-const BUILDING_TYPES = {
-  lager:   { name:"Lagerhaus", desc:"+8 Frachtkapazität",   baseCost:30, effect:"cargo", perLevel:8,  zone:"inner", icon:"L", color:"#4a7fc9" },
-  kaserne: { name:"Kaserne",   desc:"+15 max. HP",           baseCost:40, effect:"hp",    perLevel:15, zone:"inner", icon:"K", color:"#7a4ac9" },
-  werft:   { name:"Werft",     desc:"+30 Boots-Tempo",       baseCost:35, effect:"boat",  perLevel:30, zone:"inner", icon:"W", color:"#4ac9a0" },
-  kanone:  { name:"Kanone",    desc:"+3 Waffenschaden",      baseCost:45, effect:"dmg",   perLevel:3,  zone:"ring",  icon:"⚔", color:"#c94a4a" },
-  mauer:   { name:"Mauer",     desc:"Deine Insel, verstärkt (rein optisch)", baseCost:15, effect:"none", perLevel:0, zone:"ring", icon:"▮", color:"#8a6a4a" }
+const RING_UNLOCK_BASE = 35, RING_UNLOCK_STEP = 30;
+const INTERIOR_UNLOCK_BASE = 45, INTERIOR_UNLOCK_STEP = 35;
+function ringUnlockCost(i){ return RING_UNLOCK_BASE + i*RING_UNLOCK_STEP; }
+function interiorUnlockCost(i){ return INTERIOR_UNLOCK_BASE + i*INTERIOR_UNLOCK_STEP; }
+
+const TOWER_DEF = { name:"Turm", desc:"Verteidigungsturm. Zwischen zwei Türmen entsteht automatisch eine Mauer.", baseCost:40 };
+function towerUpgradeCost(level){ return Math.round(TOWER_DEF.baseCost * Math.pow(1.5, level)); }
+
+const INTERIOR_TYPES = {
+  lager:   { name:"Lagerhaus", desc:"Erhöht deine Vorratskapazität.", baseCost:30, icon:"L", color:"#4a7fc9" },
+  kaserne: { name:"Kaserne",   desc:"Erhöht deine Basis-HP.",         baseCost:35, icon:"K", color:"#7a4ac9" }
 };
+function interiorUpgradeCost(type, level){ return Math.round(INTERIOR_TYPES[type].baseCost * Math.pow(1.5, level)); }
 
-function slotUnlockCost(index){ return 55 + index*40; }
-function upgradeCost(type, currentLevel){ return Math.round(BUILDING_TYPES[type].baseCost * Math.pow(1.5, currentLevel)); }
+// ================= Automatische Mauer-Berechnung =================
+// Regel: sobald 2+ Tuerme auf dem Ring stehen, wird JEDES Feld zwischen
+// zwei (im Ring-Index) aufeinanderfolgenden Tuermen automatisch zur Mauer -
+// unabhaengig davon ob dieses Feld schon freigeschaltet ist. Freischalten
+// ist nur noetig, um dort selbst einen NEUEN Turm zu bauen.
 
-function totalBonus(effect){
-  let total = 0;
-  state.slots.forEach(s=>{
-    if(s.building && BUILDING_TYPES[s.building.type].effect===effect){
-      total += BUILDING_TYPES[s.building.type].perLevel * s.building.level;
+function computeWallSet(){
+  const towerIdx = [];
+  state.ring.forEach((s,i)=>{ if(s.tower) towerIdx.push(i); });
+  const walls = new Set();
+  if(towerIdx.length>=2){
+    for(let k=0;k<towerIdx.length;k++){
+      const a = towerIdx[k];
+      const b = towerIdx[(k+1)%towerIdx.length];
+      let i = (a+1)%16;
+      while(i!==b){ walls.add(i); i=(i+1)%16; }
+    }
+  }
+  return walls;
+}
+
+// ================= Rendern =================
+
+function drawRoundRect(x,y,w,h,r,fill){
+  ctx.beginPath();
+  if(ctx.roundRect) ctx.roundRect(x,y,w,h,r); else ctx.rect(x,y,w,h);
+  ctx.fillStyle = fill; ctx.fill();
+}
+
+function render(){
+  document.getElementById("hudRes").textContent = state.resources;
+  document.getElementById("hudHp").textContent = state.coreHp;
+
+  ctx.fillStyle = "#0f2233"; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  const wallSet = computeWallSet();
+
+  // Ring-Felder
+  RING_CELLS.forEach(([c,r],i)=>{
+    const p = cellCenter(c,r);
+    const slot = state.ring[i];
+    if(slot.tower){
+      drawRoundRect(p.x-26,p.y-26,52,52,8,"#c94a4a");
+      ctx.fillStyle="#1a0d0d"; ctx.font="bold 20px sans-serif"; ctx.textAlign="center";
+      ctx.fillText("⚔", p.x, p.y+7);
+      ctx.font="9px sans-serif"; ctx.fillText("Lv"+slot.level, p.x, p.y+22);
+    } else if(wallSet.has(i)){
+      drawRoundRect(p.x-26,p.y-26,52,52,4,"#8a5a3a");
+      ctx.strokeStyle="#5a3a22"; ctx.lineWidth=2;
+      ctx.strokeRect(p.x-26,p.y-26,52,52);
+    } else if(!slot.unlocked){
+      ctx.strokeStyle="#3a5570"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
+      ctx.strokeRect(p.x-24,p.y-24,48,48); ctx.setLineDash([]);
+      ctx.fillStyle="#5f7180"; ctx.font="17px sans-serif"; ctx.textAlign="center";
+      ctx.fillText("+", p.x, p.y+6);
+    } else {
+      ctx.strokeStyle="#cfe3f7"; ctx.lineWidth=1.5;
+      ctx.strokeRect(p.x-24,p.y-24,48,48);
+      ctx.fillStyle="#cfe3f7"; ctx.font="17px sans-serif"; ctx.textAlign="center";
+      ctx.fillText("+", p.x, p.y+6);
     }
   });
-  return total;
-}
-function playerStats(){
-  return {
-    maxHp: 60 + totalBonus("hp"),
-    dmg: 8 + totalBonus("dmg"),
-    cargo: 20 + totalBonus("cargo"),
-    boatSpeed: 130 + totalBonus("boat")
-  };
-}
 
-// ================= Joystick (Touch + Maus) =================
+  // Innere Felder
+  INTERIOR_CELLS.forEach(([c,r],i)=>{
+    const p = cellCenter(c,r);
+    const slot = state.interior[i];
+    if(slot.building){
+      const def = INTERIOR_TYPES[slot.building.type];
+      drawRoundRect(p.x-24,p.y-24,48,48,7,def.color);
+      ctx.fillStyle="#0d1620"; ctx.font="bold 15px sans-serif"; ctx.textAlign="center";
+      ctx.fillText(def.icon, p.x, p.y+5);
+      ctx.font="8px sans-serif"; ctx.fillText("Lv"+slot.building.level, p.x, p.y+17);
+    } else if(!slot.unlocked){
+      ctx.strokeStyle="#3a5570"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
+      ctx.strokeRect(p.x-22,p.y-22,44,44); ctx.setLineDash([]);
+      ctx.fillStyle="#5f7180"; ctx.font="16px sans-serif"; ctx.textAlign="center";
+      ctx.fillText("+", p.x, p.y+5);
+    } else {
+      ctx.strokeStyle="#cfe3f7"; ctx.lineWidth=1.5;
+      ctx.strokeRect(p.x-22,p.y-22,44,44);
+      ctx.fillStyle="#cfe3f7"; ctx.font="16px sans-serif"; ctx.textAlign="center";
+      ctx.fillText("+", p.x, p.y+5);
+    }
+  });
 
-const joyBase = document.getElementById("joyBase");
-const joyKnob = document.getElementById("joyKnob");
-let joyVec = {x:0,y:0};
-let joyActive = false;
-let joyOrigin = {x:0,y:0};
-
-function joyStart(clientX,clientY){
-  joyActive = true;
-  const r = joyBase.getBoundingClientRect();
-  joyOrigin = {x:r.left+r.width/2, y:r.top+r.height/2};
-  joyMove(clientX,clientY);
-}
-function joyMove(clientX,clientY){
-  if(!joyActive) return;
-  let dx = clientX-joyOrigin.x, dy = clientY-joyOrigin.y;
-  const max = 34;
-  const len = Math.hypot(dx,dy);
-  if(len>max){ dx = dx/len*max; dy = dy/len*max; }
-  joyVec = {x:dx/max, y:dy/max};
-  joyKnob.style.left = (29+dx)+"px";
-  joyKnob.style.top = (29+dy)+"px";
-}
-function joyEnd(){
-  joyActive = false; joyVec = {x:0,y:0};
-  joyKnob.style.left = "29px"; joyKnob.style.top = "29px";
-}
-joyBase.addEventListener("touchstart", e=>{ e.preventDefault(); const t=e.touches[0]; joyStart(t.clientX,t.clientY); }, {passive:false});
-joyBase.addEventListener("touchmove", e=>{ e.preventDefault(); const t=e.touches[0]; joyMove(t.clientX,t.clientY); }, {passive:false});
-window.addEventListener("touchend", joyEnd);
-joyBase.addEventListener("mousedown", e=>{ joyStart(e.clientX,e.clientY); });
-window.addEventListener("mousemove", e=>{ joyMove(e.clientX,e.clientY); });
-window.addEventListener("mouseup", joyEnd);
-
-// ================= Geometrie-Helfer =================
-
-function rectsOverlap(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
-function circleRectDist(cx,cy,r,rect){
-  const nx = Math.max(rect.x, Math.min(cx, rect.x+rect.w));
-  const ny = Math.max(rect.y, Math.min(cy, rect.y+rect.h));
-  return Math.hypot(cx-nx, cy-ny) - r;
-}
-function moveWithCollision(entity, dx, dy, walls){
-  const r = entity.r;
-  entity.x += dx;
-  walls.forEach(w=>{ if(!(w.hp!==undefined && w.hp<=0) && circleRectDist(entity.x,entity.y,r,w)<0) entity.x -= dx; });
-  entity.y += dy;
-  walls.forEach(w=>{ if(!(w.hp!==undefined && w.hp<=0) && circleRectDist(entity.x,entity.y,r,w)<0) entity.y -= dy; });
-}
-function segIntersect(x1,y1,x2,y2,x3,y3,x4,y4){
-  const d = (x2-x1)*(y4-y3)-(y2-y1)*(x4-x3);
-  if(d===0) return false;
-  const t = ((x3-x1)*(y4-y3)-(y3-y1)*(x4-x3))/d;
-  const u = ((x3-x1)*(y2-y1)-(y3-y1)*(x2-x1))/d;
-  return t>=0 && t<=1 && u>=0 && u<=1;
-}
-function lineIntersectsRect(x1,y1,x2,y2,rect){
-  const L = [[rect.x,rect.y,rect.x+rect.w,rect.y],[rect.x+rect.w,rect.y,rect.x+rect.w,rect.y+rect.h],
-             [rect.x+rect.w,rect.y+rect.h,rect.x,rect.y+rect.h],[rect.x,rect.y+rect.h,rect.x,rect.y]];
-  return L.some(l=>segIntersect(x1,y1,x2,y2,l[0],l[1],l[2],l[3]));
-}
-function hasLineOfSight(x1,y1,x2,y2,walls){
-  return !walls.some(w=> (w.hp===undefined||w.hp>0) && lineIntersectsRect(x1,y1,x2,y2,w));
-}
-
-// ================= Modus-Verwaltung =================
-
-let mode = "base"; // base | sailing | raid
-let raid = null;
-let sailing = null;
-let tapStart = null;
-
-function setHud(){
-  document.getElementById("hudRes").textContent = state.resources;
-  document.getElementById("hudModeName").textContent =
-    mode==="base" ? "Deine Insel" : mode==="sailing" ? "Offenes Meer" : (raid ? raid.name : "");
-  document.getElementById("hudHpPill").hidden = mode!=="raid";
-  document.getElementById("hudCargoPill").hidden = mode!=="raid";
-  if(mode==="raid" && raid){
-    document.getElementById("hudHp").textContent = Math.max(0,Math.round(raid.player.hp))+"/"+raid.player.maxHp;
-    document.getElementById("hudCargo").textContent = raid.player.cargo+"/"+raid.player.cargoMax;
+  // Kernbau
+  {
+    const p = cellCenter(CORE_CELL[0], CORE_CELL[1]);
+    drawRoundRect(p.x-27,p.y-27,54,54,8,"#a5533a");
+    ctx.fillStyle="#1a0d0d"; ctx.font="9px sans-serif"; ctx.textAlign="center";
+    ctx.fillText("Kernbau", p.x, p.y+3);
+    ctx.fillText(state.coreHp+"/100", p.x, p.y+14);
   }
+
+  ctx.textAlign="left";
 }
 
-// ================= BASIS =================
+// ================= Eingabe =================
 
-const base = {
-  player: {x:200, y:430, r:11},
-  dock: {x:170, y:470, w:60, h:36},
-  hasLeftDock: true
-};
+function findRingIndex(c,r){ return RING_CELLS.findIndex(cell=>cell[0]===c&&cell[1]===r); }
+function findInteriorIndex(c,r){ return INTERIOR_CELLS.findIndex(cell=>cell[0]===c&&cell[1]===r); }
 
-function enterBase(){
-  mode = "base";
-  base.player.x = 200; base.player.y = 340;
-  base.hasLeftDock = false;
-  document.getElementById("modeMsg").hidden = true;
-  document.getElementById("islandPrompt").hidden = true;
-  setHud();
-}
-
-function slotAt(canvasX, canvasY){
-  return state.slots.find(s=> Math.hypot(canvasX-s.x, canvasY-s.y) < 24);
-}
-
-canvas.addEventListener("touchstart", e=>{
-  const t = e.touches[0];
-  const r = canvas.getBoundingClientRect();
-  tapStart = {x:(t.clientX-r.left)*(W/r.width), y:(t.clientY-r.top)*(H/r.height), t:performance.now()};
-}, {passive:true});
-canvas.addEventListener("touchend", e=>{
-  if(!tapStart) return;
-  handleTap(tapStart.x, tapStart.y);
-  tapStart = null;
-});
 canvas.addEventListener("click", e=>{
-  const r = canvas.getBoundingClientRect();
-  const x = (e.clientX-r.left)*(W/r.width), y = (e.clientY-r.top)*(H/r.height);
-  handleTap(x,y);
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX-rect.left)*(canvas.width/rect.width);
+  const y = (e.clientY-rect.top)*(canvas.height/rect.height);
+  const c = Math.floor((x-ORIGIN.x)/CELL), r = Math.floor((y-ORIGIN.y)/CELL);
+  if(c<0||c>=GRID||r<0||r>=GRID) return;
+
+  const ri = findRingIndex(c,r);
+  if(ri>=0){ openRingMenu(ri); return; }
+  const ii = findInteriorIndex(c,r);
+  if(ii>=0){ openInteriorMenu(ii); return; }
 });
 
-function handleTap(x,y){
-  if(mode!=="base") return;
-  const slot = slotAt(x,y);
-  if(slot) openBuildMenu(slot);
-}
-
-function openBuildMenu(slot){
+function openRingMenu(i){
+  const slot = state.ring[i];
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
   box.className = "box";
-  box.innerHTML = `<h3>${slot.building ? "Aufwerten" : (slot.zone==="ring" ? "Wall-Gebäude wählen" : "Gebäude wählen")}</h3>`;
 
   if(!slot.unlocked){
-    const cost = slotUnlockCost(state.slots.indexOf(slot));
+    const cost = ringUnlockCost(i);
+    box.innerHTML = `<h3>Feld freischalten</h3><div class="hint2">Erst freigeschaltete Felder kannst du selbst mit einem Turm bebauen.</div>`;
     const opt = document.createElement("div");
     opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
-    opt.innerHTML = `<span>Bauplatz freischalten</span><b>${cost}g</b>`;
+    opt.innerHTML = `<span>Freischalten</span><b>${cost}g</b>`;
     opt.addEventListener("click", ()=>{
-      if(state.resources>=cost){ state.resources-=cost; slot.unlocked=true; save(); document.body.removeChild(overlay); }
+      if(state.resources>=cost){ state.resources-=cost; slot.unlocked=true; save(); document.body.removeChild(overlay); render(); }
     });
     box.appendChild(opt);
-  } else if(slot.building){
-    const def = BUILDING_TYPES[slot.building.type];
-    const cost = upgradeCost(slot.building.type, slot.building.level);
+  } else if(slot.tower){
+    const cost = towerUpgradeCost(slot.level);
+    box.innerHTML = `<h3>Turm aufwerten</h3><div class="hint2">Level ${slot.level} → ${slot.level+1}</div>`;
     const opt = document.createElement("div");
-    opt.className = "buildopt" + (state.resources<cost || def.perLevel===0 ? " disabled":"");
-    opt.innerHTML = `<span>${def.name} auf Lvl ${slot.building.level+1}</span><b>${cost}g</b>`;
-    if(def.perLevel>0) opt.addEventListener("click", ()=>{
-      if(state.resources>=cost){ state.resources-=cost; slot.building.level++; save(); document.body.removeChild(overlay); }
+    opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
+    opt.innerHTML = `<span>Aufwerten</span><b>${cost}g</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources>=cost){ state.resources-=cost; slot.level++; save(); document.body.removeChild(overlay); render(); }
     });
     box.appendChild(opt);
   } else {
-    Object.entries(BUILDING_TYPES).filter(([,def])=>def.zone===slot.zone).forEach(([type,def])=>{
-      const opt = document.createElement("div");
-      opt.className = "buildopt" + (state.resources<def.baseCost ? " disabled":"");
-      opt.innerHTML = `<span>${def.name}<small>${def.desc}</small></span><b>${def.baseCost}g</b>`;
-      opt.addEventListener("click", ()=>{
-        if(state.resources>=def.baseCost){ state.resources-=def.baseCost; slot.building={type,level:1}; save(); document.body.removeChild(overlay); }
-      });
-      box.appendChild(opt);
+    box.innerHTML = `<h3>Turm bauen</h3><div class="hint2">Zwischen deinen Türmen entsteht automatisch eine verbindende Mauer.</div>`;
+    const opt = document.createElement("div");
+    opt.className = "buildopt" + (state.resources<TOWER_DEF.baseCost ? " disabled":"");
+    opt.innerHTML = `<span>${TOWER_DEF.name}<small>${TOWER_DEF.desc}</small></span><b>${TOWER_DEF.baseCost}g</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources>=TOWER_DEF.baseCost){
+        state.resources-=TOWER_DEF.baseCost; slot.tower=true; slot.level=1;
+        save(); document.body.removeChild(overlay); render();
+      }
     });
+    box.appendChild(opt);
   }
-  const close = document.createElement("div");
-  close.className = "buildopt"; close.style.justifyContent = "center"; close.textContent = "Schließen";
-  close.addEventListener("click", ()=> document.body.removeChild(overlay));
-  box.appendChild(close);
+
+  addCloseBtn(box, overlay);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
 
-function updateBase(dt){
-  const p = base.player;
-  const speed = 110;
-  moveWithCollision(p, joyVec.x*speed*dt, joyVec.y*speed*dt, []);
-  p.x = Math.max(70,Math.min(330,p.x));
-  p.y = Math.max(90,Math.min(500,p.y));
+function openInteriorMenu(i){
+  const slot = state.interior[i];
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
 
-  const atDock = rectsOverlap({x:p.x-p.r,y:p.y-p.r,w:p.r*2,h:p.r*2}, base.dock);
-  if(!atDock) base.hasLeftDock = true;
-  if(atDock && base.hasLeftDock){
-    enterSailing();
-  }
-}
-
-function drawBase(){
-  ctx.fillStyle = "#173247"; ctx.fillRect(0,0,W,H);
-
-  // Wasser-Pfad zum Dock
-  ctx.fillStyle = "#1c3a52";
-  ctx.fillRect(170,362,60,140);
-
-  // Wall-Ring (Verbindungslinie als Mauer-Optik)
-  ctx.strokeStyle = "#5a4530"; ctx.lineWidth = 14;
-  ctx.beginPath();
-  const ringPath = [RING_POS[0],RING_POS[1],RING_POS[2],RING_POS[3],RING_POS[4],RING_POS[5]];
-  ctx.moveTo(ringPath[0].x,ringPath[0].y);
-  ringPath.forEach(p=>ctx.lineTo(p.x,p.y));
-  ctx.lineTo(RING_POS[6].x,RING_POS[6].y);
-  ctx.lineTo(RING_POS[7].x,RING_POS[7].y);
-  ctx.lineTo(RING_POS[8].x,RING_POS[8].y);
-  ctx.closePath();
-  ctx.stroke();
-
-  // Gras innen
-  ctx.fillStyle = "#33502f";
-  ctx.beginPath(); ctx.moveTo(RING_POS[0].x,RING_POS[0].y);
-  ringPath.forEach(p=>ctx.lineTo(p.x,p.y));
-  ctx.lineTo(RING_POS[6].x,RING_POS[6].y); ctx.lineTo(RING_POS[7].x,RING_POS[7].y); ctx.lineTo(RING_POS[8].x,RING_POS[8].y);
-  ctx.closePath(); ctx.fill();
-
-  // Rathaus (kosmetisch)
-  ctx.fillStyle = "#a5533a";
-  ctx.fillRect(175,318,50,44);
-  ctx.fillStyle="#111"; ctx.font="9px sans-serif"; ctx.textAlign="center";
-  ctx.fillText("Rathaus 100/100", 200, 312);
-  ctx.textAlign="left";
-
-  // Slots
-  state.slots.forEach((s,i)=>{
-    if(!s.unlocked){
-      ctx.strokeStyle = "#3a5570"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
-      ctx.strokeRect(s.x-20,s.y-20,40,40); ctx.setLineDash([]);
-      ctx.fillStyle="#5f7180"; ctx.font="16px sans-serif"; ctx.textAlign="center";
-      ctx.fillText("+", s.x, s.y+6);
-    } else if(s.building){
-      const def = BUILDING_TYPES[s.building.type];
-      ctx.fillStyle = def.color;
-      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(s.x-19,s.y-19,38,38,6) : ctx.rect(s.x-19,s.y-19,38,38);
-      ctx.fill();
-      ctx.fillStyle="#0d1620"; ctx.font="bold 15px sans-serif"; ctx.textAlign="center";
-      ctx.fillText(def.icon, s.x, s.y+5);
-      ctx.fillStyle="#0d1620"; ctx.font="8px sans-serif";
-      ctx.fillText("Lv"+s.building.level, s.x, s.y+17);
-    } else {
-      ctx.strokeStyle = "#cfe3f7"; ctx.lineWidth=1.5;
-      ctx.strokeRect(s.x-19,s.y-19,38,38);
-      ctx.fillStyle="#cfe3f7"; ctx.font="16px sans-serif"; ctx.textAlign="center";
-      ctx.fillText("+", s.x, s.y+6);
-    }
-    ctx.textAlign="left";
-  });
-
-  // Dock
-  ctx.fillStyle="#3a6ea5"; ctx.fillRect(base.dock.x,base.dock.y,base.dock.w,base.dock.h);
-  ctx.fillStyle="#cfe3f7"; ctx.font="10px sans-serif"; ctx.textAlign="center";
-  ctx.fillText("Boot", base.dock.x+base.dock.w/2, base.dock.y+base.dock.h/2+3);
-  ctx.textAlign="left";
-
-  // Spieler
-  const p = base.player;
-  ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fillStyle="#7ad4a0"; ctx.fill();
-}
-
-// ================= SEGELN (offenes Meer) =================
-
-const FAKE_ISLANDS = [
-  {id:"strand", name:"Der Strand", diff:1, x:300, y:460, build: buildIslandStrand,
-   desc:"Ein Turm, offenes Feld."},
-  {id:"wachposten", name:"Wachposten", diff:2, x:80, y:380, build: buildIslandWachposten,
-   desc:"Patrouillen im Engpass, Timing zählt."},
-  {id:"bunker", name:"Bunker", diff:3, x:300, y:280, build: buildIslandBunker,
-   desc:"Tor zerschießen, dabei Türmen ausweichen."},
-  {id:"doppellager", name:"Doppellager", diff:4, x:80, y:180, build: buildIslandDoppellager,
-   desc:"Zwei Beutehaufen, Fracht reicht nicht für beide."},
-  {id:"elite", name:"Elite-Wache", diff:5, x:280, y:90, build: buildIslandElite,
-   desc:"Harter Gegner mit Sturm-Ankündigung."}
-];
-
-function enterSailing(){
-  mode = "sailing";
-  sailing = {
-    boat: {x:190, y:440, r:12, angle:-Math.PI/2},
-    speed: playerStats().boatSpeed,
-    nearId: null,
-    wasNear: {},
-    portArmed: false
-  };
-  document.getElementById("modeMsg").hidden = true;
-  document.getElementById("islandPrompt").hidden = true;
-  setHud();
-}
-
-function updateSailing(dt){
-  if(!document.getElementById("islandPrompt").hidden) return; // pausiert waehrend Abfrage
-  const b = sailing.boat;
-  const len = Math.hypot(joyVec.x,joyVec.y);
-  if(len>0.15){
-    b.x += joyVec.x*sailing.speed*dt;
-    b.y += joyVec.y*sailing.speed*dt;
-    b.angle = Math.atan2(joyVec.y,joyVec.x);
-  }
-  b.x = Math.max(14,Math.min(W-14,b.x));
-  b.y = Math.max(14,Math.min(H-14,b.y));
-
-  const inPort = rectsOverlap({x:b.x-b.r,y:b.y-b.r,w:b.r*2,h:b.r*2}, {x:170,y:520,w:60,h:36});
-  if(Math.hypot(b.x-200,b.y-538) > 110) sailing.portArmed = true;
-  if(inPort && sailing.portArmed){
-    enterBase();
-    return;
-  }
-
-  FAKE_ISLANDS.forEach(isl=>{
-    const dist = Math.hypot(b.x-isl.x, b.y-isl.y);
-    const near = dist < 46;
-    if(near && !sailing.wasNear[isl.id]){
-      showIslandPrompt(isl);
-    }
-    sailing.wasNear[isl.id] = near;
-  });
-}
-
-function showIslandPrompt(isl){
-  const el = document.getElementById("islandPrompt");
-  el.innerHTML = `<b>${isl.name}</b> (Stufe ${isl.diff})<br>${isl.desc}
-    <div class="row">
-      <button id="declineBtn">Weiterfahren</button>
-      <button class="primary" id="attackBtn">Angreifen</button>
-    </div>`;
-  el.hidden = false;
-  document.getElementById("attackBtn").addEventListener("click", ()=>{ el.hidden=true; startRaid(isl); });
-  document.getElementById("declineBtn").addEventListener("click", ()=>{ el.hidden=true; });
-}
-
-function drawSailing(){
-  ctx.fillStyle = "#1c4a63"; ctx.fillRect(0,0,W,H);
-  for(let i=0;i<40;i++){
-    ctx.strokeStyle="rgba(255,255,255,0.04)"; ctx.lineWidth=2;
-    ctx.beginPath();
-    const yy = (i*37)%H;
-    ctx.moveTo(0,yy); ctx.lineTo(W,yy+10);
-    ctx.stroke();
-  }
-
-  // Heimathafen
-  ctx.fillStyle="#3a6ea5"; ctx.fillRect(170,520,60,36);
-  ctx.fillStyle="#cfe3f7"; ctx.font="10px sans-serif"; ctx.textAlign="center";
-  ctx.fillText("Heimathafen", 200, 542);
-
-  // Fake-Inseln
-  FAKE_ISLANDS.forEach(isl=>{
-    ctx.beginPath(); ctx.arc(isl.x,isl.y,30,0,Math.PI*2);
-    ctx.fillStyle="#3a5a2f"; ctx.fill();
-    ctx.strokeStyle = ["#4a9c5a","#c9b23a","#c96a3a","#7a4ac9","#c93a4a"][isl.diff-1];
-    ctx.lineWidth=3; ctx.stroke();
-    ctx.fillStyle="#eee"; ctx.font="10px sans-serif"; ctx.textAlign="center";
-    ctx.fillText(isl.name, isl.x, isl.y-38);
-    ctx.fillText("Stufe "+isl.diff, isl.x, isl.y+4);
-  });
-  ctx.textAlign="left";
-
-  // Boot
-  const b = sailing.boat;
-  ctx.save();
-  ctx.translate(b.x,b.y); ctx.rotate(b.angle);
-  ctx.fillStyle="#e0c34a";
-  ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-10,8); ctx.lineTo(-10,-8); ctx.closePath(); ctx.fill();
-  ctx.restore();
-}
-
-// ================= RAID-INSELN (Fake-Basen) =================
-
-function baseRaidState(name, stats){
-  return {
-    name,
-    player: {x:130,y:H-60,r:12,hp:stats.maxHp,maxHp:stats.maxHp,dmg:stats.dmg,cargoMax:stats.cargo,cargo:0,shootCd:0,facing:-Math.PI/2},
-    walls: [], turrets: [], guards: [], loot: [],
-    exit: {x:20,y:H-100,w:70,h:80},
-    hasLeftExit: false,
-    projectiles: [], over: false, banked: 0
-  };
-}
-
-function buildIslandStrand(stats){
-  const r = baseRaidState("Der Strand", stats);
-  r.walls = [{x:0,y:0,w:W,h:20},{x:0,y:0,w:20,h:H},{x:W-20,y:0,w:20,h:H},{x:0,y:H-20,w:W,h:20}];
-  r.turrets = [{x:190,y:200,r:14,range:170,cd:0,fireRate:1.4}];
-  r.loot = [{x:280,y:340,r:18,amount:35}];
-  return r;
-}
-function buildIslandWachposten(stats){
-  const r = baseRaidState("Wachposten", stats);
-  r.walls = [
-    {x:0,y:0,w:W,h:20},{x:0,y:0,w:20,h:H},{x:W-20,y:0,w:20,h:H},{x:0,y:H-20,w:W,h:20},
-    {x:16,y:200,w:180,h:20}, {x:200,y:380,w:164,h:20}
-  ];
-  r.guards = [
-    {x:280,y:190,r:13,hp:30,maxHp:30,speed:65,dmg:8,state:"patrol",path:[{x:220,y:190},{x:340,y:190}],pathIdx:0,hitCd:0},
-    {x:100,y:340,r:13,hp:30,maxHp:30,speed:65,dmg:8,state:"patrol",path:[{x:40,y:340},{x:160,y:340}],pathIdx:0,hitCd:0}
-  ];
-  r.loot = [{x:190,y:120,r:18,amount:55}];
-  return r;
-}
-function buildIslandBunker(stats){
-  const r = baseRaidState("Bunker", stats);
-  r.walls = [
-    {x:0,y:0,w:W,h:20},{x:0,y:0,w:20,h:H},{x:W-20,y:0,w:20,h:H},{x:0,y:H-20,w:W,h:20},
-    {x:150,y:120,w:20,h:180},{x:260,y:120,w:20,h:180},
-    {x:150,y:300,w:130,h:20,hp:70,maxHp:70,gate:true}
-  ];
-  r.turrets = [{x:100,y:200,r:14,range:220,cd:0,fireRate:1.1},{x:300,y:200,r:14,range:220,cd:0,fireRate:1.1}];
-  r.loot = [{x:190,y:170,r:20,amount:70}];
-  return r;
-}
-function buildIslandDoppellager(stats){
-  const r = baseRaidState("Doppellager", stats);
-  r.walls = [
-    {x:0,y:0,w:W,h:20},{x:0,y:0,w:20,h:H},{x:W-20,y:0,w:20,h:H},{x:0,y:H-20,w:W,h:20},
-    {x:190,y:16,w:20,h:260}
-  ];
-  r.turrets = [{x:90,y:110,r:14,range:170,cd:0,fireRate:1.3}];
-  r.guards = [{x:290,y:190,r:13,hp:32,maxHp:32,speed:70,dmg:9,state:"patrol",path:[{x:230,y:190},{x:340,y:190}],pathIdx:0,hitCd:0}];
-  r.loot = [{x:90,y:190,r:18,amount:45},{x:290,y:110,r:18,amount:45}];
-  return r;
-}
-function buildIslandElite(stats){
-  const r = baseRaidState("Elite-Wache", stats);
-  r.walls = [
-    {x:0,y:0,w:W,h:20},{x:0,y:0,w:20,h:H},{x:W-20,y:0,w:20,h:H},{x:0,y:H-20,w:W,h:20},
-    {x:80,y:220,w:220,h:20},{x:80,y:340,w:220,h:20}
-  ];
-  r.turrets = [{x:300,y:280,r:14,range:190,cd:0,fireRate:1.5}];
-  r.guards = [{x:190,y:280,r:16,hp:70,maxHp:70,speed:50,dmg:22,state:"patrol",
-    path:[{x:190,y:120},{x:190,y:440}],pathIdx:0,hitCd:0,elite:true,chargeTimer:0,charging:false}];
-  r.loot = [{x:190,y:280,r:22,amount:100}];
-  return r;
-}
-
-function startRaid(islandDef){
-  const stats = playerStats();
-  raid = islandDef.build(stats);
-  raid.def = islandDef;
-  mode = "raid";
-  document.getElementById("modeMsg").hidden = true;
-  setHud();
-}
-
-function endRaid(success, title, text){
-  raid.over = true;
-  if(success){ state.resources += raid.player.cargo; raid.banked = raid.player.cargo; }
-  save();
-  const el = document.getElementById("modeMsg");
-  el.innerHTML = `<h2>${title}</h2><p>${text}</p><div class="row"><button class="primary" id="raidContinueBtn">Weiter</button></div>`;
-  el.hidden = false;
-  document.getElementById("raidContinueBtn").addEventListener("click", ()=>{
-    if(sailing) enterSailing(); else enterBase();
-  });
-}
-
-function findAutoTarget(p, raid){
-  let best=null, bestDist=Infinity;
-  raid.guards.forEach(g=>{
-    const d = Math.hypot(p.x-g.x,p.y-g.y);
-    if(d<=190 && d<bestDist && hasLineOfSight(p.x,p.y,g.x,g.y,raid.walls)){ best={x:g.x,y:g.y}; bestDist=d; }
-  });
-  raid.walls.forEach(w=>{
-    if(w.hp===undefined || w.hp<=0) return;
-    const cx=w.x+w.w/2, cy=w.y+w.h/2;
-    const d = Math.hypot(p.x-cx,p.y-cy);
-    if(d<=190 && d<bestDist && hasLineOfSight(p.x,p.y,cx,cy,raid.walls.filter(x=>x!==w))){ best={x:cx,y:cy}; bestDist=d; }
-  });
-  return best;
-}
-
-function updateRaid(dt){
-  const p = raid.player;
-  const speed = 140;
-  const len = Math.hypot(joyVec.x,joyVec.y);
-  if(len>0.1){
-    moveWithCollision(p, joyVec.x*speed*dt, joyVec.y*speed*dt, raid.walls);
-    p.facing = Math.atan2(joyVec.y,joyVec.x);
-  }
-  p.x = Math.max(20,Math.min(W-20,p.x));
-  p.y = Math.max(20,Math.min(H-20,p.y));
-
-  p.shootCd -= dt;
-  const target = findAutoTarget(p, raid);
-  if(target){
-    p.facing = Math.atan2(target.y-p.y, target.x-p.x);
-    if(p.shootCd<=0){
-      p.shootCd = 0.35;
-      raid.projectiles.push({x:p.x,y:p.y,vx:Math.cos(p.facing)*320,vy:Math.sin(p.facing)*320,life:1.4,from:"player",dmg:p.dmg,r:4});
-    }
-  }
-
-  raid.turrets.forEach(t=>{
-    t.cd -= dt;
-    const dist = Math.hypot(p.x-t.x,p.y-t.y);
-    if(dist<=t.range && hasLineOfSight(t.x,t.y,p.x,p.y,raid.walls) && t.cd<=0){
-      t.cd = t.fireRate;
-      const ang = Math.atan2(p.y-t.y,p.x-t.x);
-      raid.projectiles.push({x:t.x,y:t.y,vx:Math.cos(ang)*180,vy:Math.sin(ang)*180,life:2,from:"enemy",dmg:9,r:5});
-    }
-  });
-
-  raid.guards.forEach(g=>{
-    const distToPlayer = Math.hypot(p.x-g.x,p.y-g.y);
-    g.hitCd = Math.max(0,g.hitCd-dt);
-    if(g.elite){
-      if(g.charging){
-        g.chargeTimer -= dt;
-        moveWithCollision(g, g.chargeDir.x*260*dt, g.chargeDir.y*260*dt, raid.walls);
-        if(g.chargeTimer<=0) g.charging=false;
-      } else if(distToPlayer < 220 && hasLineOfSight(g.x,g.y,p.x,p.y,raid.walls)){
-        if(!g._telegraphed){ g._telegraphed=true; g._telegraphTime=0.6; }
-        g._telegraphTime -= dt;
-        if(g._telegraphTime<=0){
-          g.charging=true; g.chargeTimer=0.5;
-          const ang = Math.atan2(p.y-g.y,p.x-g.x);
-          g.chargeDir={x:Math.cos(ang),y:Math.sin(ang)};
-          g._telegraphed=false;
+  if(!slot.unlocked){
+    const cost = interiorUnlockCost(i);
+    box.innerHTML = `<h3>Feld freischalten</h3>`;
+    const opt = document.createElement("div");
+    opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
+    opt.innerHTML = `<span>Freischalten</span><b>${cost}g</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources>=cost){ state.resources-=cost; slot.unlocked=true; save(); document.body.removeChild(overlay); render(); }
+    });
+    box.appendChild(opt);
+  } else if(slot.building){
+    const def = INTERIOR_TYPES[slot.building.type];
+    const cost = interiorUpgradeCost(slot.building.type, slot.building.level);
+    box.innerHTML = `<h3>${def.name} aufwerten</h3><div class="hint2">Level ${slot.building.level} → ${slot.building.level+1}</div>`;
+    const opt = document.createElement("div");
+    opt.className = "buildopt" + (state.resources<cost ? " disabled":"");
+    opt.innerHTML = `<span>Aufwerten</span><b>${cost}g</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources>=cost){ state.resources-=cost; slot.building.level++; save(); document.body.removeChild(overlay); render(); }
+    });
+    box.appendChild(opt);
+  } else {
+    box.innerHTML = `<h3>Gebäude wählen</h3>`;
+    Object.entries(INTERIOR_TYPES).forEach(([type,def])=>{
+      const opt = document.createElement("div");
+      opt.className = "buildopt" + (state.resources<def.baseCost ? " disabled":"");
+      opt.innerHTML = `<span>${def.name}<small>${def.desc}</small></span><b>${def.baseCost}g</b>`;
+      opt.addEventListener("click", ()=>{
+        if(state.resources>=def.baseCost){
+          state.resources-=def.baseCost; slot.building={type,level:1};
+          save(); document.body.removeChild(overlay); render();
         }
-      } else { g._telegraphed=false; }
-    } else {
-      if(distToPlayer<130 && hasLineOfSight(g.x,g.y,p.x,p.y,raid.walls)) g.state="chase";
-      else if(g.state==="chase" && distToPlayer>220) g.state="patrol";
-      if(g.state==="chase"){
-        const ang = Math.atan2(p.y-g.y,p.x-g.x);
-        moveWithCollision(g, Math.cos(ang)*g.speed*dt, Math.sin(ang)*g.speed*dt, raid.walls);
-      } else {
-        const t2 = g.path[g.pathIdx];
-        const ang = Math.atan2(t2.y-g.y,t2.x-g.x);
-        const d = Math.hypot(t2.x-g.x,t2.y-g.y);
-        if(d<6) g.pathIdx=(g.pathIdx+1)%g.path.length;
-        else moveWithCollision(g, Math.cos(ang)*g.speed*0.6*dt, Math.sin(ang)*g.speed*0.6*dt, raid.walls);
-      }
-    }
-    if(distToPlayer < g.r+p.r+4 && g.hitCd<=0){ g.hitCd=0.8; p.hp-=g.dmg; }
-  });
-
-  raid.projectiles.forEach(pr=>{ pr.x+=pr.vx*dt; pr.y+=pr.vy*dt; pr.life-=dt; });
-  for(let i=raid.projectiles.length-1;i>=0;i--){
-    const pr = raid.projectiles[i];
-    let hit = pr.life<=0;
-    if(pr.from==="player"){
-      raid.guards.forEach(g=>{ if(!hit && Math.hypot(pr.x-g.x,pr.y-g.y)<g.r+pr.r){ g.hp-=pr.dmg; hit=true; } });
-      raid.walls.forEach(w=>{ if(!hit && w.hp!==undefined && w.hp>0 && circleRectDist(pr.x,pr.y,pr.r,w)<0){ w.hp-=pr.dmg; hit=true; } });
-      raid.walls.forEach(w=>{ if(!hit && w.hp===undefined && circleRectDist(pr.x,pr.y,pr.r,w)<0){ hit=true; } });
-    } else {
-      if(!hit && Math.hypot(pr.x-p.x,pr.y-p.y)<p.r+pr.r){ p.hp-=pr.dmg; hit=true; }
-      raid.walls.forEach(w=>{ if(!hit && circleRectDist(pr.x,pr.y,pr.r,w)<0 && (w.hp===undefined||w.hp>0)){ hit=true; } });
-    }
-    if(hit) raid.projectiles.splice(i,1);
+      });
+      box.appendChild(opt);
+    });
   }
-  raid.guards = raid.guards.filter(g=>g.hp>0);
 
-  raid.loot.forEach(l=>{
-    if(l.amount<=0) return;
-    if(Math.hypot(p.x-l.x,p.y-l.y)<p.r+l.r+4){
-      const room = p.cargoMax-p.cargo, take=Math.min(room,l.amount);
-      p.cargo+=take; l.amount-=take;
-    }
-  });
-
-  const inExit = rectsOverlap({x:p.x-p.r,y:p.y-p.r,w:p.r*2,h:p.r*2}, raid.exit);
-  if(!inExit) raid.hasLeftExit = true;
-  if(inExit && raid.hasLeftExit) endRaid(true,"Raid erfolgreich!",`${p.cargo} Vorräte gesichert und zur Basis gebracht.`);
-  if(p.hp<=0) endRaid(false,"Niedergeschlagen","Deine Fracht ist verloren. Neu ausrüsten und nochmal versuchen.");
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 
-function drawRaid(){
-  ctx.fillStyle="#2c3f2e"; ctx.fillRect(0,0,W,H);
-  ctx.fillStyle="#3a6ea5"; ctx.fillRect(raid.exit.x,raid.exit.y,raid.exit.w,raid.exit.h);
-  ctx.fillStyle="#cfe3f7"; ctx.font="10px sans-serif"; ctx.fillText("Boot", raid.exit.x+8, raid.exit.y+raid.exit.h/2);
-
-  raid.walls.forEach(w=>{
-    if(w.hp!==undefined){
-      if(w.hp<=0) return;
-      ctx.fillStyle="#8a5a3a"; ctx.fillRect(w.x,w.y,w.w,w.h);
-      ctx.fillStyle="#111"; ctx.fillRect(w.x,w.y-6,w.w,4);
-      ctx.fillStyle="#c94a4a"; ctx.fillRect(w.x,w.y-6,w.w*(w.hp/w.maxHp),4);
-    } else { ctx.fillStyle="#4a5a4a"; ctx.fillRect(w.x,w.y,w.w,w.h); }
-  });
-
-  raid.loot.forEach(l=>{
-    if(l.amount<=0) return;
-    ctx.beginPath(); ctx.arc(l.x,l.y,l.r,0,Math.PI*2); ctx.fillStyle="#e0c34a"; ctx.fill();
-    ctx.fillStyle="#2c2410"; ctx.font="10px sans-serif"; ctx.textAlign="center"; ctx.fillText(l.amount,l.x,l.y+3); ctx.textAlign="left";
-  });
-
-  raid.turrets.forEach(t=>{ ctx.beginPath(); ctx.arc(t.x,t.y,t.r,0,Math.PI*2); ctx.fillStyle="#8a4a4a"; ctx.fill(); });
-
-  raid.guards.forEach(g=>{
-    ctx.beginPath(); ctx.arc(g.x,g.y,g.r,0,Math.PI*2);
-    ctx.fillStyle = g.elite ? (g._telegraphed?"#ffb14a":"#b03a3a") : (g.state==="chase"?"#d9843a":"#a37a3a");
-    ctx.fill();
-    const w=22;
-    ctx.fillStyle="#000"; ctx.fillRect(g.x-w/2,g.y-g.r-8,w,3);
-    ctx.fillStyle="#6ad46a"; ctx.fillRect(g.x-w/2,g.y-g.r-8,w*(g.hp/g.maxHp),3);
-  });
-
-  raid.projectiles.forEach(pr=>{
-    ctx.beginPath(); ctx.arc(pr.x,pr.y,pr.r,0,Math.PI*2);
-    ctx.fillStyle = pr.from==="player"?"#7aa2f7":"#f77a7a"; ctx.fill();
-  });
-
-  const p = raid.player;
-  ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fillStyle="#7ad4a0"; ctx.fill();
-  ctx.beginPath(); ctx.moveTo(p.x,p.y);
-  ctx.lineTo(p.x+Math.cos(p.facing)*18, p.y+Math.sin(p.facing)*18);
-  ctx.strokeStyle="#cfe3f7"; ctx.lineWidth=2; ctx.stroke();
+function addCloseBtn(box, overlay){
+  const close = document.createElement("div");
+  close.className = "buildopt"; close.style.justifyContent = "center"; close.textContent = "Schließen";
+  close.addEventListener("click", ()=> document.body.removeChild(overlay));
+  box.appendChild(close);
 }
 
-// ================= Hauptschleife =================
-
-let lastT = performance.now();
-function frame(now){
-  const dt = Math.min(0.05,(now-lastT)/1000);
-  lastT = now;
-
-  if(mode==="base"){ updateBase(dt); drawBase(); }
-  else if(mode==="sailing"){ updateSailing(dt); drawSailing(); }
-  else if(mode==="raid"){ if(raid && !raid.over) updateRaid(dt); drawRaid(); }
-
-  setHud();
-  requestAnimationFrame(frame);
-}
-
-enterBase();
-requestAnimationFrame(frame);
+render();
 
 })();
 </script>
