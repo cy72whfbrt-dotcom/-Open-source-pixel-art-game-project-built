@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Wellen-Prototyp</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #1b1f27;
+    color: #eee;
+    font-family: system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+  }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  .sub { color: #9aa3b2; font-size: 13px; margin-bottom: 12px; }
+  .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+  canvas {
+    background: #2c3444;
+    border: 2px solid #444c5e;
+    border-radius: 6px;
+    cursor: crosshair;
+  }
+  .panel {
+    width: 300px;
+    background: #232833;
+    border: 1px solid #3a4152;
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 13px;
+  }
+  .row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  .hpbar { background: #3a4152; border-radius: 4px; height: 14px; overflow: hidden; margin-bottom: 10px; }
+  .hpfill { background: #4caf50; height: 100%; transition: width .2s; }
+  h3 { margin: 12px 0 6px; font-size: 13px; color: #9aa3b2; text-transform: uppercase; letter-spacing: .04em; }
+  .tower-btn {
+    display: block; width: 100%; text-align: left;
+    background: #2c3444; border: 1px solid #444c5e; color: #eee;
+    padding: 8px; border-radius: 4px; margin-bottom: 6px; cursor: pointer; font-size: 12px;
+  }
+  .tower-btn:hover { border-color: #7aa2f7; }
+  .tower-btn.selected { border-color: #7aa2f7; background: #33405c; }
+  .tower-btn small { display: block; color: #9aa3b2; margin-top: 2px; }
+  .tower-btn.disabled { opacity: .4; cursor: not-allowed; }
+  button.main {
+    width: 100%; padding: 10px; background: #4c7bd9; border: none; color: white;
+    border-radius: 4px; font-size: 14px; cursor: pointer; margin-top: 8px;
+  }
+  button.main:disabled { background: #3a4152; cursor: not-allowed; }
+  #preview { font-size: 12px; line-height: 1.5; color: #cdd3e0; }
+  #log { font-size: 11px; color: #8892a6; max-height: 90px; overflow-y: auto; margin-top: 8px; border-top: 1px solid #3a4152; padding-top: 6px; }
+  #legend { font-size: 11px; color: #aeb6c6; line-height: 1.6; }
+  #legend b { color: #eee; }
+  #overlay {
+    position: fixed; inset: 0; background: rgba(10,12,16,.85);
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+  }
+  #overlay.show { display: flex; }
+  #overlay h2 { font-size: 28px; margin-bottom: 8px; }
+  #overlay button { margin-top: 16px; padding: 10px 24px; font-size: 15px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<h1>Wellen-Prototyp</h1>
+<div class="sub">Kein Pixel-Art, nur Testen: sind Gegner-Kontern + begrenzte Bauplätze allein schon spaßig?</div>
+
+<div class="wrap">
+  <canvas id="c" width="760" height="560"></canvas>
+
+  <div class="panel">
+    <div class="row"><span>Gold</span><b id="gold">0</b></div>
+    <div class="row"><span>Basis-HP</span><b id="hpText">0/0</b></div>
+    <div class="hpbar"><div class="hpfill" id="hpFill"></div></div>
+    <div class="row"><span>Welle</span><b id="waveNum">0/0</b></div>
+
+    <h3>Nächste Welle</h3>
+    <div id="preview">–</div>
+    <button class="main" id="startBtn">Welle starten</button>
+
+    <h3>Türme (klicken, dann Bauplatz anklicken)</h3>
+    <div id="shop"></div>
+
+    <h3>Spielbericht</h3>
+    <div id="log"></div>
+
+    <h3>Kontern-Info</h3>
+    <div id="legend"></div>
+  </div>
+</div>
+
+<div id="overlay">
+  <h2 id="overTitle"></h2>
+  <div id="overText" style="color:#aab; font-size:14px;"></div>
+  <button class="main" id="restartBtn">Neu starten</button>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+// ---------- Grunddaten ----------
+
+const ENEMY_TYPES = {
+  grunt:   { name: "Grunt",   color: "#9aa3b2", hp: 20, speed: 95, damage: 1, gold: 3, flies:false, armor:0 },
+  armored: { name: "Gepanzert", color: "#3b5aa8", hp: 70, speed: 65, damage: 2, gold: 7, flies:false, armor:0.7 },
+  swarm:   { name: "Schwarm", color: "#d9c94a", hp: 8,  speed: 120, damage: 1, gold: 1, flies:false, armor:0 },
+  flier:   { name: "Flieger", color: "#6fd1d1", hp: 26, speed: 105, damage: 2, gold: 5, flies:true,  armor:0 }
+};
+
+const TOWER_TYPES = {
+  arrow:  { name:"Bogenturm", cost:20, dmg:5,  rate:0.45, range:110, splash:0, pierce:false, hitsAir:false, color:"#7aa2f7", desc:"Günstig, schnell. Nichts gegen Panzerung, trifft keine Flieger." },
+  cannon: { name:"Kanone",    cost:35, dmg:9,  rate:0.9,  range:95,  splash:46, pierce:false, hitsAir:false, color:"#e0763f", desc:"Flächenschaden. Stark gegen Schwarm. Trifft keine Flieger." },
+  sniper: { name:"Scharfschütze", cost:50, dmg:22, rate:1.3, range:170, splash:0, pierce:true, hitsAir:true, color:"#c95bd6", desc:"Ignoriert Panzerung, trifft Flieger. Langsam - schwach gegen Schwärme." },
+  flak:   { name:"Flak",      cost:28, dmg:8,  rate:0.5,  range:130, splash:0, pierce:false, hitsAir:true, onlyAir:true, color:"#5bd68a", desc:"Trifft NUR Flieger. Sonst nutzlos." }
+};
+
+// S-Pfad
+const PATH = [
+  {x:0,   y:80},
+  {x:560, y:80},
+  {x:560, y:220},
+  {x:120, y:220},
+  {x:120, y:360},
+  {x:640, y:360},
+  {x:640, y:500},
+  {x:760, y:500}
+];
+
+const BUILD_SPOTS = [
+  {x:280, y:40},  {x:440, y:40},
+  {x:640, y:140}, {x:440, y:180},
+  {x:220, y:280}, {x:60,  y:280},
+  {x:280, y:400}, {x:520, y:430}
+];
+
+// Wellen: Zusammensetzung, nicht nur Menge - erzwingt neue Entscheidungen
+const WAVES = [
+  [["grunt",6]],
+  [["grunt",10]],
+  [["grunt",5],["armored",2]],
+  [["grunt",4],["swarm",10]],
+  [["armored",4],["grunt",6]],
+  [["grunt",6],["flier",3]],
+  [["swarm",14],["armored",2]],
+  [["flier",5],["armored",4]],
+  [["armored",5],["swarm",16],["flier",3]],
+  [["armored",8],["flier",6],["swarm",10],["grunt",6]]
+];
+
+// ---------- State ----------
+
+let gold = 80;
+let baseHP = 20, baseHPMax = 20;
+let waveIdx = 0;
+let enemies = [], towers = [], shots = [];
+let selectedTowerType = null;
+let waveRunning = false;
+let spawnQueue = [];
+let gameOver = false;
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function log(msg){
+  const el = document.getElementById("log");
+  const line = document.createElement("div");
+  line.textContent = msg;
+  el.prepend(line);
+}
+
+// ---------- Pfad-Hilfen ----------
+
+function pathLength(){
+  let d=0;
+  for(let i=0;i<PATH.length-1;i++) d += dist(PATH[i],PATH[i+1]);
+  return d;
+}
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+const TOTAL_PATH_LEN = pathLength();
+
+function posAtDistance(d){
+  if(d<=0) return {...PATH[0]};
+  let remaining = d;
+  for(let i=0;i<PATH.length-1;i++){
+    const segLen = dist(PATH[i],PATH[i+1]);
+    if(remaining <= segLen){
+      const t = segLen===0?0:remaining/segLen;
+      return {
+        x: PATH[i].x + (PATH[i+1].x-PATH[i].x)*t,
+        y: PATH[i].y + (PATH[i+1].y-PATH[i].y)*t
+      };
+    }
+    remaining -= segLen;
+  }
+  return {...PATH[PATH.length-1]};
+}
+
+// ---------- Setup UI ----------
+
+function buildShop(){
+  const shop = document.getElementById("shop");
+  shop.innerHTML = "";
+  Object.entries(TOWER_TYPES).forEach(([key,t])=>{
+    const b = document.createElement("div");
+    b.className = "tower-btn";
+    b.id = "shop-"+key;
+    b.innerHTML = `${t.name} — ${t.cost}g<small>${t.desc}</small>`;
+    b.addEventListener("click", ()=>{
+      if(gold < t.cost) return;
+      selectedTowerType = (selectedTowerType===key) ? null : key;
+      refreshShopSelection();
+    });
+    shop.appendChild(b);
+  });
+}
+function refreshShopSelection(){
+  Object.keys(TOWER_TYPES).forEach(key=>{
+    const el = document.getElementById("shop-"+key);
+    el.classList.toggle("selected", selectedTowerType===key);
+    el.classList.toggle("disabled", gold < TOWER_TYPES[key].cost);
+  });
+}
+
+function buildLegend(){
+  const el = document.getElementById("legend");
+  el.innerHTML = Object.values(ENEMY_TYPES).map(e=>
+    `<div><b>${e.name}</b> ${e.flies?"(fliegt)":""} ${e.armor?"– stark gepanzert":""}</div>`
+  ).join("");
+}
+
+function updateHUD(){
+  document.getElementById("gold").textContent = gold;
+  document.getElementById("hpText").textContent = `${Math.max(0,Math.round(baseHP))}/${baseHPMax}`;
+  document.getElementById("hpFill").style.width = Math.max(0,baseHP/baseHPMax*100)+"%";
+  document.getElementById("waveNum").textContent = `${Math.min(waveIdx+1,WAVES.length)}/${WAVES.length}`;
+  refreshShopSelection();
+
+  const prevEl = document.getElementById("preview");
+  if(waveIdx < WAVES.length){
+    prevEl.innerHTML = WAVES[waveIdx].map(([type,count])=>
+      `${count}x ${ENEMY_TYPES[type].name}`
+    ).join(", ");
+  } else {
+    prevEl.textContent = "Alle Wellen geschafft!";
+  }
+  document.getElementById("startBtn").disabled = waveRunning || gameOver || waveIdx>=WAVES.length;
+}
+
+// ---------- Bauplätze ----------
+
+function spotOccupiedBy(spot){
+  return towers.find(t=>t.x===spot.x && t.y===spot.y);
+}
+
+canvas.addEventListener("click", (e)=>{
+  if(gameOver) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width/rect.width, scaleY = canvas.height/rect.height;
+  const mx = (e.clientX-rect.left)*scaleX, my = (e.clientY-rect.top)*scaleY;
+
+  const spot = BUILD_SPOTS.find(s=>dist(s,{x:mx,y:my})<22);
+  if(!spot) return;
+
+  const existing = spotOccupiedBy(spot);
+  if(existing){ log(`Dort steht schon ein ${TOWER_TYPES[existing.type].name}.`); return; }
+  if(!selectedTowerType) return;
+
+  const def = TOWER_TYPES[selectedTowerType];
+  if(gold < def.cost){ log("Nicht genug Gold."); return; }
+
+  gold -= def.cost;
+  towers.push({ type:selectedTowerType, x:spot.x, y:spot.y, cooldown:0 });
+  log(`${def.name} gebaut (-${def.cost}g).`);
+  selectedTowerType = null;
+  updateHUD();
+});
+
+// ---------- Wellen ----------
+
+function startWave(){
+  if(waveRunning || gameOver || waveIdx>=WAVES.length) return;
+  waveRunning = true;
+  spawnQueue = [];
+  let t = 0;
+  WAVES[waveIdx].forEach(([type,count])=>{
+    for(let i=0;i<count;i++){
+      spawnQueue.push({ type, at: t });
+      t += (type==="swarm") ? 180 : 550;
+    }
+    t += 500;
+  });
+  spawnQueue.sort((a,b)=>a.at-b.at);
+  spawnQueue.forEach(s=>s.at += performance.now());
+  updateHUD();
+}
+
+document.getElementById("startBtn").addEventListener("click", startWave);
+
+function finishWaveIfDone(){
+  if(!waveRunning) return;
+  if(spawnQueue.length===0 && enemies.length===0){
+    waveRunning = false;
+    const bonus = 20 + waveIdx*4;
+    gold += bonus;
+    log(`Welle ${waveIdx+1} geschafft! +${bonus}g Bonus.`);
+    waveIdx++;
+    if(waveIdx>=WAVES.length){
+      showOverlay("Gewonnen!", "Alle Wellen überstanden. Basis-HP: "+Math.round(baseHP));
+    }
+    updateHUD();
+  }
+}
+
+// ---------- Game Loop ----------
+
+let lastT = performance.now();
+
+function frame(now){
+  const dt = Math.min(0.05, (now-lastT)/1000);
+  lastT = now;
+
+  if(!gameOver){
+    // Spawnen
+    while(spawnQueue.length && spawnQueue[0].at <= now){
+      const s = spawnQueue.shift();
+      const def = ENEMY_TYPES[s.type];
+      enemies.push({ type:s.type, hp:def.hp, maxHp:def.hp, dist:0 });
+    }
+
+    // Gegner bewegen
+    enemies.forEach(en=>{
+      const def = ENEMY_TYPES[en.type];
+      en.dist += def.speed*dt;
+    });
+
+    // Basis erreicht
+    for(let i=enemies.length-1;i>=0;i--){
+      if(enemies[i].dist >= TOTAL_PATH_LEN){
+        const def = ENEMY_TYPES[enemies[i].type];
+        baseHP -= def.damage;
+        enemies.splice(i,1);
+        if(baseHP<=0 && !gameOver){
+          baseHP = 0;
+          showOverlay("Verloren", "Basis zerstört bei Welle "+(waveIdx+1)+".");
+        }
+      }
+    }
+
+    // Türme feuern
+    towers.forEach(t=>{
+      t.cooldown -= dt;
+      if(t.cooldown>0) return;
+      const def = TOWER_TYPES[t.type];
+      let target=null, bestDist=-1;
+      enemies.forEach(en=>{
+        const edef = ENEMY_TYPES[en.type];
+        if(def.onlyAir && !edef.flies) return;
+        if(edef.flies && !def.hitsAir) return;
+        const p = posAtDistance(en.dist);
+        if(dist(p,t) <= def.range && en.dist>bestDist){ bestDist=en.dist; target=en; }
+      });
+      if(target){
+        t.cooldown = def.rate;
+        const p = posAtDistance(target.dist);
+        shots.push({x1:t.x,y1:t.y,x2:p.x,y2:p.y,life:0.12,color:def.color});
+        applyDamage(target, def);
+        if(def.splash>0){
+          enemies.forEach(en=>{
+            if(en===target) return;
+            const edef = ENEMY_TYPES[en.type];
+            if(edef.flies) return;
+            const ep = posAtDistance(en.dist);
+            if(dist(ep,p) <= def.splash) applyDamage(en, def, true);
+          });
+        }
+      }
+    });
+
+    // Tote entfernen + Gold
+    for(let i=enemies.length-1;i>=0;i--){
+      if(enemies[i].hp<=0){
+        gold += ENEMY_TYPES[enemies[i].type].gold;
+        enemies.splice(i,1);
+      }
+    }
+
+    shots.forEach(s=>s.life -= dt);
+    shots = shots.filter(s=>s.life>0);
+
+    finishWaveIfDone();
+    updateHUD();
+  }
+
+  draw();
+  requestAnimationFrame(frame);
+}
+
+function applyDamage(enemy, towerDef, isSplash){
+  const edef = ENEMY_TYPES[enemy.type];
+  let dmg = towerDef.dmg;
+  if(edef.armor && !towerDef.pierce) dmg *= (1-edef.armor);
+  enemy.hp -= dmg;
+}
+
+// ---------- Zeichnen ----------
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Pfad
+  ctx.strokeStyle = "#3a4356";
+  ctx.lineWidth = 34;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(PATH[0].x, PATH[0].y);
+  for(let i=1;i<PATH.length;i++) ctx.lineTo(PATH[i].x, PATH[i].y);
+  ctx.stroke();
+
+  // Bauplätze
+  BUILD_SPOTS.forEach(s=>{
+    const occ = spotOccupiedBy(s);
+    ctx.beginPath();
+    ctx.arc(s.x,s.y,20,0,Math.PI*2);
+    ctx.fillStyle = occ ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.12)";
+    ctx.fill();
+    ctx.strokeStyle = "#5a6478";
+    ctx.stroke();
+  });
+
+  // Türme
+  towers.forEach(t=>{
+    const def = TOWER_TYPES[t.type];
+    ctx.beginPath();
+    ctx.arc(t.x,t.y,16,0,Math.PI*2);
+    ctx.fillStyle = def.color;
+    ctx.fill();
+  });
+
+  // Schüsse
+  shots.forEach(s=>{
+    ctx.strokeStyle = s.color;
+    ctx.globalAlpha = Math.max(0,s.life/0.12);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(s.x1,s.y1);
+    ctx.lineTo(s.x2,s.y2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+
+  // Gegner
+  enemies.forEach(en=>{
+    const def = ENEMY_TYPES[en.type];
+    const p = posAtDistance(en.dist);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - (def.flies?18:0), 9, 0, Math.PI*2);
+    ctx.fillStyle = def.color;
+    ctx.fill();
+    // HP-Leiste
+    const w=18;
+    ctx.fillStyle="#000";
+    ctx.fillRect(p.x-w/2, p.y-16-(def.flies?18:0), w, 3);
+    ctx.fillStyle="#6ad46a";
+    ctx.fillRect(p.x-w/2, p.y-16-(def.flies?18:0), w*(en.hp/en.maxHp), 3);
+  });
+}
+
+// ---------- Overlay ----------
+
+function showOverlay(title, text){
+  gameOver = true;
+  document.getElementById("overTitle").textContent = title;
+  document.getElementById("overText").textContent = text;
+  document.getElementById("overlay").classList.add("show");
+}
+document.getElementById("restartBtn").addEventListener("click", ()=>{
+  gold=80; baseHP=20; waveIdx=0; enemies=[]; towers=[]; shots=[];
+  selectedTowerType=null; waveRunning=false; spawnQueue=[]; gameOver=false;
+  document.getElementById("overlay").classList.remove("show");
+  updateHUD();
+});
+
+// ---------- Start ----------
+
+buildShop();
+buildLegend();
+updateHUD();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
