@@ -134,6 +134,15 @@ function defaultState(){
   };
 }
 let state = load();
+
+// Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
+// anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
+// dann einmal neu laden - setzt Holz/Stein auf 100000.
+if(new URLSearchParams(location.search).get("cheat")==="1"){
+  state.resources.holz = 100000;
+  state.resources.stein = 100000;
+  save();
+}
 function load(){
   try {
     const raw = localStorage.getItem(SAVE_KEY);
