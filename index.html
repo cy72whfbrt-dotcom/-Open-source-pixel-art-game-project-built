@@ -88,6 +88,16 @@
   }
   .titleText { font-size:12px; font-weight:800; color:var(--text); }
 
+  /* Kategorie-Pille wie "Fähigkeit" im Referenzbild - eigenes System hat
+     keinen Skillbaum, darum als klar markierter Vorschau-Knopf. */
+  .categoryRow { display:flex; justify-content:center; margin-bottom:10px; }
+  .categoryPill {
+    display:flex; align-items:center; gap:5px; font-size:11px; font-weight:700; color:var(--text-dim);
+    background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:999px;
+    padding:5px 12px; cursor:pointer;
+  }
+  .categoryPill:active { background:rgba(255,255,255,0.09); }
+
   .avatarStage { position:relative; width:250px; height:230px; margin:0 auto 14px; }
   .avatarBig {
     position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
@@ -134,25 +144,28 @@
 
   .valuesHeader {
     font-size:11px; font-weight:800; color:var(--text-dim); margin:2px 0 6px; letter-spacing:.02em;
+    display:flex; align-items:center; gap:5px; border-top:1px solid var(--border); padding-top:10px;
   }
-  .levelRow { display:flex; align-items:flex-end; gap:10px; margin-bottom:10px; }
-  .levelRow .lvBarWrap { flex:1; min-width:0; }
-  .levelRow .lvBig { font-size:20px; font-weight:800; color:var(--text); line-height:1; margin-bottom:4px; }
-  .levelRow .lvBig span { font-size:12px; font-weight:700; color:var(--text-dim); }
-  .levelRow .lvLabel { font-size:10.5px; color:var(--text-dim); margin-bottom:3px; }
-  .levelRow .lvBar { height:9px; border-radius:5px; background:rgba(255,255,255,0.08); overflow:hidden; }
-  .levelRow .lvBar > div { height:100%; background:linear-gradient(90deg,#9ed13a,#eef27a); }
+  /* Level/EXP: eigene Kopfzeile (grosse Zahl + Kraft-Plakette), darunter
+     EINE durchgehende, kraeftige Leiste mit dunklem Rand - naeher an der
+     dicken, deutlich sichtbaren EXP-Leiste aus der Referenz statt eines
+     duennen, generischen Balkens. */
+  .levelHeaderRow { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .lvBig { font-size:21px; font-weight:800; color:var(--text); line-height:1; }
+  .lvBig span { display:block; font-size:11px; font-weight:700; color:var(--text-dim); margin-top:3px; }
+  .lvBarFull { height:14px; border-radius:7px; background:rgba(0,0,0,0.5); border:1.5px solid rgba(0,0,0,0.6); overflow:hidden; margin-bottom:12px; }
+  .lvBarFull > div { height:100%; background:linear-gradient(180deg,#f3f79a,#9ed13a); border-right:1px solid rgba(0,0,0,0.25); }
   .rankBadge {
     font-size:10px; font-weight:800; color:#0b1a17; background:linear-gradient(180deg,#6bf0d2,#18a98f);
-    border-radius:8px; padding:6px 12px; text-align:center; white-space:nowrap; line-height:1.3;
+    border-radius:8px; padding:6px 12px; text-align:center; white-space:nowrap; line-height:1.3; flex-shrink:0;
   }
 
   .statsGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
   .statTile {
-    background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:var(--radius-sm);
-    padding:7px 10px; font-size:11px; color:var(--text-dim);
+    background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:var(--radius-sm);
+    padding:8px 10px; font-size:11px; color:var(--text-dim);
   }
-  .statTile b { display:block; color:var(--text); font-size:16px; margin-top:1px; }
+  .statTile b { display:block; color:var(--text); font-size:18px; margin-top:2px; }
   .gearLegend { font-size:10.5px; color:var(--text-dim); text-align:center; margin-bottom:10px; }
 
   #joystick {
@@ -2879,17 +2892,18 @@ function openProfileHub(){
       <div class="titleIcon">🛡️</div>
       <div class="titleText">${playerTitle()}</div>
     </div>
+    <div class="categoryRow">
+      <div class="categoryPill" id="btnFaehigkeiten">🌟 Fähigkeiten</div>
+    </div>
     <div class="avatarStage" id="avatarStage">
       <div class="avatarBig"><div class="avHead"></div><div class="avBody"></div></div>
       <div class="levelChip">Lv. ${state.playerLevel}</div>
     </div>
-    <div class="levelRow">
-      <div class="lvBarWrap">
-        <div class="lvBig">Level ${state.playerLevel} <span>${state.playerXp}/${xpNow} EXP</span></div>
-        <div class="lvBar"><div style="width:${Math.round(xpRatio*100)}%"></div></div>
-      </div>
+    <div class="levelHeaderRow">
+      <div class="lvBig">Level ${state.playerLevel}<span>${state.playerXp}/${xpNow} EXP</span></div>
       <div class="rankBadge">⚡ ${formatCompactNumber(computeKraft())}<br>Kraft</div>
     </div>
+    <div class="lvBarFull"><div style="width:${Math.round(xpRatio*100)}%"></div></div>
     <div class="valuesHeader">🔍 Werte</div>
     <div class="statsGrid">
       <div class="statTile">❤ Leben<b>${Math.round(playerMaxHp())}</b></div>
@@ -2899,6 +2913,17 @@ function openProfileHub(){
     </div>
     <div class="gearLegend">Ausrüstung antippen zum Aufwerten (bezahlt mit 💎)</div>
   `;
+
+  box.querySelector("#btnFaehigkeiten").addEventListener("click", ()=>{
+    const inner = document.createElement("div");
+    inner.className = "buildmenu";
+    const innerBox = document.createElement("div");
+    innerBox.className = "box";
+    innerBox.innerHTML = `<h3>🌟 Fähigkeiten</h3><div class="hint2">Ein Fähigkeiten-Baum für den Spieler ist noch nicht gebaut - kommt als eigenes System nach der Ausrüstung.</div>`;
+    addCloseBtn(innerBox, inner);
+    inner.appendChild(innerBox);
+    document.body.appendChild(inner);
+  });
 
   const stage = box.querySelector("#avatarStage");
   Object.entries(EQUIP_DEFS).forEach(([key,def],i)=>{
