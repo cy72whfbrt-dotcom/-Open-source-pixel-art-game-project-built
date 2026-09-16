@@ -3141,7 +3141,8 @@ function showPullResults(results){
 // Slot-Picker: eigene Exemplare dieses Slots (nach Rarität/Power sortiert)
 // zum Tragen, Level-/Stern-Aufwerten und Kombinieren (3 gleiche Rarität ->
 // 1 der naechsten). Erreichbar ueber einen Ring-Slot im Profil-Hub.
-function openGearPicker(slot){
+function openGearPicker(slot, returnMode){
+  returnMode = returnMode || "equip";
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
@@ -3233,14 +3234,14 @@ function openGearPicker(slot){
   // bereits geschlossen worden).
   const close = document.createElement("div");
   close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
-  close.addEventListener("click", ()=>{ document.body.removeChild(overlay); openProfileHub("equip"); });
+  close.addEventListener("click", ()=>{ document.body.removeChild(overlay); openProfileHub(returnMode); });
   box.appendChild(close);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
   function refresh(){
     document.body.removeChild(overlay);
-    openGearPicker(slot);
+    openGearPicker(slot, returnMode);
   }
 }
 
@@ -3285,6 +3286,7 @@ function openProfileHub(mode){
       <div class="levelChip">Lv. ${state.playerLevel}</div>
     </div>
     <div class="categoryRow">
+      <div class="categoryPill${mode==="gear"?" active":""}" id="btnAusruestung">🛡️ Ausrüstung</div>
       <div class="categoryPill${mode==="abilities"?" active":""}" id="btnFaehigkeiten">🌟 Fähigkeiten</div>
       <div class="categoryPill" id="btnSchmiede">🔨 Schmiede</div>
     </div>
@@ -3294,6 +3296,10 @@ function openProfileHub(mode){
       : "Slot antippen: tragen, aufwerten oder kombinieren (bezahlt mit 🪙)"}</div>
   `;
 
+  box.querySelector("#btnAusruestung").addEventListener("click", ()=>{
+    document.body.removeChild(overlay);
+    openProfileHub(mode==="gear" ? "equip" : "gear");
+  });
   box.querySelector("#btnFaehigkeiten").addEventListener("click", ()=>{
     document.body.removeChild(overlay);
     openProfileHub(mode==="abilities" ? "equip" : "abilities");
@@ -3302,9 +3308,9 @@ function openProfileHub(mode){
     showComingSoonPanel("🔨 Schmiede", "Noch ohne eigene Mechanik dahinter - der Button ist schon da, der Inhalt kommt später.");
   });
 
-  // Mittlerer Bereich: im Ausruestungs-Modus Level/EXP + Werte, im
-  // Faehigkeiten-Modus stattdessen die Liste der eigenen Faehigkeiten -
-  // die beiden Inhalte gehoeren nicht gleichzeitig ins Bild.
+  // Mittlerer Bereich, je nach Modus: Standard = Level/EXP + Werte,
+  // "Fähigkeiten" = Liste der eigenen Faehigkeiten, "Ausrüstung" = Liste
+  // der eigenen Ausruestung - immer nur EINER der drei Inhalte gleichzeitig.
   const mid = box.querySelector("#midSection");
   if(mode==="abilities"){
     const owned = state.player.abilitiesOwned;
@@ -3324,6 +3330,30 @@ function openProfileHub(mode){
         const row = document.createElement("div");
         row.className = "buildopt";
         row.innerHTML = `<span>${def.icon} ${def.name}${isEquipped?" · Aktiv":""}<small>${def.desc}</small></span><b>${isEquipped?"✓":"—"}</b>`;
+        mid.appendChild(row);
+      });
+    }
+  } else if(mode==="gear"){
+    const owned = state.player.gearInventory
+      .slice()
+      .sort((a,b)=> GEAR_SLOTS.indexOf(a.slot)-GEAR_SLOTS.indexOf(b.slot) || rarityIndex(b.rarity)-rarityIndex(a.rarity) || gearPower(b.rarity,b.level,b.stars)-gearPower(a.rarity,a.level,a.stars));
+    const label = document.createElement("div");
+    label.className = "sectionLabel";
+    label.textContent = "Deine Ausrüstung";
+    mid.appendChild(label);
+    if(owned.length===0){
+      const empty = document.createElement("div");
+      empty.className = "hint2";
+      empty.textContent = "Noch keine Ausrüstung - im Shop ziehen (🛒-Knopf am Bildschirmrand).";
+      mid.appendChild(empty);
+    } else {
+      owned.forEach(item=>{
+        const slotInfo = GEAR_SLOT_INFO[item.slot], rInfo = RARITY_INFO[item.rarity];
+        const isEquipped = state.player.gearEquipped[item.slot]===item.id;
+        const row = document.createElement("div");
+        row.className = "buildopt gearRow";
+        row.style.borderColor = rInfo.color;
+        row.innerHTML = `<span>${slotInfo.icon} ${slotInfo.name}<small style="color:${rInfo.color}">${rInfo.name} · Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""}${isEquipped?" · Getragen":""}</small></span><b>${gearKraft(item)}⚡</b>`;
         mid.appendChild(row);
       });
     }
@@ -3384,7 +3414,7 @@ function openProfileHub(mode){
         <div class="bonus" style="${item?`color:${rInfo.color}`:""}">${item?rInfo.name+" ·"+item.level:"—"}</div>`;
       slot.addEventListener("click", ()=>{
         document.body.removeChild(overlay);
-        openGearPicker(gearSlotKey);
+        openGearPicker(gearSlotKey, mode);
       });
       stage.appendChild(slot);
     });
