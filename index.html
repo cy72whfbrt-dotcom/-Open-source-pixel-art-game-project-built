@@ -48,6 +48,14 @@
     background:var(--panel-soft); color:var(--text); font-size:15px; cursor:pointer; line-height:1;
     box-shadow:0 3px 10px rgba(0,0,0,0.3);
   }
+  /* Shop-Knopf "an der Seite" - rechter Rand, mittig auf der Bildschirmhoehe,
+     dort wo sonst nichts anderes im HUD sitzt. */
+  #shopBtn {
+    position:absolute; right:10px; top:50%; transform:translateY(-50%);
+    width:44px; height:44px; border-radius:50%; border:1.5px solid rgba(255,214,150,0.5);
+    background:linear-gradient(180deg,#3a2f14,#1a1608); color:#fff; font-size:19px; cursor:pointer; line-height:1;
+    box-shadow:0 4px 14px rgba(0,0,0,0.4);
+  }
 
   .buildmenu {
     position:fixed; inset:0; background:rgba(6,10,15,.68); display:flex; align-items:center; justify-content:center; z-index:20;
@@ -140,7 +148,8 @@
   .gearSlot .bonus { font-size:10.5px; font-weight:800; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.8); }
   .gearSlot .cost { font-size:9.5px; color:var(--text-dim); }
   .gearSlot.pos-l1 { left:-10px; top:0; }
-  .gearSlot.pos-l2 { left:-10px; bottom:0; }
+  .gearSlot.pos-l2 { left:-16px; top:50%; margin-top:-31px; }
+  .gearSlot.pos-l3 { left:-10px; bottom:0; }
   .gearSlot.pos-r1 { right:-10px; top:0; }
   .gearSlot.pos-r2 { right:-16px; top:50%; margin-top:-31px; }
   .gearSlot.pos-r3 { right:-10px; bottom:0; }
@@ -173,6 +182,29 @@
 
   .sectionLabel { font-size:11px; font-weight:800; color:var(--text-dim); margin:12px 0 6px; }
 
+  /* Gacha-Shop: Kiste + 1x/10x-Knoepfe. */
+  .gearCrate { text-align:center; margin:6px 0 14px; }
+  .crateIcon { font-size:56px; filter:drop-shadow(0 6px 10px rgba(0,0,0,0.5)); }
+  .crateBtnRow { display:flex; gap:10px; }
+  .crateBtn {
+    flex:1; display:flex; flex-direction:column; gap:4px; align-items:center;
+    background:linear-gradient(180deg,#2d3a4a,#18222e); border:1px solid var(--border); border-radius:var(--radius-md);
+    color:var(--text); font-size:13px; font-weight:800; padding:10px; cursor:pointer;
+  }
+  .crateBtn b { font-size:11px; font-weight:700; color:#ffd68f; }
+  .crateBtn:disabled { opacity:.45; cursor:default; }
+
+  .pullResultGrid { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-bottom:6px; }
+  .pullResultCell {
+    aspect-ratio:1; border-radius:var(--radius-sm); border:2px solid; background:rgba(255,255,255,0.04);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  }
+  .prIcon { font-size:18px; }
+  .prRarity { font-size:8.5px; font-weight:800; }
+
+  /* Ausruestungs-Liste im Slot-Picker: farbiger Rand nach Rarität. */
+  .gearRow { border-width:1.5px !important; align-items:center; }
+
   #joystick {
     position:absolute; left:14px; bottom:14px; width:104px; height:104px; border-radius:50%;
     background:var(--panel-soft); border:1px solid var(--border); touch-action:none;
@@ -193,6 +225,7 @@
       <button id="centerBtn">◎</button>
       <button id="zoomOut">−</button>
     </div>
+    <button id="shopBtn">🛒</button>
     <div id="joystick"><div id="joystickKnob"></div></div>
   </div>
 </div>
@@ -293,23 +326,33 @@ function defaultState(){
     repairJob: null,
     nextWaveComposition: null,
     player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
-      equip: { ruestung:0, stiefel:0, amulett:0, kompass:0 },
-      abilitiesOwned: [], abilitiesEquipped: [] }
+      abilitiesOwned: [], abilitiesEquipped: [],
+      gearInventory: [], gearEquipped: { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null },
+      nextGearId: 1 }
   };
 }
 let state = load();
-// Alte Speicherstaende kennen equip/Faehigkeiten noch nicht - defensiv
-// nachruesten statt bei jedem Zugriff extra abzusichern.
-if(!state.player.equip) state.player.equip = { ruestung:0, stiefel:0, amulett:0, kompass:0 };
+// Alte Speicherstaende kennen Faehigkeiten/Ausruestung noch nicht (oder
+// noch das alte 4-Werte-Ausruestungssystem) - defensiv nachruesten statt
+// bei jedem Zugriff extra abzusichern. Das alte "equip"-Feld (Ruestung/
+// Stiefel/Amulett/Kompass als reine Levelzahlen) wird nicht mehr benutzt -
+// abgeloest durch das Rarität+Gegenstaende-System unten.
 if(!state.player.abilitiesOwned) state.player.abilitiesOwned = [];
 if(!state.player.abilitiesEquipped) state.player.abilitiesEquipped = [];
+if(!state.player.gearInventory) state.player.gearInventory = [];
+if(!state.player.gearEquipped) state.player.gearEquipped = { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null };
+if(!state.player.nextGearId) state.player.nextGearId = 1;
+delete state.player.equip;
 
 // Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
 // anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
-// dann einmal neu laden - setzt Holz/Stein auf 100000.
+// dann einmal neu laden - setzt alle Ressourcen/Waehrungen hoch, u.a. um
+// den Gacha-Shop zu testen.
 if(new URLSearchParams(location.search).get("cheat")==="1"){
   state.resources.holz = 100000;
   state.resources.stein = 100000;
+  state.resources.coins = 100000;
+  state.resources.gems = 1000;
   save();
 }
 function load(){
@@ -417,24 +460,101 @@ const WEAPONS = {
 
 function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,level-1)), stein: Math.round(45*Math.pow(1.55,level-1)) }; }
 
-// ================= Ausruestung: staerkt den SPIELER, nicht die Basis =================
-// Bewusst nur Stufen fuer Werte, die es schon wirklich gibt (HP, Lauftempo,
-// Rucksack, EXP-Rate) - kein Waffen-Slot, weil der Spieler aktuell gar
-// nicht zurueckschlagen kann (nur Tuerme/Angreifer kaempfen). Bezahlt wird
-// mit Juwelen, die bisher nur angezeigt, aber nie ausgegeben wurden.
-const EQUIP_MAX_LEVEL = 5;
-const EQUIP_DEFS = {
-  ruestung: { name:"Rüstung", icon:"🛡️", desc:"Erhöht deine maximalen Lebenspunkte.", bonusPerLevel:15, unit:" HP", percent:false },
-  stiefel:  { name:"Stiefel", icon:"👢", desc:"Erhöht dein Lauftempo.", bonusPerLevel:0.08, percent:true },
-  amulett:  { name:"Amulett", icon:"📿", desc:"Erhöht deine Rucksack-Kapazität.", bonusPerLevel:6, unit:"", percent:false },
-  kompass:  { name:"Kompass", icon:"🧭", desc:"Erhöht die EXP aus Wellen und Ausbau.", bonusPerLevel:0.08, percent:true }
+// ================= Ausruestung: Raritaeten + Gacha-Shop + Kombinieren =====
+// Sechs Slots, jeder mit einem konkreten Spieler-Wert dahinter. Jedes
+// Gegenstands-Exemplar hat Rarität + Level + Sterne. Kernregel (so
+// gewuenscht): eine Rarität auf Max-Level+Max-Sterne ist IMMER schwaecher
+// als die naechsthoehere Rarität auf Stufe 1 - deshalb wachsen die
+// Rarität-Basiswerte exponentiell (Faktor 2.5), waehrend Level/Sterne nur
+// maximal knapp verdoppeln koennen. Bezahlt wird alles mit Coins.
+const GEAR_SLOTS = ["stiefel","handschuhe","brustplatte","hose","waffe","ring"];
+const GEAR_SLOT_INFO = {
+  stiefel:     { name:"Stiefel",     icon:"👢", desc:"Lauftempo" },
+  handschuhe:  { name:"Handschuhe",  icon:"🧤", desc:"Rucksack-Kapazität" },
+  brustplatte: { name:"Brustplatte", icon:"🛡️", desc:"Maximale Lebenspunkte" },
+  hose:        { name:"Hose",        icon:"👖", desc:"Sammelradius" },
+  waffe:       { name:"Waffe",       icon:"⚔️", desc:"Turm-Schaden" },
+  ring:        { name:"Ring",        icon:"💍", desc:"EXP-Rate" }
 };
-function equipCost(level){ return Math.round(3*Math.pow(1.7,level)); }
-function equipBonus(key){ return (state.player.equip[key]||0) * EQUIP_DEFS[key].bonusPerLevel; }
-function playerMaxHp(){ return PLAYER_MAX_HP + equipBonus("ruestung"); }
-function playerSpeedMult(){ return 1+equipBonus("stiefel"); }
-function playerBackpackCapacity(){ return Math.round(BACKPACK_CAPACITY + equipBonus("amulett")); }
-function xpMultiplier(){ return 1+equipBonus("kompass"); }
+const RARITIES = ["grau","gruen","blau","lila","gold","tuerkis","mystisch"];
+const RARITY_INFO = {
+  grau:     { name:"Grau",     color:"#9aa3ad" },
+  gruen:    { name:"Grün",     color:"#5fd66c" },
+  blau:     { name:"Blau",     color:"#4fa8f0" },
+  lila:     { name:"Lila",     color:"#b06df0" },
+  gold:     { name:"Gold",     color:"#f2c14e" },
+  tuerkis:  { name:"Türkis",   color:"#3fe0d0" },
+  mystisch: { name:"Mystisch", color:"#ff6fd8" }
+};
+// Nur diese vier sind aus der Kiste ziehbar (mit sinkender Chance) - Gold
+// aufwaerts gibt es ausschliesslich durchs Kombinieren (3 gleiche Rarität
+// + gleicher Slot -> 1 der naechsten Rarität).
+const GACHA_POOL = [
+  { rarity:"grau",  weight:55 },
+  { rarity:"gruen", weight:28 },
+  { rarity:"blau",  weight:13 },
+  { rarity:"lila",  weight:4  }
+];
+const GEAR_MAX_LEVEL = 10;
+const GEAR_MAX_STARS = 5;
+const GEAR_FUSE_COUNT = 3;
+const PULL_COST_1X = 1000;
+const PULL_COST_10X = 9000; // kleiner Rabatt gegenueber 10x Einzelpreis
+
+function rarityIndex(rarity){ return RARITIES.indexOf(rarity); }
+// Rohe "Power" eines Gegenstands: Rarität dominiert (Faktor 2.5 pro Stufe),
+// Level/Sterne verfeinern nur INNERHALB der Rarität (max. rund x2 zusammen) -
+// das haelt "Grau max < Grün min" & Co. mit Sicherheitsabstand ein.
+function gearPower(rarity, level, stars){
+  const base = Math.pow(2.5, rarityIndex(rarity));
+  const levelMult = 1 + (level-1)*0.05;   // Level 10 -> x1.45
+  const starMult = 1 + stars*0.08;        // 5 Sterne -> x1.4
+  return base*levelMult*starMult;
+}
+function gearItemDef(item){ return { slot:GEAR_SLOT_INFO[item.slot], rarity:RARITY_INFO[item.rarity] }; }
+function gearLevelCost(item){ return Math.round(15*(rarityIndex(item.rarity)+1)*Math.pow(1.4, item.level-1)); }
+function gearStarCost(item){ return Math.round(250*(rarityIndex(item.rarity)+1)*Math.pow(1.6, item.stars)); }
+function gearKraft(item){ return Math.round(gearPower(item.rarity, item.level, item.stars)*6); }
+
+function findGearItem(id){ return state.player.gearInventory.find(g=>g.id===id) || null; }
+function equippedGear(slot){ const id = state.player.gearEquipped[slot]; return id ? findGearItem(id) : null; }
+// Gesamtbonus eines Slots ueber ALLE aktuell ausgeruesteten Teile dieses
+// Slots (es gibt nur eins pro Slot) - 0, wenn nichts ausgeruestet ist.
+function gearSlotPower(slot){ const it = equippedGear(slot); return it ? gearPower(it.rarity, it.level, it.stars) : 0; }
+
+function playerMaxHp(){ return PLAYER_MAX_HP + Math.round(gearSlotPower("brustplatte")*3); }
+function playerSpeedMult(){ return 1 + gearSlotPower("stiefel")*0.004; }
+function playerBackpackCapacity(){ return Math.round(BACKPACK_CAPACITY + gearSlotPower("handschuhe")*0.8); }
+function xpMultiplier(){ return 1 + gearSlotPower("ring")*0.005; }
+function sammelradiusMult(){ return 1 + gearSlotPower("hose")*0.005; }
+function gearTowerDmgMult(){ return 1 + gearSlotPower("waffe")*0.003; }
+
+function pickGachaRarity(){
+  const total = GACHA_POOL.reduce((s,p)=>s+p.weight,0);
+  let r = Math.random()*total;
+  for(const p of GACHA_POOL){ if(r<p.weight) return p.rarity; r -= p.weight; }
+  return GACHA_POOL[0].rarity;
+}
+function pullGear(){
+  const slot = GEAR_SLOTS[Math.floor(Math.random()*GEAR_SLOTS.length)];
+  const rarity = pickGachaRarity();
+  const item = { id: state.player.nextGearId++, slot, rarity, level:1, stars:0 };
+  state.player.gearInventory.push(item);
+  return item;
+}
+// 3 gleiche (Slot + Rarität) -> 1 Exemplar der naechsten Rarität, frisch
+// auf Level 1 / 0 Sterne. Gibt das neue Teil zurueck oder null.
+function fuseGear(slot, rarity){
+  const nextRarity = RARITIES[rarityIndex(rarity)+1];
+  if(!nextRarity) return null;
+  const pool = state.player.gearInventory.filter(g=>g.slot===slot && g.rarity===rarity && g.id!==state.player.gearEquipped[slot]);
+  if(pool.length<GEAR_FUSE_COUNT) return null;
+  const used = pool.slice(0,GEAR_FUSE_COUNT).map(g=>g.id);
+  state.player.gearInventory = state.player.gearInventory.filter(g=>!used.includes(g.id));
+  const item = { id: state.player.nextGearId++, slot, rarity:nextRarity, level:1, stars:0 };
+  state.player.gearInventory.push(item);
+  return item;
+}
 
 // ================= Faehigkeiten: passive Boni, gekauft mit Juwelen, aber
 // nur bis zu ABILITY_EQUIP_MAX gleichzeitig AKTIV =================
@@ -637,7 +757,7 @@ const WEAPON_STATS = {
   // gegen mehrere Laeufer auf einmal, schwach gegen ein einzelnes Ziel.
   moerser: { dmg: 8,  range: 190, minRange: 55, rate: 2.4, pierce:false, splash: 42 }
 };
-function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return (w.dmg + (b.level-1)*2)*(hasAbility("scharfschuetze")?1.15:1); }
+function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return (w.dmg + (b.level-1)*2)*(hasAbility("scharfschuetze")?1.15:1)*gearTowerDmgMult(); }
 function maxBaseHp(){ return 100 + (state.basisLevel-1)*20 + (hasAbility("lebenskraft")?40:0); }
 
 // "Kraft" ist reine Anzeige (Machtwert) - fasst zusammen, was man insgesamt
@@ -650,6 +770,7 @@ function computeKraft(){
   });
   kraft += state.npc.reparaturCount*8;
   kraft += state.npc.angreifer.length*8;
+  GEAR_SLOTS.forEach(slot=>{ const it=equippedGear(slot); if(it) kraft += gearKraft(it); });
   return kraft;
 }
 
@@ -723,8 +844,9 @@ function spawnWave(){
 
 function waveLoot(){
   // 1 Juwel pro ueberstandener Welle (mit Gluecksbringer-Faehigkeit 2) -
-  // bisher der einzige Weg, Juwelen zu verdienen.
-  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3, gems: 1+(hasAbility("gluecksbringer")?1:0) };
+  // bisher der einzige Weg, Juwelen zu verdienen. Coins fuer den Gacha-
+  // Shop (1 Zug kostet 1000) kommen im gleichen Rhythmus dazu.
+  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3, gems: 1+(hasAbility("gluecksbringer")?1:0), coins: 40+state.basisLevel*15 };
 }
 
 // ================= Wegfindung: Gegner suchen sich einen Weg zur Base statt =================
@@ -985,6 +1107,7 @@ function updateWave(dt){
     state.resources.holz = Math.min(cap, state.resources.holz+loot.holz);
     state.resources.stein = Math.min(cap, state.resources.stein+loot.stein);
     state.resources.gems += loot.gems;
+    state.resources.coins += loot.coins;
     waveActive = false;
     addPlayerXp(waveXpReward());
     save();
@@ -1128,6 +1251,7 @@ canvas.addEventListener("wheel", e=>{
 document.getElementById("zoomIn").addEventListener("click", ()=>{ camera.scale*=1.2; clampCamera(); render(); });
 document.getElementById("zoomOut").addEventListener("click", ()=>{ camera.scale*=0.83; clampCamera(); render(); });
 document.getElementById("centerBtn").addEventListener("click", ()=>{ camera.x=0; camera.y=0; camera.scale=1; render(); });
+document.getElementById("shopBtn").addEventListener("click", openGearShop);
 
 // ================= Joystick (Spieler-Steuerung) =================
 // Eigene, ungespeicherte Richtung - solange sie aktiv ist, uebersteuert sie
@@ -2753,7 +2877,7 @@ const JOYSTICK_DEADZONE = 0.15; // kleine Ausschläge ignorieren, damit er nicht
 // Knoten-ID mehr - stattdessen wird im Vorbeilaufen eingesammelt, sobald
 // der Spieler nah genug an einem Knoten mit Inhalt ist.
 function collectNearbyNode(pl){
-  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS*(hasAbility("sammelradius")?1.6:1);
+  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS*(hasAbility("sammelradius")?1.6:1)*sammelradiusMult();
   state.nodes.forEach(n=>{
     if(n.amount<=0) return;
     const p = nodeWorldPos(n);
@@ -2886,14 +3010,6 @@ function playerTitle(){
   return "🌱 Rekrut";
 }
 
-// Zwei Plaetze ohne echte Spielmechanik dahinter (wir haben nur vier
-// Spielerwerte zum Aufwerten) - klar als "bald verfuegbar" markiert statt
-// eine Wirkung vorzutaeuschen, die es nicht gibt. Damit landen wir bei
-// GENAU 5 Slots wie im Referenzbild (2 links / 3 rechts).
-const EQUIP_COMING_SOON = [
-  { icon:"⚔️", name:"Waffe" }
-];
-
 // Kleines Hinweis-Panel fuer Knoepfe, die schon da sind, aber noch keine
 // eigene Mechanik haben (Faehigkeiten, Schmiede) - ehrlich markiert statt
 // stillschweigend nichts zu tun.
@@ -2951,21 +3067,194 @@ function openAbilityPicker(onPick){
     box.appendChild(opt);
   });
 
+  // Eigener Schliessen-Knopf statt addCloseBtn: der Aufrufer hat das
+  // Profil-Hub bereits geschlossen, ohne Rueckkehr wuerde "Schließen"
+  // sonst im Nichts enden.
+  const close = document.createElement("div");
+  close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
+  close.addEventListener("click", ()=>{ document.body.removeChild(overlay); openProfileHub("abilities"); });
+  box.appendChild(close);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+// Gacha-Shop: eine Kiste, 1x oder 10x ziehen, bezahlt mit Coins. Liefert
+// zufaelligen Slot + Rarität Grau-Lila (Gold aufwaerts nur combinieren).
+function openGearShop(){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>🛒 Shop</h3><div class="hint2">Kiste öffnen für zufällige Ausrüstung (Grau bis Lila). Gold, Türkis und Mystisch gibt es nur durchs Kombinieren.</div>`;
+
+  const crate = document.createElement("div");
+  crate.className = "gearCrate";
+  crate.innerHTML = `<div class="crateIcon">🎁</div>`;
+  box.appendChild(crate);
+
+  const row = document.createElement("div");
+  row.className = "crateBtnRow";
+  [[1,PULL_COST_1X],[10,PULL_COST_10X]].forEach(([count,cost])=>{
+    const btn = document.createElement("div");
+    btn.className = "crateBtn"+(state.resources.coins<cost?" disabled":"");
+    btn.innerHTML = `${count}x Ziehen<b>🪙 ${cost}</b>`;
+    btn.addEventListener("click", ()=>{
+      if(state.resources.coins<cost) return;
+      state.resources.coins -= cost;
+      const results = [];
+      for(let i=0;i<count;i++) results.push(pullGear());
+      save();
+      document.body.removeChild(overlay);
+      showPullResults(results);
+    });
+    row.appendChild(btn);
+  });
+  box.appendChild(row);
+
   addCloseBtn(box, overlay);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
 
-// Profil-Hub: staerkt den SPIELER dauerhaft, bezahlt mit Juwelen. Layout
-// an der Sword x Staff-Referenz: Emblem+Titel oben, Portrait mittig mit
-// GENAU 5 Kreisen drumherum (2 links / 3 rechts), grosse Level-Zahl mit
-// EXP-Leiste und Kraft-Plakette daneben, "Werte"-Abschnitt darunter.
+function showPullResults(results){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>Gezogen!</h3>`;
+  const grid = document.createElement("div");
+  grid.className = "pullResultGrid";
+  results.forEach(item=>{
+    const slotInfo = GEAR_SLOT_INFO[item.slot], rInfo = RARITY_INFO[item.rarity];
+    const cell = document.createElement("div");
+    cell.className = "pullResultCell";
+    cell.style.borderColor = rInfo.color;
+    cell.innerHTML = `<div class="prIcon">${slotInfo.icon}</div><div class="prRarity" style="color:${rInfo.color}">${rInfo.name}</div>`;
+    grid.appendChild(cell);
+  });
+  box.appendChild(grid);
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+// Slot-Picker: eigene Exemplare dieses Slots (nach Rarität/Power sortiert)
+// zum Tragen, Level-/Stern-Aufwerten und Kombinieren (3 gleiche Rarität ->
+// 1 der naechsten). Erreichbar ueber einen Ring-Slot im Profil-Hub.
+function openGearPicker(slot){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  const info = GEAR_SLOT_INFO[slot];
+  box.innerHTML = `<h3>${info.icon} ${info.name}</h3><div class="hint2">Wirkt auf: ${info.desc}</div>`;
+
+  const equippedId = state.player.gearEquipped[slot];
+  const items = state.player.gearInventory.filter(g=>g.slot===slot)
+    .sort((a,b)=> rarityIndex(b.rarity)-rarityIndex(a.rarity) || gearPower(b.rarity,b.level,b.stars)-gearPower(a.rarity,a.level,a.stars));
+
+  if(items.length===0){
+    const empty = document.createElement("div");
+    empty.className = "hint2";
+    empty.textContent = "Noch keine Ausrüstung für diesen Slot - im Shop ziehen.";
+    box.appendChild(empty);
+  }
+
+  items.forEach(item=>{
+    const rInfo = RARITY_INFO[item.rarity];
+    const isEquipped = item.id===equippedId;
+    const maxed = item.level>=GEAR_MAX_LEVEL;
+    const starMaxed = item.stars>=GEAR_MAX_STARS;
+
+    const row = document.createElement("div");
+    row.className = "buildopt gearRow";
+    row.style.borderColor = rInfo.color;
+    row.innerHTML = `<span style="color:${rInfo.color}">${rInfo.name} · Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""}${isEquipped?" · Getragen":""}<small style="color:var(--text-dim)">Kraft ${gearKraft(item)}</small></span><b>${isEquipped?"✓":"Tragen"}</b>`;
+    if(!isEquipped){
+      row.addEventListener("click", ()=>{
+        state.player.gearEquipped[slot] = item.id;
+        save();
+        refresh();
+      });
+    }
+    box.appendChild(row);
+
+    if(!maxed){
+      const cost = gearLevelCost(item);
+      const opt = document.createElement("div");
+      opt.className = "buildopt"+(state.resources.coins<cost?" disabled":"");
+      opt.innerHTML = `<span>⬆️ Level ${item.level} → ${item.level+1}</span><b>🪙 ${cost}</b>`;
+      opt.addEventListener("click", ()=>{
+        if(state.resources.coins<cost) return;
+        state.resources.coins -= cost;
+        item.level++;
+        save();
+        refresh();
+      });
+      box.appendChild(opt);
+    } else if(!starMaxed){
+      const cost = gearStarCost(item);
+      const opt = document.createElement("div");
+      opt.className = "buildopt"+(state.resources.coins<cost?" disabled":"");
+      opt.innerHTML = `<span>⭐ Stern ${item.stars} → ${item.stars+1}</span><b>🪙 ${cost}</b>`;
+      opt.addEventListener("click", ()=>{
+        if(state.resources.coins<cost) return;
+        state.resources.coins -= cost;
+        item.stars++;
+        save();
+        refresh();
+      });
+      box.appendChild(opt);
+    }
+  });
+
+  const fuseables = RARITIES.slice(0,-1).filter(r=>items.filter(g=>g.rarity===r && g.id!==equippedId).length>=GEAR_FUSE_COUNT);
+  if(fuseables.length>0){
+    const label = document.createElement("div");
+    label.className = "sectionLabel";
+    label.textContent = "Kombinieren";
+    box.appendChild(label);
+    fuseables.forEach(rarity=>{
+      const nextRarity = RARITIES[rarityIndex(rarity)+1];
+      const opt = document.createElement("div");
+      opt.className = "buildopt";
+      opt.innerHTML = `<span>🔀 3x ${RARITY_INFO[rarity].name}<small>Ergibt 1x ${RARITY_INFO[nextRarity].name}</small></span><b>→</b>`;
+      opt.addEventListener("click", ()=>{
+        fuseGear(slot, rarity);
+        save();
+        refresh();
+      });
+      box.appendChild(opt);
+    });
+  }
+
+  // Eigener Schliessen-Knopf statt addCloseBtn: fuehrt zurueck zum
+  // Profil-Hub statt im Nichts zu enden (der ist beim Oeffnen des Pickers
+  // bereits geschlossen worden).
+  const close = document.createElement("div");
+  close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
+  close.addEventListener("click", ()=>{ document.body.removeChild(overlay); openProfileHub("equip"); });
+  box.appendChild(close);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function refresh(){
+    document.body.removeChild(overlay);
+    openGearPicker(slot);
+  }
+}
+
+// Profil-Hub: staerkt den SPIELER dauerhaft, bezahlt mit Coins/Juwelen.
+// Layout an der Sword x Staff-Referenz: Emblem+Titel oben, Portrait mittig
+// mit GENAU 6 Kreisen drumherum (3 links / 3 rechts), grosse Level-Zahl
+// mit EXP-Leiste und Kraft-Plakette daneben, "Werte"-Abschnitt darunter.
 //
 // Der Ring hat ZWEI Modi, die dasselbe Panel/Layout teilen statt ein neues
-// Menue zu oeffnen: "equip" zeigt die 4 Ausruestungs-Werte + 1 Vorschau-
-// Platz, "abilities" zeigt bis zu 5 frei waehlbare Faehigkeiten aus dem
-// eigenen Besitz. Der "Fähigkeiten"-Knopf schaltet zwischen beiden um -
-// exakt das gleiche visuelle Ring-Design fuer beide, wie gewuenscht.
+// Menue zu oeffnen: "equip" zeigt die 6 Ausruestungs-Slots (Stiefel/
+// Handschuhe/Brustplatte/Hose/Waffe/Ring, siehe GEAR_SLOTS), "abilities"
+// zeigt bis zu 5 frei waehlbare Faehigkeiten aus dem eigenen Besitz. Der
+// "Fähigkeiten"-Knopf schaltet zwischen beiden um - exakt das gleiche
+// visuelle Ring-Design fuer beide, wie gewuenscht.
 //
 // Bewusste Abweichungen von der Referenz (mit Grund, nicht aus Faulheit):
 // - Dunkler Panel-Hintergrund statt hellem Himmel-Blau, damit der Hub
@@ -2983,7 +3272,7 @@ function openProfileHub(mode){
 
   const xpNow = xpForLevel(state.playerLevel);
   const xpRatio = Math.max(0,Math.min(1, state.playerXp/xpNow));
-  const GEAR_POS = ["pos-l1","pos-l2","pos-r1","pos-r2"];
+  const GEAR_POS = ["pos-l1","pos-l2","pos-l3","pos-r1","pos-r2","pos-r3"];
   const ABILITY_POS = ["pos-l1","pos-l2","pos-r1","pos-r2","pos-r3"];
 
   box.innerHTML = `
@@ -3002,7 +3291,7 @@ function openProfileHub(mode){
     <div id="midSection"></div>
     <div class="gearLegend">${mode==="abilities"
       ? "Fähigkeit antippen zum Entfernen · leeren Platz antippen zum Auswählen"
-      : "Ausrüstung antippen zum Aufwerten (bezahlt mit 💎)"}</div>
+      : "Slot antippen: tragen, aufwerten oder kombinieren (bezahlt mit 🪙)"}</div>
   `;
 
   box.querySelector("#btnFaehigkeiten").addEventListener("click", ()=>{
@@ -3082,38 +3371,21 @@ function openProfileHub(mode){
       stage.appendChild(slot);
     }
   } else {
-    Object.entries(EQUIP_DEFS).forEach(([key,def],i)=>{
-      const level = state.player.equip[key]||0;
-      const maxed = level>=EQUIP_MAX_LEVEL;
-      const current = level*def.bonusPerLevel;
-      const currentText = def.percent ? "+"+Math.round(current*100)+"%" : "+"+Math.round(current)+def.unit;
-      const cost = equipCost(level);
-      const canAffordGear = state.resources.gems>=cost;
+    GEAR_SLOTS.forEach((gearSlotKey,i)=>{
+      const info = GEAR_SLOT_INFO[gearSlotKey];
+      const item = equippedGear(gearSlotKey);
+      const rInfo = item ? RARITY_INFO[item.rarity] : null;
 
       const slot = document.createElement("div");
-      slot.className = "gearSlot "+GEAR_POS[i]+(level>0?" owned":"")+((!maxed && !canAffordGear)?" disabled":"");
-      slot.title = def.desc;
-      slot.innerHTML = `<div class="badge">${def.icon}${(!maxed && canAffordGear)?'<span class="ping">!</span>':''}</div>
-        <div class="bonus">${level>0?currentText:"—"}</div>
-        ${maxed ? `<div class="cost">Max</div>` : `<div class="cost">💎${cost}</div>`}`;
-      if(!maxed){
-        slot.addEventListener("click", ()=>{
-          if(state.resources.gems<cost) return;
-          state.resources.gems -= cost;
-          state.player.equip[key] = level+1;
-          save();
-          document.body.removeChild(overlay);
-          openProfileHub("equip");
-        });
-      }
-      stage.appendChild(slot);
-    });
-
-    EQUIP_COMING_SOON.forEach((def,i)=>{
-      const slot = document.createElement("div");
-      slot.className = "gearSlot locked "+["pos-r3"][i];
-      slot.title = def.name+" - bald verfügbar";
-      slot.innerHTML = `<div class="badge">${def.icon}<span class="ping" style="background:#565b64;">🔒</span></div><div class="bonus">Bald</div>`;
+      slot.className = "gearSlot "+GEAR_POS[i]+(item?" owned":"");
+      if(item) slot.style.setProperty("--rc", rInfo.color);
+      slot.title = info.desc;
+      slot.innerHTML = `<div class="badge" style="${item?`border-color:${rInfo.color};background:${rInfo.color}22;`:""}">${info.icon}</div>
+        <div class="bonus" style="${item?`color:${rInfo.color}`:""}">${item?rInfo.name+" ·"+item.level:"—"}</div>`;
+      slot.addEventListener("click", ()=>{
+        document.body.removeChild(overlay);
+        openGearPicker(gearSlotKey);
+      });
       stage.appendChild(slot);
     });
   }
