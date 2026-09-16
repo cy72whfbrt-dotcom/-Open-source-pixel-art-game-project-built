@@ -3551,17 +3551,30 @@ function openProfileHub(mode){
     if(owned.length===0){
       const empty = document.createElement("div");
       empty.className = "hint2";
-      empty.textContent = "Noch keine Fähigkeit freigeschaltet - über einen leeren Platz oben auswählen.";
+      empty.textContent = "Noch keine Fähigkeit - im Shop ziehen (🛒-Knopf am Bildschirmrand).";
       mid.appendChild(empty);
     } else {
+      // Icon-Kacheln (3 pro Reihe) statt Textzeilen - gleiches Muster wie bei
+      // der Ausruestungs-Uebersicht. Antippen schaltet direkt aktiv/inaktiv,
+      // Faehigkeiten haben (anders als Ausruestung) keine Level/Sterne-Seite.
+      const grid = document.createElement("div");
+      grid.className = "gearItemGrid";
       owned.forEach(key=>{
         const def = ABILITY_DEFS[key];
         const isEquipped = state.player.abilitiesEquipped.includes(key);
-        const row = document.createElement("div");
-        row.className = "buildopt";
-        row.innerHTML = `<span>${def.icon} ${def.name}${isEquipped?" · Aktiv":""}<small>${def.desc}</small></span><b>${isEquipped?"✓":"—"}</b>`;
-        mid.appendChild(row);
+        const cell = document.createElement("div");
+        cell.className = "gearItemCell";
+        cell.style.borderColor = isEquipped ? "var(--accent)" : "var(--border)";
+        cell.innerHTML = `${isEquipped?'<div class="gearItemCheck">✓</div>':""}<div class="prIcon">${def.icon}</div><div class="gearItemLv" style="color:${isEquipped?"var(--accent)":"var(--text-dim)"}">${def.name}</div>`;
+        cell.title = def.desc;
+        cell.addEventListener("click", ()=>{
+          toggleAbilityEquip(key);
+          document.body.removeChild(overlay);
+          openProfileHub("abilities");
+        });
+        grid.appendChild(cell);
       });
+      mid.appendChild(grid);
     }
   } else if(mode==="gear"){
     const owned = state.player.gearInventory
