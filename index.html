@@ -90,7 +90,7 @@
 
   /* Kategorie-Pille wie "Fähigkeit" im Referenzbild - eigenes System hat
      keinen Skillbaum, darum als klar markierter Vorschau-Knopf. */
-  .categoryRow { display:flex; justify-content:center; margin-bottom:10px; }
+  .categoryRow { display:flex; justify-content:center; gap:8px; margin-bottom:12px; }
   .categoryPill {
     display:flex; align-items:center; gap:5px; font-size:11px; font-weight:700; color:var(--text-dim);
     background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:999px;
@@ -2861,6 +2861,20 @@ const EQUIP_COMING_SOON = [
   { icon:"⚔️", name:"Waffe" }
 ];
 
+// Kleines Hinweis-Panel fuer Knoepfe, die schon da sind, aber noch keine
+// eigene Mechanik haben (Faehigkeiten, Schmiede) - ehrlich markiert statt
+// stillschweigend nichts zu tun.
+function showComingSoonPanel(title, text){
+  const inner = document.createElement("div");
+  inner.className = "buildmenu";
+  const innerBox = document.createElement("div");
+  innerBox.className = "box";
+  innerBox.innerHTML = `<h3>${title}</h3><div class="hint2">${text}</div>`;
+  addCloseBtn(innerBox, inner);
+  inner.appendChild(innerBox);
+  document.body.appendChild(inner);
+}
+
 // Profil-Hub: staerkt den SPIELER dauerhaft (HP/Tempo/Rucksack/EXP-Rate),
 // bezahlt mit Juwelen - der erste echte Nutzen fuer eine bisher tote
 // Waehrung. Erreichbar ueber das Portrait oben links im HUD. Layout 1:1
@@ -2892,12 +2906,13 @@ function openProfileHub(){
       <div class="titleIcon">🛡️</div>
       <div class="titleText">${playerTitle()}</div>
     </div>
-    <div class="categoryRow">
-      <div class="categoryPill" id="btnFaehigkeiten">🌟 Fähigkeiten</div>
-    </div>
     <div class="avatarStage" id="avatarStage">
       <div class="avatarBig"><div class="avHead"></div><div class="avBody"></div></div>
       <div class="levelChip">Lv. ${state.playerLevel}</div>
+    </div>
+    <div class="categoryRow">
+      <div class="categoryPill" id="btnFaehigkeiten">🌟 Fähigkeiten</div>
+      <div class="categoryPill" id="btnSchmiede">🔨 Schmiede</div>
     </div>
     <div class="levelHeaderRow">
       <div class="lvBig">Level ${state.playerLevel}<span>${state.playerXp}/${xpNow} EXP</span></div>
@@ -2915,14 +2930,10 @@ function openProfileHub(){
   `;
 
   box.querySelector("#btnFaehigkeiten").addEventListener("click", ()=>{
-    const inner = document.createElement("div");
-    inner.className = "buildmenu";
-    const innerBox = document.createElement("div");
-    innerBox.className = "box";
-    innerBox.innerHTML = `<h3>🌟 Fähigkeiten</h3><div class="hint2">Ein Fähigkeiten-Baum für den Spieler ist noch nicht gebaut - kommt als eigenes System nach der Ausrüstung.</div>`;
-    addCloseBtn(innerBox, inner);
-    inner.appendChild(innerBox);
-    document.body.appendChild(inner);
+    showComingSoonPanel("🌟 Fähigkeiten", "Noch ohne eigene Mechanik dahinter - der Button ist schon da, der Inhalt kommt später.");
+  });
+  box.querySelector("#btnSchmiede").addEventListener("click", ()=>{
+    showComingSoonPanel("🔨 Schmiede", "Noch ohne eigene Mechanik dahinter - der Button ist schon da, der Inhalt kommt später.");
   });
 
   const stage = box.querySelector("#avatarStage");
