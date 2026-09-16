@@ -2999,18 +2999,7 @@ function openProfileHub(mode){
       <div class="categoryPill${mode==="abilities"?" active":""}" id="btnFaehigkeiten">🌟 Fähigkeiten</div>
       <div class="categoryPill" id="btnSchmiede">🔨 Schmiede</div>
     </div>
-    <div class="levelHeaderRow">
-      <div class="lvBig">Level ${state.playerLevel}<span>${state.playerXp}/${xpNow} EXP</span></div>
-      <div class="rankBadge">⚡ ${formatCompactNumber(computeKraft())}<br>Kraft</div>
-    </div>
-    <div class="lvBarFull"><div style="width:${Math.round(xpRatio*100)}%"></div></div>
-    <div class="valuesHeader">🔍 Werte</div>
-    <div class="statsGrid">
-      <div class="statTile">❤ Leben<b>${Math.round(playerMaxHp())}</b></div>
-      <div class="statTile">🏃 Tempo<b>+${Math.round((playerSpeedMult()-1)*100)}%</b></div>
-      <div class="statTile">🎒 Rucksack<b>${playerBackpackCapacity()}</b></div>
-      <div class="statTile">✨ EXP-Rate<b>+${Math.round((xpMultiplier()-1)*100)}%</b></div>
-    </div>
+    <div id="midSection"></div>
     <div class="gearLegend">${mode==="abilities"
       ? "Fähigkeit antippen zum Entfernen · leeren Platz antippen zum Auswählen"
       : "Ausrüstung antippen zum Aufwerten (bezahlt mit 💎)"}</div>
@@ -3023,6 +3012,48 @@ function openProfileHub(mode){
   box.querySelector("#btnSchmiede").addEventListener("click", ()=>{
     showComingSoonPanel("🔨 Schmiede", "Noch ohne eigene Mechanik dahinter - der Button ist schon da, der Inhalt kommt später.");
   });
+
+  // Mittlerer Bereich: im Ausruestungs-Modus Level/EXP + Werte, im
+  // Faehigkeiten-Modus stattdessen die Liste der eigenen Faehigkeiten -
+  // die beiden Inhalte gehoeren nicht gleichzeitig ins Bild.
+  const mid = box.querySelector("#midSection");
+  if(mode==="abilities"){
+    const owned = state.player.abilitiesOwned;
+    const label = document.createElement("div");
+    label.className = "sectionLabel";
+    label.textContent = "Deine Fähigkeiten";
+    mid.appendChild(label);
+    if(owned.length===0){
+      const empty = document.createElement("div");
+      empty.className = "hint2";
+      empty.textContent = "Noch keine Fähigkeit freigeschaltet - über einen leeren Platz oben auswählen.";
+      mid.appendChild(empty);
+    } else {
+      owned.forEach(key=>{
+        const def = ABILITY_DEFS[key];
+        const isEquipped = state.player.abilitiesEquipped.includes(key);
+        const row = document.createElement("div");
+        row.className = "buildopt";
+        row.innerHTML = `<span>${def.icon} ${def.name}${isEquipped?" · Aktiv":""}<small>${def.desc}</small></span><b>${isEquipped?"✓":"—"}</b>`;
+        mid.appendChild(row);
+      });
+    }
+  } else {
+    mid.innerHTML = `
+      <div class="levelHeaderRow">
+        <div class="lvBig">Level ${state.playerLevel}<span>${state.playerXp}/${xpNow} EXP</span></div>
+        <div class="rankBadge">⚡ ${formatCompactNumber(computeKraft())}<br>Kraft</div>
+      </div>
+      <div class="lvBarFull"><div style="width:${Math.round(xpRatio*100)}%"></div></div>
+      <div class="valuesHeader">🔍 Werte</div>
+      <div class="statsGrid">
+        <div class="statTile">❤ Leben<b>${Math.round(playerMaxHp())}</b></div>
+        <div class="statTile">🏃 Tempo<b>+${Math.round((playerSpeedMult()-1)*100)}%</b></div>
+        <div class="statTile">🎒 Rucksack<b>${playerBackpackCapacity()}</b></div>
+        <div class="statTile">✨ EXP-Rate<b>+${Math.round((xpMultiplier()-1)*100)}%</b></div>
+      </div>
+    `;
+  }
 
   const stage = box.querySelector("#avatarStage");
 
