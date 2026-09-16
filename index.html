@@ -566,8 +566,8 @@ const GACHA_POOL = [
   { rarity:"blau",  weight:13 },
   { rarity:"lila",  weight:4  }
 ];
-const GEAR_MAX_LEVEL = 10;
-const GEAR_MAX_STARS = 5;
+const GEAR_MAX_LEVEL = 20;
+const GEAR_MAX_STARS = 8;
 const GEAR_FUSE_COUNT = 3;
 const PULL_COST_1X = 1000;
 const PULL_COST_10X = 9000; // kleiner Rabatt gegenueber 10x Einzelpreis
@@ -580,8 +580,12 @@ function rarityIndex(rarity){ return RARITIES.indexOf(rarity); }
 // das haelt "Grau max < Grün min" & Co. mit Sicherheitsabstand ein.
 function gearPower(rarity, level, stars){
   const base = Math.pow(2.5, rarityIndex(rarity));
-  const levelMult = 1 + (level-1)*0.05;   // Level 10 -> x1.45
-  const starMult = 1 + stars*0.08;        // 5 Sterne -> x1.4
+  // Angepasst an GEAR_MAX_LEVEL=20/GEAR_MAX_STARS=8: haelt den kombinierten
+  // Innerhalb-der-Rarität-Multiplikator weiterhin klar unter dem 2.5x-
+  // Rarität-Sprung (Max hier: 1.475*1.4=2.065, ~21% Sicherheitsabstand -
+  // sonst koennte Grau auf Maximum staerker werden als Grün auf Stufe 1).
+  const levelMult = 1 + (level-1)*0.025;  // Level 20 -> x1.475
+  const starMult = 1 + stars*0.05;        // 8 Sterne -> x1.4
   return base*levelMult*starMult;
 }
 function gearItemDef(item){ return { slot:GEAR_SLOT_INFO[item.slot], rarity:RARITY_INFO[item.rarity] }; }
@@ -704,10 +708,12 @@ function equipBestAbilityInstance(key){
   candidates.sort((a,b)=> gearPower(b.rarity,b.level,b.stars)-gearPower(a.rarity,a.level,a.stars));
   return setAbilityEquipped(key, candidates[0].id);
 }
+// Level/Sterne/Kombinieren kosten (anders als das Ziehen selbst, das
+// weiterhin Juwelen kostet) Coins - gleiche Waehrung wie bei Ausruestung.
 function abilityLevelCost(item){ return Math.round(6*(rarityIndex(item.rarity)+1)*Math.pow(1.4, item.level-1)); }
 function abilityStarCost(item){ return Math.round(80*(rarityIndex(item.rarity)+1)*Math.pow(1.6, item.stars)); }
 function abilityKraft(item){ return Math.round(gearPower(item.rarity, item.level, item.stars)*6); }
-function abilityInvestedGems(item){
+function abilityInvestedCoins(item){
   let total = 0;
   for(let lv=1; lv<item.level; lv++) total += abilityLevelCost({rarity:item.rarity, level:lv});
   for(let st=0; st<item.stars; st++) total += abilityStarCost({rarity:item.rarity, stars:st});
@@ -730,13 +736,13 @@ function fuseAbility(key, rarity){
   if(!nextRarity) return null;
   const pool = state.player.abilitiesInventory
     .filter(a=>a.key===key && a.rarity===rarity && a.id!==state.player.abilitiesEquipped[key])
-    .sort((a,b)=> abilityInvestedGems(a)-abilityInvestedGems(b));
+    .sort((a,b)=> abilityInvestedCoins(a)-abilityInvestedCoins(b));
   if(pool.length<GEAR_FUSE_COUNT) return null;
   const consumed = pool.slice(0,GEAR_FUSE_COUNT);
   const used = consumed.map(a=>a.id);
-  const refund = Math.round(consumed.reduce((sum,a)=>sum+abilityInvestedGems(a),0) * FUSE_REFUND_RATE);
+  const refund = Math.round(consumed.reduce((sum,a)=>sum+abilityInvestedCoins(a),0) * FUSE_REFUND_RATE);
   state.player.abilitiesInventory = state.player.abilitiesInventory.filter(a=>!used.includes(a.id));
-  state.resources.gems += refund;
+  state.resources.coins += refund;
   const item = { id: state.player.nextAbilityId++, key, rarity:nextRarity, level:1, stars:0 };
   state.player.abilitiesInventory.push(item);
   return { item, refund };
@@ -3607,7 +3613,7 @@ function openAbilityKeyPicker(key, returnMode){
         save();
         refresh();
         if(result && result.refund>0){
-          showToast(`🔀 Kombiniert! +💎 ${result.refund} Erstattung`);
+          showToast(`🔀 Kombiniert! +🪙 ${result.refund} Erstattung`);
         } else if(result){
           showToast(`🔀 Kombiniert zu ${RARITY_INFO[nextRarity].name}!`);
         }
@@ -3675,11 +3681,11 @@ function openAbilityItemDetail(item, key, returnMode, onBack){
   if(!maxed){
     const cost = abilityLevelCost(item);
     const opt = document.createElement("div");
-    opt.className = "buildopt"+(state.resources.gems<cost?" disabled":"");
-    opt.innerHTML = `<span>⬆️ Level ${item.level} → ${item.level+1}</span><b>💎 ${cost}</b>`;
+    opt.className = "buildopt"+(state.resources.coins<cost?" disabled":"");
+    opt.innerHTML = `<span>⬆️ Level ${item.level} → ${item.level+1}</span><b>🪙 ${cost}</b>`;
     opt.addEventListener("click", ()=>{
-      if(state.resources.gems<cost) return;
-      state.resources.gems -= cost;
+      if(state.resources.coins<cost) return;
+      state.resources.coins -= cost;
       item.level++;
       save();
       reopen();
@@ -3688,11 +3694,11 @@ function openAbilityItemDetail(item, key, returnMode, onBack){
   } else if(!starMaxed){
     const cost = abilityStarCost(item);
     const opt = document.createElement("div");
-    opt.className = "buildopt"+(state.resources.gems<cost?" disabled":"");
-    opt.innerHTML = `<span>⭐ Stern ${item.stars} → ${item.stars+1}</span><b>💎 ${cost}</b>`;
+    opt.className = "buildopt"+(state.resources.coins<cost?" disabled":"");
+    opt.innerHTML = `<span>⭐ Stern ${item.stars} → ${item.stars+1}</span><b>🪙 ${cost}</b>`;
     opt.addEventListener("click", ()=>{
-      if(state.resources.gems<cost) return;
-      state.resources.gems -= cost;
+      if(state.resources.coins<cost) return;
+      state.resources.coins -= cost;
       item.stars++;
       save();
       reopen();
