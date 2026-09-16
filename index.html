@@ -54,7 +54,8 @@
   }
   .buildmenu .box {
     background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
-    padding:16px; width:300px; max-width:88vw; box-shadow:0 12px 32px rgba(0,0,0,0.4);
+    padding:16px; width:300px; max-width:88vw; max-height:82vh; overflow-y:auto;
+    box-shadow:0 12px 32px rgba(0,0,0,0.4);
   }
   .buildmenu h3 { margin:0 0 4px; font-size:15px; font-weight:700; }
   .buildmenu .hint2 { color:var(--text-dim); font-size:11.5px; margin-bottom:10px; }
@@ -167,6 +168,20 @@
   }
   .statTile b { display:block; color:var(--text); font-size:18px; margin-top:2px; }
   .gearLegend { font-size:10.5px; color:var(--text-dim); text-align:center; margin-bottom:10px; }
+
+  /* Faehigkeiten-Hub: Reihe aus 5 Aktiv-Slots oben, Liste (besessen /
+     freischaltbar) darunter - eigenes, einfacheres Layout als der
+     Ausruestungs-Ring, weil hier kein Portrait im Zentrum steht. */
+  .abilitySlotRow { display:flex; justify-content:center; gap:8px; margin:6px 0 14px; }
+  .abilitySlot {
+    width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:18px; color:var(--text-dim); background:rgba(255,255,255,0.04); border:1.5px dashed var(--border);
+  }
+  .abilitySlot.filled {
+    background:rgba(45,214,189,0.14); border:2px solid var(--accent); border-style:solid;
+    cursor:pointer; color:var(--text);
+  }
+  .sectionLabel { font-size:11px; font-weight:800; color:var(--text-dim); margin:12px 0 6px; }
 
   #joystick {
     position:absolute; left:14px; bottom:14px; width:104px; height:104px; border-radius:50%;
@@ -288,13 +303,16 @@ function defaultState(){
     repairJob: null,
     nextWaveComposition: null,
     player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
-      equip: { ruestung:0, stiefel:0, amulett:0, kompass:0 } }
+      equip: { ruestung:0, stiefel:0, amulett:0, kompass:0 },
+      abilitiesOwned: [], abilitiesEquipped: [] }
   };
 }
 let state = load();
-// Alte Speicherstaende kennen equip noch nicht - defensiv nachruesten statt
-// bei jedem Zugriff extra abzusichern.
+// Alte Speicherstaende kennen equip/Faehigkeiten noch nicht - defensiv
+// nachruesten statt bei jedem Zugriff extra abzusichern.
 if(!state.player.equip) state.player.equip = { ruestung:0, stiefel:0, amulett:0, kompass:0 };
+if(!state.player.abilitiesOwned) state.player.abilitiesOwned = [];
+if(!state.player.abilitiesEquipped) state.player.abilitiesEquipped = [];
 
 // Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
 // anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
@@ -335,7 +353,7 @@ const BUILDABLE_TYPES = {
   wachturm:     { name:"Wachturm",     desc:"Zeigt die Zusammensetzung der nächsten Welle vorher an.", cost:{holz:35,stein:45}, baseHp:80, hpPerLevel:10 },
   handelsposten:{ name:"Handelsposten",desc:"Tauscht Holz und Stein gegeneinander (mit Verlust).", cost:{holz:40,stein:40}, baseHp:80, hpPerLevel:10 }
 };
-function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)); }
+function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)*(hasAbility("baumeister")?0.9:1)); }
 function maxHpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp+(level-1)*d.hpPerLevel; }
 function sellRefund(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, 0.5*level); }
 function repairCost(type, b){
@@ -393,7 +411,7 @@ function findHandelsposten(){ return findBuildingByType("handelsposten"); }
 function hasHandelsposten(){ return !!findHandelsposten(); }
 // Tauschkurs bleibt immer schlechter als 1:1 - kein Ersatz fuers Sammeln,
 // nur eine Notloesung bei Engpass.
-function tradeRate(level){ return Math.min(0.75, 0.5+level*0.05); }
+function tradeRate(level){ return Math.min(0.85, 0.5+level*0.05+(hasAbility("haendler")?0.08:0)); }
 
 // unlockLevel gilt fuer BEIDE Bedingungen zugleich: Basis-Level (genereller
 // Spielfortschritt) UND das Level des einzelnen Turms (Investition in genau
@@ -427,6 +445,31 @@ function playerMaxHp(){ return PLAYER_MAX_HP + equipBonus("ruestung"); }
 function playerSpeedMult(){ return 1+equipBonus("stiefel"); }
 function playerBackpackCapacity(){ return Math.round(BACKPACK_CAPACITY + equipBonus("amulett")); }
 function xpMultiplier(){ return 1+equipBonus("kompass"); }
+
+// ================= Faehigkeiten: passive Boni, gekauft mit Juwelen, aber
+// nur bis zu ABILITY_EQUIP_MAX gleichzeitig AKTIV =================
+// Bewusst andere Wirkungsbereiche als die Ausruestung (die deckt Spieler-
+// Grundwerte ab) - hier geht es um Wellen/Wirtschaft/Verteidigung, damit
+// beide Systeme sich sinnvoll ergaenzen statt zu ueberschneiden.
+const ABILITY_EQUIP_MAX = 5;
+const ABILITY_DEFS = {
+  sammelradius:   { name:"Sammelradius",    icon:"🧲", desc:"Größerer Wirkbereich beim Einsammeln im Vorbeilaufen.", cost:8 },
+  baumeister:     { name:"Baumeister",      icon:"🔨", desc:"10% günstigere Baukosten für Türme, Mauern und Gebäude.", cost:8 },
+  standhaft:      { name:"Standhaft",       icon:"🛡️", desc:"Deutlich längere Unverwundbarkeit nach einem K.o.", cost:8 },
+  haendler:       { name:"Händler",         icon:"💰", desc:"Besserer Tauschkurs am Handelsposten.", cost:8 },
+  scharfschuetze: { name:"Scharfschütze",   icon:"🏹", desc:"Mehr Schaden für alle Türme.", cost:10 },
+  lebenskraft:    { name:"Lebenskraft",     icon:"❤️", desc:"Mehr maximale Basis-Lebenspunkte.", cost:10 },
+  vorbereitung:   { name:"Vorbereitung",    icon:"⏱️", desc:"Mehr Zeit zwischen zwei Wellen.", cost:10 },
+  gluecksbringer: { name:"Glücksbringer",   icon:"💎", desc:"Ein zusätzliches Juwel pro überstandener Welle.", cost:12 }
+};
+function hasAbility(key){ return state.player.abilitiesEquipped.includes(key); }
+function toggleAbilityEquip(key){
+  const eq = state.player.abilitiesEquipped;
+  const idx = eq.indexOf(key);
+  if(idx>=0) eq.splice(idx,1);
+  else if(eq.length<ABILITY_EQUIP_MAX) eq.push(key);
+  save();
+}
 
 // ================= Spieler-Level/EXP - eigenstaendig von Basis-Level =================
 // Kommt aus zwei echten Quellen: Wellen ueberstehen und irgendwas verbessern
@@ -604,8 +647,8 @@ const WEAPON_STATS = {
   // gegen mehrere Laeufer auf einmal, schwach gegen ein einzelnes Ziel.
   moerser: { dmg: 8,  range: 190, minRange: 55, rate: 2.4, pierce:false, splash: 42 }
 };
-function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return w.dmg + (b.level-1)*2; }
-function maxBaseHp(){ return 100 + (state.basisLevel-1)*20; }
+function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return (w.dmg + (b.level-1)*2)*(hasAbility("scharfschuetze")?1.15:1); }
+function maxBaseHp(){ return 100 + (state.basisLevel-1)*20 + (hasAbility("lebenskraft")?40:0); }
 
 // "Kraft" ist reine Anzeige (Machtwert) - fasst zusammen, was man insgesamt
 // aufgebaut hat. Aktuell ohne eigene Funktion im Spiel, spaeter Basis fuer
@@ -689,9 +732,9 @@ function spawnWave(){
 }
 
 function waveLoot(){
-  // 1 Juwel pro ueberstandener Welle - bisher der einzige Weg, Juwelen zu
-  // verdienen (fuer die Ausruestung im Profil-Hub).
-  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3, gems: 1 };
+  // 1 Juwel pro ueberstandener Welle (mit Gluecksbringer-Faehigkeit 2) -
+  // bisher der einzige Weg, Juwelen zu verdienen.
+  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3, gems: 1+(hasAbility("gluecksbringer")?1:0) };
 }
 
 // ================= Wegfindung: Gegner suchen sich einen Weg zur Base statt =================
@@ -788,7 +831,7 @@ function updateWave(dt){
     state.waveTimer -= dt;
     if(state.waveTimer<=0){
       spawnWave();
-      state.waveTimer = MIN_WAVE_GAP + Math.random()*15;
+      state.waveTimer = MIN_WAVE_GAP*(hasAbility("vorbereitung")?1.3:1) + Math.random()*15;
       save();
     }
   }
@@ -867,7 +910,7 @@ function updateWave(dt){
             pl.backpack.holz = 0; pl.backpack.stein = 0;
             pl.x = 0; pl.y = 0;
             pl.hp = playerMaxHp();
-            pl.invulnCd = PLAYER_INVULN_TIME;
+            pl.invulnCd = PLAYER_INVULN_TIME*(hasAbility("standhaft")?1.6:1);
             pl.moveTarget = null;
             knockoutFx = { startedAt: performance.now() };
           }
@@ -2720,7 +2763,7 @@ const JOYSTICK_DEADZONE = 0.15; // kleine Ausschläge ignorieren, damit er nicht
 // Knoten-ID mehr - stattdessen wird im Vorbeilaufen eingesammelt, sobald
 // der Spieler nah genug an einem Knoten mit Inhalt ist.
 function collectNearbyNode(pl){
-  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS;
+  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS*(hasAbility("sammelradius")?1.6:1);
   state.nodes.forEach(n=>{
     if(n.amount<=0) return;
     const p = nodeWorldPos(n);
@@ -2875,6 +2918,91 @@ function showComingSoonPanel(title, text){
   document.body.appendChild(inner);
 }
 
+// Faehigkeiten-Hub: bis zu ABILITY_EQUIP_MAX (5) aktive Slots oben, darunter
+// die eigenen (besessenen) Faehigkeiten zum An-/Abwaehlen und ganz unten die
+// noch freischaltbaren (bezahlt mit Juwelen). Erreichbar ueber den
+// "Fähigkeiten"-Knopf im Profil-Hub.
+function openAbilitiesHub(){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+
+  const equipped = state.player.abilitiesEquipped;
+  const owned = state.player.abilitiesOwned;
+
+  box.innerHTML = `<h3>🌟 Fähigkeiten</h3><div class="hint2">Wähle bis zu ${ABILITY_EQUIP_MAX} aktive Fähigkeiten aus deinem Besitz.</div>`;
+
+  const slotRow = document.createElement("div");
+  slotRow.className = "abilitySlotRow";
+  for(let i=0;i<ABILITY_EQUIP_MAX;i++){
+    const key = equipped[i];
+    const slot = document.createElement("div");
+    slot.className = "abilitySlot"+(key?" filled":"");
+    slot.textContent = key ? ABILITY_DEFS[key].icon : "+";
+    if(key){
+      slot.title = ABILITY_DEFS[key].name+" (antippen zum Entfernen)";
+      slot.addEventListener("click", ()=>{ toggleAbilityEquip(key); refresh(); });
+    }
+    slotRow.appendChild(slot);
+  }
+  box.appendChild(slotRow);
+
+  const ownedLabel = document.createElement("div");
+  ownedLabel.className = "sectionLabel";
+  ownedLabel.textContent = "Deine Fähigkeiten";
+  box.appendChild(ownedLabel);
+
+  if(owned.length===0){
+    const empty = document.createElement("div");
+    empty.className = "hint2";
+    empty.textContent = "Noch keine Fähigkeit freigeschaltet - siehe unten.";
+    box.appendChild(empty);
+  }
+  owned.forEach(key=>{
+    const def = ABILITY_DEFS[key];
+    const isEquipped = equipped.includes(key);
+    const full = !isEquipped && equipped.length>=ABILITY_EQUIP_MAX;
+    const opt = document.createElement("div");
+    opt.className = "buildopt"+(full?" disabled":"");
+    opt.innerHTML = `<span>${def.icon} ${def.name}${isEquipped?" · Aktiv":""}<small>${def.desc}</small></span><b>${isEquipped?"✓":"—"}</b>`;
+    opt.addEventListener("click", ()=>{
+      if(full) return;
+      toggleAbilityEquip(key);
+      refresh();
+    });
+    box.appendChild(opt);
+  });
+
+  const lockedLabel = document.createElement("div");
+  lockedLabel.className = "sectionLabel";
+  lockedLabel.textContent = "Freischaltbar";
+  box.appendChild(lockedLabel);
+
+  Object.entries(ABILITY_DEFS).filter(([key])=>!owned.includes(key)).forEach(([key,def])=>{
+    const opt = document.createElement("div");
+    opt.className = "buildopt"+(state.resources.gems<def.cost?" disabled":"");
+    opt.innerHTML = `<span>${def.icon} ${def.name}<small>${def.desc}</small></span><b>💎 ${def.cost}</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources.gems<def.cost) return;
+      state.resources.gems -= def.cost;
+      state.player.abilitiesOwned.push(key);
+      save();
+      refresh();
+    });
+    box.appendChild(opt);
+  });
+
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function refresh(){
+    document.body.removeChild(overlay);
+    openAbilitiesHub();
+  }
+}
+
 // Profil-Hub: staerkt den SPIELER dauerhaft (HP/Tempo/Rucksack/EXP-Rate),
 // bezahlt mit Juwelen - der erste echte Nutzen fuer eine bisher tote
 // Waehrung. Erreichbar ueber das Portrait oben links im HUD. Layout 1:1
@@ -2929,9 +3057,7 @@ function openProfileHub(){
     <div class="gearLegend">Ausrüstung antippen zum Aufwerten (bezahlt mit 💎)</div>
   `;
 
-  box.querySelector("#btnFaehigkeiten").addEventListener("click", ()=>{
-    showComingSoonPanel("🌟 Fähigkeiten", "Noch ohne eigene Mechanik dahinter - der Button ist schon da, der Inhalt kommt später.");
-  });
+  box.querySelector("#btnFaehigkeiten").addEventListener("click", openAbilitiesHub);
   box.querySelector("#btnSchmiede").addEventListener("click", ()=>{
     showComingSoonPanel("🔨 Schmiede", "Noch ohne eigene Mechanik dahinter - der Button ist schon da, der Inhalt kommt später.");
   });
