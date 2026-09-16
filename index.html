@@ -968,7 +968,9 @@ document.getElementById("centerBtn").addEventListener("click", ()=>{ camera.x=0;
 
 // ================= Joystick (Spieler-Steuerung) =================
 // Eigene, ungespeicherte Richtung - solange sie aktiv ist, uebersteuert sie
-// ein per Tap gesetztes moveTarget (manuelle Kontrolle geht vor Auto-Lauf).
+// ein automatisches Laufziel (z.B. Rueckweg zur Base bei vollem Rucksack).
+// Wasser-Knoten werden NICHT mehr per Tap angelaufen, nur noch im
+// Vorbeilaufen mit dem Joystick eingesammelt (collectNearbyNode).
 const joystickEl = document.getElementById("joystick");
 const joystickKnob = document.getElementById("joystickKnob");
 const JOYSTICK_MAX = 40; // px, wie weit der Knopf aus der Mitte wandern kann
@@ -2554,18 +2556,6 @@ function handleTap(wx,wy){
     moveSource = null;
     render();
     return;
-  }
-
-  // Wasser-Knoten treffen? Der Spieler laeuft erst hin, sammelt nicht mehr
-  // sofort per Fingertipp - Rucksack-Kapazitaet macht das erst zur Reise.
-  for(const n of state.nodes){
-    const p = nodeWorldPos(n);
-    if(Math.hypot(wx-p.x,wy-p.y) < 26){
-      if(n.amount<=0) return;
-      state.player.moveTarget = { x:p.x, y:p.y, nodeId:n.id };
-      save(); render();
-      return;
-    }
   }
 
   const c = Math.round(wx/CELL + c0);
