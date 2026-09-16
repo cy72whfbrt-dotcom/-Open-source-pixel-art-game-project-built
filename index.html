@@ -358,7 +358,7 @@ function defaultState(){
     repairJob: null,
     nextWaveComposition: null,
     player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
-      abilitiesOwned: [], abilitiesEquipped: [],
+      abilitiesInventory: [], abilitiesEquipped: {}, nextAbilityId: 1,
       gearInventory: [], gearEquipped: { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null },
       nextGearId: 1 }
   };
@@ -369,8 +369,25 @@ let state = load();
 // bei jedem Zugriff extra abzusichern. Das alte "equip"-Feld (Ruestung/
 // Stiefel/Amulett/Kompass als reine Levelzahlen) wird nicht mehr benutzt -
 // abgeloest durch das Rarität+Gegenstaende-System unten.
-if(!state.player.abilitiesOwned) state.player.abilitiesOwned = [];
-if(!state.player.abilitiesEquipped) state.player.abilitiesEquipped = [];
+// Faehigkeiten hatten zuerst gar keine Raritaet (nur eine flache Liste
+// besessener Keys + eine flache Liste aktiver Keys) - jetzt genau wie
+// Ausruestung Instanzen mit Raritaet/Level/Sternen. Alte Speicherstaende
+// werden hier zu Grau-Level-1-Exemplaren migriert statt etwas zu verlieren.
+if(!state.player.abilitiesInventory){
+  const oldOwned = Array.isArray(state.player.abilitiesOwned) ? state.player.abilitiesOwned : [];
+  const oldEquippedKeys = Array.isArray(state.player.abilitiesEquipped) ? state.player.abilitiesEquipped : [];
+  let nextId = 1;
+  const newEquipped = {};
+  state.player.abilitiesInventory = oldOwned.map(key=>{
+    const inst = { id: nextId++, key, rarity:"grau", level:1, stars:0 };
+    if(oldEquippedKeys.includes(key)) newEquipped[key] = inst.id;
+    return inst;
+  });
+  state.player.nextAbilityId = nextId;
+  state.player.abilitiesEquipped = newEquipped;
+}
+delete state.player.abilitiesOwned;
+if(!state.player.nextAbilityId) state.player.nextAbilityId = 1;
 if(!state.player.gearInventory) state.player.gearInventory = [];
 if(!state.player.gearEquipped) state.player.gearEquipped = { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null };
 if(!state.player.nextGearId) state.player.nextGearId = 1;
@@ -440,7 +457,7 @@ const BUILDABLE_TYPES = {
   wachturm:     { name:"Wachturm",     desc:"Zeigt die Zusammensetzung der nächsten Welle vorher an.", cost:{holz:35,stein:45}, baseHp:80, hpPerLevel:10 },
   handelsposten:{ name:"Handelsposten",desc:"Tauscht Holz und Stein gegeneinander (mit Verlust).", cost:{holz:40,stein:40}, baseHp:80, hpPerLevel:10 }
 };
-function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)*(hasAbility("baumeister")?0.9:1)); }
+function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)*(1-abilityScaled("baumeister",0.25))); }
 function maxHpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp+(level-1)*d.hpPerLevel; }
 function sellRefund(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, 0.5*level); }
 function repairCost(type, b){
@@ -498,7 +515,7 @@ function findHandelsposten(){ return findBuildingByType("handelsposten"); }
 function hasHandelsposten(){ return !!findHandelsposten(); }
 // Tauschkurs bleibt immer schlechter als 1:1 - kein Ersatz fuers Sammeln,
 // nur eine Notloesung bei Engpass.
-function tradeRate(level){ return Math.min(0.85, 0.5+level*0.05+(hasAbility("haendler")?0.08:0)); }
+function tradeRate(level){ return Math.min(0.85, 0.5+level*0.05+abilityScaled("haendler",0.2)); }
 
 // unlockLevel gilt fuer BEIDE Bedingungen zugleich: Basis-Level (genereller
 // Spielfortschritt) UND das Level des einzelnen Turms (Investition in genau
@@ -556,7 +573,6 @@ const PULL_COST_1X = 1000;
 const PULL_COST_10X = 9000; // kleiner Rabatt gegenueber 10x Einzelpreis
 const ABILITY_PULL_COST_1X = 15;
 const ABILITY_PULL_COST_10X = 135; // kleiner Rabatt, gleiches Muster wie die Ausruestungs-Kiste
-const ABILITY_DUPE_REFUND = 8; // Juwelen zurueck, wenn eine bereits besessene Faehigkeit gezogen wird
 
 function rarityIndex(rarity){ return RARITIES.indexOf(rarity); }
 // Rohe "Power" eines Gegenstands: Rarität dominiert (Faktor 2.5 pro Stufe),
@@ -633,43 +649,97 @@ function fuseGear(slot, rarity){
   return { item, refund };
 }
 
-// ================= Faehigkeiten: passive Boni, gezogen im Shop wie
-// Ausruestung (Kiste mit Juwelen statt freier Auswahl), aber nur bis zu
-// ABILITY_EQUIP_MAX gleichzeitig AKTIV =================
+// ================= Faehigkeiten: gleicher Aufbau wie Ausruestung - Grau bis
+// Mystisch, Level+Sterne, Kombinieren - gezogen im Shop statt frei gewaehlt,
+// aber nur bis zu ABILITY_EQUIP_MAX (von 8 moeglichen Faehigkeiten-"Slots")
+// gleichzeitig AKTIV =================
 // Bewusst andere Wirkungsbereiche als die Ausruestung (die deckt Spieler-
 // Grundwerte ab) - hier geht es um Wellen/Wirtschaft/Verteidigung, damit
 // beide Systeme sich sinnvoll ergaenzen statt zu ueberschneiden.
 const ABILITY_EQUIP_MAX = 5;
 const ABILITY_DEFS = {
   sammelradius:   { name:"Sammelradius",    icon:"🧲", desc:"Größerer Wirkbereich beim Einsammeln im Vorbeilaufen." },
-  baumeister:     { name:"Baumeister",      icon:"🔨", desc:"10% günstigere Baukosten für Türme, Mauern und Gebäude." },
-  standhaft:      { name:"Standhaft",       icon:"🛡️", desc:"Deutlich längere Unverwundbarkeit nach einem K.o." },
+  baumeister:     { name:"Baumeister",      icon:"🔨", desc:"Günstigere Baukosten für Türme, Mauern und Gebäude." },
+  standhaft:      { name:"Standhaft",       icon:"🛡️", desc:"Längere Unverwundbarkeit nach einem K.o." },
   haendler:       { name:"Händler",         icon:"💰", desc:"Besserer Tauschkurs am Handelsposten." },
   scharfschuetze: { name:"Scharfschütze",   icon:"🏹", desc:"Mehr Schaden für alle Türme." },
   lebenskraft:    { name:"Lebenskraft",     icon:"❤️", desc:"Mehr maximale Basis-Lebenspunkte." },
   vorbereitung:   { name:"Vorbereitung",    icon:"⏱️", desc:"Mehr Zeit zwischen zwei Wellen." },
-  gluecksbringer: { name:"Glücksbringer",   icon:"💎", desc:"Ein zusätzliches Juwel pro überstandener Welle." }
+  gluecksbringer: { name:"Glücksbringer",   icon:"💎", desc:"Mehr Juwelen pro überstandener Welle." }
 };
-function hasAbility(key){ return state.player.abilitiesEquipped.includes(key); }
-function toggleAbilityEquip(key){
-  const eq = state.player.abilitiesEquipped;
-  const idx = eq.indexOf(key);
-  if(idx>=0) eq.splice(idx,1);
-  else if(eq.length<ABILITY_EQUIP_MAX) eq.push(key);
-  save();
+function findAbilityItem(id){ return state.player.abilitiesInventory.find(a=>a.id===id) || null; }
+function equippedAbility(key){ const id = state.player.abilitiesEquipped[key]; return id ? findAbilityItem(id) : null; }
+function equippedAbilityCount(){ return Object.values(state.player.abilitiesEquipped).filter(Boolean).length; }
+function hasAbility(key){ return !!equippedAbility(key); }
+// Wie gearSlotPower, nur ueber den Faehigkeit-Key statt Ausruestungs-Slot -
+// 0, wenn fuer diesen Key nichts aktiv ist.
+function abilitySlotPower(key){ const it = equippedAbility(key); return it ? gearPower(it.rarity, it.level, it.stars) : 0; }
+// Saettigende Kurve: naehert sich mit steigender Power (Rarität/Level/
+// Sterne) immer mehr maxValue an, statt linear ins Unermessliche zu wachsen
+// (waere bei Prozent-/HP-Boni absurd). Bei Grau/Lv.1 (Power 1) liefert sie
+// bewusst ungefaehr den alten festen Bonus, damit sich der Einstieg nicht
+// veraendert - nur das Wachstum darueber hinaus ist neu.
+function abilityScaled(key, maxValue){
+  const p = abilitySlotPower(key);
+  if(p<=0) return 0;
+  return maxValue * (1 - 1/(1+p*0.7));
 }
-// Zieht eine zufaellige Faehigkeit aus dem festen 8er-Pool. Bereits
-// besessene ("Dupe") schalten nichts Neues frei - dafuer gibt es eine
-// kleine Juwelen-Erstattung, damit ein Zug nach "schon alles besessen"
-// nie komplett ins Leere laeuft (gleiches Prinzip wie die Coin-Erstattung
-// beim Ausruestungs-Kombinieren).
+// Setzt/entfernt die aktive Instanz fuer einen Faehigkeit-Key. Gibt false
+// zurueck (und aendert nichts), wenn dadurch ABILITY_EQUIP_MAX ueberschritten
+// wuerde - der Aufrufer kann das per Toast melden.
+function setAbilityEquipped(key, instanceId){
+  const eq = state.player.abilitiesEquipped;
+  if(!instanceId){ delete eq[key]; save(); return true; }
+  if(!eq[key] && equippedAbilityCount()>=ABILITY_EQUIP_MAX) return false;
+  eq[key] = instanceId;
+  save();
+  return true;
+}
+// Aktiviert automatisch das staerkste eigene Exemplar eines Keys - genutzt,
+// wenn im Ring ein leerer Platz per Faehigkeit-Auswahl (nicht per Exemplar)
+// befuellt wird.
+function equipBestAbilityInstance(key){
+  const candidates = state.player.abilitiesInventory.filter(a=>a.key===key);
+  if(candidates.length===0) return false;
+  candidates.sort((a,b)=> gearPower(b.rarity,b.level,b.stars)-gearPower(a.rarity,a.level,a.stars));
+  return setAbilityEquipped(key, candidates[0].id);
+}
+function abilityLevelCost(item){ return Math.round(6*(rarityIndex(item.rarity)+1)*Math.pow(1.4, item.level-1)); }
+function abilityStarCost(item){ return Math.round(80*(rarityIndex(item.rarity)+1)*Math.pow(1.6, item.stars)); }
+function abilityKraft(item){ return Math.round(gearPower(item.rarity, item.level, item.stars)*6); }
+function abilityInvestedGems(item){
+  let total = 0;
+  for(let lv=1; lv<item.level; lv++) total += abilityLevelCost({rarity:item.rarity, level:lv});
+  for(let st=0; st<item.stars; st++) total += abilityStarCost({rarity:item.rarity, stars:st});
+  return total;
+}
+// Zieht eine zufaellige Faehigkeit aus dem festen 8er-Pool, mit Raritaet wie
+// beim Ausruestungs-Zug (gleiche Verteilung, gleiches pickGachaRarity()).
 function pullAbility(){
   const keys = Object.keys(ABILITY_DEFS);
   const key = keys[Math.floor(Math.random()*keys.length)];
-  const isDupe = state.player.abilitiesOwned.includes(key);
-  if(isDupe) state.resources.gems += ABILITY_DUPE_REFUND;
-  else state.player.abilitiesOwned.push(key);
-  return { key, isDupe };
+  const rarity = pickGachaRarity();
+  const item = { id: state.player.nextAbilityId++, key, rarity, level:1, stars:0 };
+  state.player.abilitiesInventory.push(item);
+  return item;
+}
+// 3 gleiche (Key + Rarität) -> 1 Exemplar der naechsten Rarität - exakt wie
+// fuseGear, nur ueber abilitiesInventory/Juwelen statt gearInventory/Coins.
+function fuseAbility(key, rarity){
+  const nextRarity = RARITIES[rarityIndex(rarity)+1];
+  if(!nextRarity) return null;
+  const pool = state.player.abilitiesInventory
+    .filter(a=>a.key===key && a.rarity===rarity && a.id!==state.player.abilitiesEquipped[key])
+    .sort((a,b)=> abilityInvestedGems(a)-abilityInvestedGems(b));
+  if(pool.length<GEAR_FUSE_COUNT) return null;
+  const consumed = pool.slice(0,GEAR_FUSE_COUNT);
+  const used = consumed.map(a=>a.id);
+  const refund = Math.round(consumed.reduce((sum,a)=>sum+abilityInvestedGems(a),0) * FUSE_REFUND_RATE);
+  state.player.abilitiesInventory = state.player.abilitiesInventory.filter(a=>!used.includes(a.id));
+  state.resources.gems += refund;
+  const item = { id: state.player.nextAbilityId++, key, rarity:nextRarity, level:1, stars:0 };
+  state.player.abilitiesInventory.push(item);
+  return { item, refund };
 }
 
 // ================= Spieler-Level/EXP - eigenstaendig von Basis-Level =================
@@ -855,8 +925,8 @@ const WEAPON_STATS = {
   // gegen mehrere Laeufer auf einmal, schwach gegen ein einzelnes Ziel.
   moerser: { dmg: 8,  range: 190, minRange: 55, rate: 2.4, pierce:false, splash: 42 }
 };
-function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return (w.dmg + (b.level-1)*2)*(hasAbility("scharfschuetze")?1.15:1)*gearTowerDmgMult(); }
-function maxBaseHp(){ return 100 + (state.basisLevel-1)*20 + (hasAbility("lebenskraft")?40:0); }
+function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return (w.dmg + (b.level-1)*2)*(1+abilityScaled("scharfschuetze",0.35))*gearTowerDmgMult(); }
+function maxBaseHp(){ return 100 + (state.basisLevel-1)*20 + Math.round(abilityScaled("lebenskraft",100)); }
 
 // "Kraft" ist reine Anzeige (Machtwert) - fasst zusammen, was man insgesamt
 // aufgebaut hat. Aktuell ohne eigene Funktion im Spiel, spaeter Basis fuer
@@ -869,6 +939,7 @@ function computeKraft(){
   kraft += state.npc.reparaturCount*8;
   kraft += state.npc.angreifer.length*8;
   GEAR_SLOTS.forEach(slot=>{ const it=equippedGear(slot); if(it) kraft += gearKraft(it); });
+  Object.keys(ABILITY_DEFS).forEach(key=>{ const it=equippedAbility(key); if(it) kraft += abilityKraft(it); });
   return kraft;
 }
 
@@ -941,10 +1012,11 @@ function spawnWave(){
 }
 
 function waveLoot(){
-  // 1 Juwel pro ueberstandener Welle (mit Gluecksbringer-Faehigkeit 2) -
-  // bisher der einzige Weg, Juwelen zu verdienen. Coins fuer den Gacha-
-  // Shop (1 Zug kostet 1000) kommen im gleichen Rhythmus dazu.
-  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3, gems: 1+(hasAbility("gluecksbringer")?1:0), coins: 40+state.basisLevel*15 };
+  // 1 Juwel pro ueberstandener Welle (mit Gluecksbringer-Faehigkeit mehr, je
+  // nach Rarität/Level/Sterne) - bisher der einzige Weg, Juwelen zu
+  // verdienen. Coins fuer den Gacha-Shop (1 Zug kostet 1000) kommen im
+  // gleichen Rhythmus dazu.
+  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3, gems: 1+Math.round(abilityScaled("gluecksbringer",2.5)), coins: 40+state.basisLevel*15 };
 }
 
 // ================= Wegfindung: Gegner suchen sich einen Weg zur Base statt =================
@@ -1041,7 +1113,7 @@ function updateWave(dt){
     state.waveTimer -= dt;
     if(state.waveTimer<=0){
       spawnWave();
-      state.waveTimer = MIN_WAVE_GAP*(hasAbility("vorbereitung")?1.3:1) + Math.random()*15;
+      state.waveTimer = MIN_WAVE_GAP*(1+abilityScaled("vorbereitung",0.7)) + Math.random()*15;
       save();
     }
   }
@@ -1120,7 +1192,7 @@ function updateWave(dt){
             pl.backpack.holz = 0; pl.backpack.stein = 0;
             pl.x = 0; pl.y = 0;
             pl.hp = playerMaxHp();
-            pl.invulnCd = PLAYER_INVULN_TIME*(hasAbility("standhaft")?1.6:1);
+            pl.invulnCd = PLAYER_INVULN_TIME*(1+abilityScaled("standhaft",1.5));
             pl.moveTarget = null;
             knockoutFx = { startedAt: performance.now() };
           }
@@ -2974,7 +3046,7 @@ const JOYSTICK_DEADZONE = 0.15; // kleine Ausschläge ignorieren, damit er nicht
 // Knoten-ID mehr - stattdessen wird im Vorbeilaufen eingesammelt, sobald
 // der Spieler nah genug an einem Knoten mit Inhalt ist.
 function collectNearbyNode(pl){
-  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS*(hasAbility("sammelradius")?1.6:1)*sammelradiusMult();
+  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS*(1+abilityScaled("sammelradius",1.5))*sammelradiusMult();
   state.nodes.forEach(n=>{
     if(n.amount<=0) return;
     const p = nodeWorldPos(n);
@@ -3156,9 +3228,9 @@ function openAbilityPicker(onPick){
   box.className = "box";
   box.innerHTML = `<h3>Fähigkeit wählen</h3>`;
 
-  const owned = state.player.abilitiesOwned;
   const equipped = state.player.abilitiesEquipped;
-  const pickable = owned.filter(key=>!equipped.includes(key));
+  const ownedKeys = [...new Set(state.player.abilitiesInventory.map(a=>a.key))];
+  const pickable = ownedKeys.filter(key=>!equipped[key]);
 
   if(pickable.length===0){
     const empty = document.createElement("div");
@@ -3169,9 +3241,12 @@ function openAbilityPicker(onPick){
 
   pickable.forEach(key=>{
     const def = ABILITY_DEFS[key];
+    const best = state.player.abilitiesInventory.filter(a=>a.key===key)
+      .sort((a,b)=> gearPower(b.rarity,b.level,b.stars)-gearPower(a.rarity,a.level,a.stars))[0];
+    const rInfo = RARITY_INFO[best.rarity];
     const opt = document.createElement("div");
     opt.className = "buildopt";
-    opt.innerHTML = `<span>${def.icon} ${def.name}<small>${def.desc}</small></span><b>Wählen</b>`;
+    opt.innerHTML = `<span>${def.icon} ${def.name}<small>${def.desc}</small></span><b style="color:${rInfo.color}">${rInfo.name}</b>`;
     opt.addEventListener("click", ()=>{ document.body.removeChild(overlay); onPick(key); });
     box.appendChild(opt);
   });
@@ -3299,13 +3374,12 @@ function showAbilityPullResults(results){
   box.innerHTML = `<h3>Gezogen!</h3>`;
   const grid = document.createElement("div");
   grid.className = "pullResultGrid";
-  results.forEach(({key,isDupe})=>{
-    const def = ABILITY_DEFS[key];
+  results.forEach(item=>{
+    const def = ABILITY_DEFS[item.key], rInfo = RARITY_INFO[item.rarity];
     const cell = document.createElement("div");
     cell.className = "pullResultCell";
-    cell.style.borderColor = isDupe ? "var(--border)" : "var(--accent)";
-    cell.style.opacity = isDupe ? "0.6" : "1";
-    cell.innerHTML = `<div class="prIcon">${def.icon}</div><div class="prRarity" style="color:${isDupe?"var(--text-dim)":"var(--accent)"}">${isDupe?"+💎"+ABILITY_DUPE_REFUND:def.name}</div>`;
+    cell.style.borderColor = rInfo.color;
+    cell.innerHTML = `<div class="prIcon">${def.icon}</div><div class="prRarity" style="color:${rInfo.color}">${rInfo.name}</div>`;
     grid.appendChild(cell);
   });
   box.appendChild(grid);
@@ -3475,6 +3549,160 @@ function openGearItemDetail(item, slot, returnMode, onBack){
   }
 }
 
+// Key-Picker fuer Faehigkeiten: exakt wie openGearPicker, nur ueber einen
+// Faehigkeit-Key statt einen Ausruestungs-Slot. Erreichbar ueber einen
+// bereits aktiven Ring-Platz im Profil-Hub.
+function openAbilityKeyPicker(key, returnMode){
+  returnMode = returnMode || "abilities";
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  const info = ABILITY_DEFS[key];
+  box.innerHTML = `<h3>${info.icon} ${info.name}</h3><div class="hint2">${info.desc}</div>`;
+
+  const equippedId = state.player.abilitiesEquipped[key];
+  const items = state.player.abilitiesInventory.filter(a=>a.key===key)
+    .sort((a,b)=> rarityIndex(b.rarity)-rarityIndex(a.rarity) || gearPower(b.rarity,b.level,b.stars)-gearPower(a.rarity,a.level,a.stars));
+
+  if(items.length===0){
+    const empty = document.createElement("div");
+    empty.className = "hint2";
+    empty.textContent = "Noch keine Exemplare dieser Fähigkeit - im Shop ziehen.";
+    box.appendChild(empty);
+  }
+
+  if(items.length>0){
+    const grid = document.createElement("div");
+    grid.className = "gearItemGrid";
+    items.forEach(item=>{
+      const rInfo = RARITY_INFO[item.rarity];
+      const isEquipped = item.id===equippedId;
+      const cell = document.createElement("div");
+      cell.className = "gearItemCell";
+      cell.style.borderColor = rInfo.color;
+      cell.innerHTML = `${isEquipped?'<div class="gearItemCheck">✓</div>':""}<div class="prIcon">${info.icon}</div><div class="gearItemLv" style="color:${rInfo.color}">Lv.${item.level}${item.stars>0?" "+"★".repeat(item.stars):""}</div>`;
+      cell.addEventListener("click", ()=>{
+        document.body.removeChild(overlay);
+        openAbilityItemDetail(item, key, returnMode);
+      });
+      grid.appendChild(cell);
+    });
+    box.appendChild(grid);
+  }
+
+  const fuseables = RARITIES.slice(0,-1).filter(r=>items.filter(a=>a.rarity===r && a.id!==equippedId).length>=GEAR_FUSE_COUNT);
+  if(fuseables.length>0){
+    const label = document.createElement("div");
+    label.className = "sectionLabel";
+    label.textContent = "Kombinieren";
+    box.appendChild(label);
+    fuseables.forEach(rarity=>{
+      const nextRarity = RARITIES[rarityIndex(rarity)+1];
+      const opt = document.createElement("div");
+      opt.className = "buildopt";
+      opt.innerHTML = `<span>🔀 3x ${RARITY_INFO[rarity].name}<small>Ergibt 1x ${RARITY_INFO[nextRarity].name}</small></span><b>→</b>`;
+      opt.addEventListener("click", ()=>{
+        const result = fuseAbility(key, rarity);
+        save();
+        refresh();
+        if(result && result.refund>0){
+          showToast(`🔀 Kombiniert! +💎 ${result.refund} Erstattung`);
+        } else if(result){
+          showToast(`🔀 Kombiniert zu ${RARITY_INFO[nextRarity].name}!`);
+        }
+      });
+      box.appendChild(opt);
+    });
+  }
+
+  addCloseBtn(box, overlay, ()=>{ document.body.removeChild(overlay); openProfileHub(returnMode); });
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function refresh(){
+    document.body.removeChild(overlay);
+    openAbilityKeyPicker(key, returnMode);
+  }
+}
+
+// Detailseite eines einzelnen Faehigkeit-Exemplars - exakt wie
+// openGearItemDetail, nur ueber Key/abilitiesInventory statt
+// Slot/gearInventory und mit Juwelen statt Coins bezahlt.
+function openAbilityItemDetail(item, key, returnMode, onBack){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  const info = ABILITY_DEFS[key];
+  const rInfo = RARITY_INFO[item.rarity];
+  const isEquipped = state.player.abilitiesEquipped[key]===item.id;
+  const maxed = item.level>=GEAR_MAX_LEVEL;
+  const starMaxed = item.stars>=GEAR_MAX_STARS;
+
+  box.innerHTML = `<h3>${info.icon} <span style="color:${rInfo.color}">${rInfo.name}</span> ${info.name}</h3>
+    <div class="hint2">Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""} · Kraft ${abilityKraft(item)}${isEquipped?" · Aktiv":""}</div>`;
+
+  if(isEquipped){
+    const hint = document.createElement("div");
+    hint.className = "buildopt gearRow";
+    hint.style.borderColor = rInfo.color;
+    hint.innerHTML = `<span>✓ Aktiv</span>`;
+    box.appendChild(hint);
+  } else {
+    const wear = document.createElement("div");
+    wear.className = "buildopt gearRow";
+    wear.style.borderColor = rInfo.color;
+    wear.innerHTML = `<span>Aktivieren</span><b>Wählen</b>`;
+    wear.addEventListener("click", ()=>{
+      if(!setAbilityEquipped(key, item.id)){
+        showToast(`⚠️ Maximal ${ABILITY_EQUIP_MAX} Fähigkeiten aktiv`);
+        return;
+      }
+      reopen();
+    });
+    box.appendChild(wear);
+  }
+
+  if(!maxed){
+    const cost = abilityLevelCost(item);
+    const opt = document.createElement("div");
+    opt.className = "buildopt"+(state.resources.gems<cost?" disabled":"");
+    opt.innerHTML = `<span>⬆️ Level ${item.level} → ${item.level+1}</span><b>💎 ${cost}</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources.gems<cost) return;
+      state.resources.gems -= cost;
+      item.level++;
+      save();
+      reopen();
+    });
+    box.appendChild(opt);
+  } else if(!starMaxed){
+    const cost = abilityStarCost(item);
+    const opt = document.createElement("div");
+    opt.className = "buildopt"+(state.resources.gems<cost?" disabled":"");
+    opt.innerHTML = `<span>⭐ Stern ${item.stars} → ${item.stars+1}</span><b>💎 ${cost}</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources.gems<cost) return;
+      state.resources.gems -= cost;
+      item.stars++;
+      save();
+      reopen();
+    });
+    box.appendChild(opt);
+  }
+
+  const back = onBack || (()=>openAbilityKeyPicker(key, returnMode));
+  addCloseBtn(box, overlay, ()=>{ document.body.removeChild(overlay); back(); });
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function reopen(){
+    document.body.removeChild(overlay);
+    openAbilityItemDetail(item, key, returnMode, onBack);
+  }
+}
+
 // Profil-Hub: staerkt den SPIELER dauerhaft, bezahlt mit Coins/Juwelen.
 // Layout an der Sword x Staff-Referenz: Emblem+Titel oben, Portrait mittig
 // mit GENAU 6 Kreisen drumherum (3 links / 3 rechts), grosse Level-Zahl
@@ -3522,7 +3750,7 @@ function openProfileHub(mode){
     </div>
     <div id="midSection"></div>
     <div class="gearLegend">${mode==="abilities"
-      ? "Fähigkeit antippen zum Entfernen · leeren Platz antippen zum Auswählen"
+      ? "Slot antippen: aktivieren, aufwerten oder kombinieren (bezahlt mit 💎)"
       : "Slot antippen: tragen, aufwerten oder kombinieren (bezahlt mit 🪙)"}</div>
   `;
 
@@ -3543,7 +3771,9 @@ function openProfileHub(mode){
   // der eigenen Ausruestung - immer nur EINER der drei Inhalte gleichzeitig.
   const mid = box.querySelector("#midSection");
   if(mode==="abilities"){
-    const owned = state.player.abilitiesOwned;
+    const owned = state.player.abilitiesInventory
+      .slice()
+      .sort((a,b)=> rarityIndex(b.rarity)-rarityIndex(a.rarity) || gearPower(b.rarity,b.level,b.stars)-gearPower(a.rarity,a.level,a.stars));
     const label = document.createElement("div");
     label.className = "sectionLabel";
     label.textContent = "Deine Fähigkeiten";
@@ -3555,22 +3785,22 @@ function openProfileHub(mode){
       mid.appendChild(empty);
     } else {
       // Icon-Kacheln (3 pro Reihe) statt Textzeilen - gleiches Muster wie bei
-      // der Ausruestungs-Uebersicht. Antippen schaltet direkt aktiv/inaktiv,
-      // Faehigkeiten haben (anders als Ausruestung) keine Level/Sterne-Seite.
+      // der Ausruestungs-Uebersicht. Ein Exemplar pro Kachel (nicht ein Key),
+      // genau wie bei Ausruestung - antippen oeffnet die Detailseite zum
+      // Aktivieren/Aufwerten (openAbilityItemDetail).
       const grid = document.createElement("div");
       grid.className = "gearItemGrid";
-      owned.forEach(key=>{
-        const def = ABILITY_DEFS[key];
-        const isEquipped = state.player.abilitiesEquipped.includes(key);
+      owned.forEach(item=>{
+        const def = ABILITY_DEFS[item.key], rInfo = RARITY_INFO[item.rarity];
+        const isEquipped = state.player.abilitiesEquipped[item.key]===item.id;
         const cell = document.createElement("div");
         cell.className = "gearItemCell";
-        cell.style.borderColor = isEquipped ? "var(--accent)" : "var(--border)";
-        cell.innerHTML = `${isEquipped?'<div class="gearItemCheck">✓</div>':""}<div class="prIcon">${def.icon}</div><div class="gearItemLv" style="color:${isEquipped?"var(--accent)":"var(--text-dim)"}">${def.name}</div>`;
+        cell.style.borderColor = rInfo.color;
+        cell.innerHTML = `${isEquipped?'<div class="gearItemCheck">✓</div>':""}<div class="prIcon">${def.icon}</div><div class="gearItemLv" style="color:${rInfo.color}">Lv.${item.level}${item.stars>0?" "+"★".repeat(item.stars):""}</div>`;
         cell.title = def.desc;
         cell.addEventListener("click", ()=>{
-          toggleAbilityEquip(key);
           document.body.removeChild(overlay);
-          openProfileHub("abilities");
+          openAbilityItemDetail(item, item.key, "abilities", ()=>openProfileHub("abilities"));
         });
         grid.appendChild(cell);
       });
@@ -3629,23 +3859,28 @@ function openProfileHub(mode){
   const stage = box.querySelector("#avatarStage");
 
   if(mode==="abilities"){
-    const equipped = state.player.abilitiesEquipped;
+    // Bis zu 5 der 8 Faehigkeit-Keys sind gleichzeitig aktiv - abilitiesEquipped
+    // ist ein Objekt (Key -> Exemplar-Id, wie gearEquipped), die Reihenfolge
+    // der aktiven Keys fuellt die 5 festen Ring-Positionen.
+    const activeKeys = Object.keys(state.player.abilitiesEquipped).filter(k=>state.player.abilitiesEquipped[k]);
     for(let i=0;i<ABILITY_EQUIP_MAX;i++){
-      const key = equipped[i];
+      const key = activeKeys[i];
+      const inst = key ? equippedAbility(key) : null;
       const def = key ? ABILITY_DEFS[key] : null;
+      const rInfo = inst ? RARITY_INFO[inst.rarity] : null;
       const slot = document.createElement("div");
       slot.className = "gearSlot "+ABILITY_POS[i]+(key?" owned":"");
+      if(inst) slot.style.setProperty("--rc", rInfo.color);
       if(def) slot.title = def.desc;
-      slot.innerHTML = `<div class="badge">${def?def.icon:"+"}</div>
-        <div class="bonus">${def?def.name:"—"}</div>`;
+      slot.innerHTML = `<div class="badge" style="${inst?`border-color:${rInfo.color};background:${rInfo.color}22;`:""}">${def?def.icon:"+"}</div>
+        <div class="bonus" style="${inst?`color:${rInfo.color}`:""}">${def?def.name:"—"}</div>`;
       slot.addEventListener("click", ()=>{
         document.body.removeChild(overlay);
         if(key){
-          toggleAbilityEquip(key);
-          openProfileHub("abilities");
+          openAbilityKeyPicker(key, "abilities");
         } else {
           openAbilityPicker((pickedKey)=>{
-            toggleAbilityEquip(pickedKey);
+            equipBestAbilityInstance(pickedKey);
             openProfileHub("abilities");
           });
         }
