@@ -237,6 +237,23 @@
     display:flex; align-items:center; justify-content:center;
   }
 
+  /* Detailseite eines einzelnen Ausruestungs-/Faehigkeit-Exemplars - grosse
+     Icon-Kachel + Name + Stat-Chips statt nur einer schmalen Textzeile. */
+  .itemDetailHead { display:flex; flex-direction:column; align-items:center; gap:7px; margin:2px 0 16px; }
+  .itemDetailIcon {
+    width:76px; height:76px; border-radius:22px; border:3px solid; display:flex;
+    align-items:center; justify-content:center; font-size:38px;
+    box-shadow:0 0 0 5px rgba(255,255,255,0.03), 0 10px 24px rgba(0,0,0,0.4);
+  }
+  .itemDetailName { font-size:18px; font-weight:800; }
+  .itemDetailSub { font-size:12px; color:var(--text-dim); }
+  .itemDetailStats { display:flex; gap:8px; margin-top:6px; }
+  .idStat {
+    background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:11px;
+    padding:6px 14px; font-size:13px; font-weight:800; text-align:center; min-width:50px;
+  }
+  .idStat small { display:block; font-size:9px; font-weight:700; color:var(--text-dim); margin-bottom:2px; letter-spacing:.04em; text-transform:uppercase; }
+
   #joystick {
     position:absolute; left:14px; bottom:14px; width:104px; height:104px; border-radius:50%;
     background:var(--panel-soft); border:1px solid var(--border); touch-action:none;
@@ -3476,6 +3493,23 @@ function openGearPicker(slot, returnMode){
   }
 }
 
+// Gemeinsamer grosser Kopf fuer die Detailseiten von Ausruestung UND
+// Faehigkeiten (openGearItemDetail/openAbilityItemDetail) - grosse farbige
+// Icon-Kachel statt nur einer schmalen Ueberschrift, plus Level/Sterne/Kraft
+// als eigene Chips statt einer einzigen Textzeile.
+function itemDetailHead(icon, rInfo, name, sub, item, kraft){
+  return `<div class="itemDetailHead">
+    <div class="itemDetailIcon" style="border-color:${rInfo.color};background:${rInfo.color}22;">${icon}</div>
+    <div class="itemDetailName" style="color:${rInfo.color}">${rInfo.name} ${name}</div>
+    <div class="itemDetailSub">${sub}</div>
+    <div class="itemDetailStats">
+      <div class="idStat"><small>Level</small>${item.level}</div>
+      <div class="idStat"><small>Sterne</small>${item.stars}</div>
+      <div class="idStat"><small>Kraft</small>⚡${kraft}</div>
+    </div>
+  </div>`;
+}
+
 // Detailseite eines einzelnen Ausruestungs-Exemplars, geoeffnet per Antippen
 // der Icon-Kachel im Slot-Picker: Tragen sowie Level-/Stern-Aufwerten, statt
 // alles gleichzeitig als Textzeilen in der Liste zu zeigen.
@@ -3490,8 +3524,7 @@ function openGearItemDetail(item, slot, returnMode, onBack){
   const maxed = item.level>=GEAR_MAX_LEVEL;
   const starMaxed = item.stars>=GEAR_MAX_STARS;
 
-  box.innerHTML = `<h3>${info.icon} <span style="color:${rInfo.color}">${rInfo.name}</span> ${info.name}</h3>
-    <div class="hint2">Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""} · Kraft ${gearKraft(item)}${isEquipped?" · Getragen":""}</div>`;
+  box.innerHTML = itemDetailHead(info.icon, rInfo, info.name, info.desc+(isEquipped?" · Getragen":""), item, gearKraft(item));
 
   if(isEquipped){
     const hint = document.createElement("div");
@@ -3646,8 +3679,7 @@ function openAbilityItemDetail(item, key, returnMode, onBack){
   const maxed = item.level>=GEAR_MAX_LEVEL;
   const starMaxed = item.stars>=GEAR_MAX_STARS;
 
-  box.innerHTML = `<h3>${info.icon} <span style="color:${rInfo.color}">${rInfo.name}</span> ${info.name}</h3>
-    <div class="hint2">Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""} · Kraft ${abilityKraft(item)}${isEquipped?" · Aktiv":""}</div>`;
+  box.innerHTML = itemDetailHead(info.icon, rInfo, info.name, info.desc+(isEquipped?" · Aktiv":""), item, abilityKraft(item));
 
   if(isEquipped){
     // Anders als Ausruestung (die immer alle 6 Slots gleichzeitig traegt)
