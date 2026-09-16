@@ -127,8 +127,7 @@
   .gearSlot .bonus { font-size:10.5px; font-weight:800; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.8); }
   .gearSlot .cost { font-size:9.5px; color:var(--text-dim); }
   .gearSlot.pos-l1 { left:-10px; top:0; }
-  .gearSlot.pos-l2 { left:-16px; top:50%; margin-top:-31px; }
-  .gearSlot.pos-l3 { left:-10px; bottom:0; }
+  .gearSlot.pos-l2 { left:-10px; bottom:0; }
   .gearSlot.pos-r1 { right:-10px; top:0; }
   .gearSlot.pos-r2 { right:-16px; top:50%; margin-top:-31px; }
   .gearSlot.pos-r3 { right:-10px; bottom:0; }
@@ -2843,11 +2842,10 @@ function playerTitle(){
 
 // Zwei Plaetze ohne echte Spielmechanik dahinter (wir haben nur vier
 // Spielerwerte zum Aufwerten) - klar als "bald verfuegbar" markiert statt
-// eine Wirkung vorzutaeuschen, die es nicht gibt. Damit landen wir trotzdem
-// bei GENAU 6 Slots wie im Referenzbild (3 links / 3 rechts).
+// eine Wirkung vorzutaeuschen, die es nicht gibt. Damit landen wir bei
+// GENAU 5 Slots wie im Referenzbild (2 links / 3 rechts).
 const EQUIP_COMING_SOON = [
-  { icon:"⚔️", name:"Waffe" },
-  { icon:"📖", name:"Zauber" }
+  { icon:"⚔️", name:"Waffe" }
 ];
 
 // Profil-Hub: staerkt den SPIELER dauerhaft (HP/Tempo/Rucksack/EXP-Rate),
@@ -2874,7 +2872,7 @@ function openProfileHub(){
 
   const xpNow = xpForLevel(state.playerLevel);
   const xpRatio = Math.max(0,Math.min(1, state.playerXp/xpNow));
-  const GEAR_POS = ["pos-l1","pos-r1","pos-l2","pos-r2"];
+  const GEAR_POS = ["pos-l1","pos-l2","pos-r1","pos-r2"];
 
   box.innerHTML = `
     <div class="titleEmblem">
@@ -2932,7 +2930,7 @@ function openProfileHub(){
 
   EQUIP_COMING_SOON.forEach((def,i)=>{
     const slot = document.createElement("div");
-    slot.className = "gearSlot locked "+["pos-l3","pos-r3"][i];
+    slot.className = "gearSlot locked "+["pos-r3"][i];
     slot.title = def.name+" - bald verfügbar";
     slot.innerHTML = `<div class="badge">${def.icon}<span class="ping" style="background:#565b64;">🔒</span></div><div class="bonus">Bald</div>`;
     stage.appendChild(slot);
