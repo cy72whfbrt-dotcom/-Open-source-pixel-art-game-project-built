@@ -60,6 +60,14 @@
   .buildmenu {
     position:fixed; inset:0; background:rgba(6,10,15,.68); display:flex; align-items:center; justify-content:center; z-index:20;
   }
+  .toast {
+    position:fixed; top:14px; left:50%; transform:translate(-50%,-14px); z-index:60;
+    background:var(--panel); border:1px solid var(--accent); border-radius:var(--radius-sm);
+    padding:9px 16px; font-size:12.5px; font-weight:600; color:var(--text);
+    box-shadow:0 8px 20px rgba(0,0,0,0.4); opacity:0; transition:opacity .25s, transform .25s;
+    pointer-events:none; white-space:nowrap;
+  }
+  .toast.show { opacity:1; transform:translate(-50%,0); }
   .buildmenu .box {
     background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
     padding:16px; width:300px; max-width:88vw; max-height:82vh; overflow-y:auto;
@@ -355,6 +363,22 @@ if(new URLSearchParams(location.search).get("cheat")==="1"){
   state.resources.gems = 1000;
   save();
 }
+
+// Test-Phase (auf Wunsch temporär): jede Ressource bleibt automatisch auf
+// einem sehr hohen Sockel, egal wie viel ausgegeben/gebaut/gezogen wird -
+// "unendlich" zum Durchtesten aller Systeme (Gacha, Bauen, Kombinieren...).
+// Einfach TEST_INFINITE_RESOURCES auf false setzen, um die echte Wirtschaft
+// zurückzubekommen.
+const TEST_INFINITE_RESOURCES = true;
+const TEST_RESOURCE_FLOOR = 999999;
+function enforceTestResources(){
+  if(!TEST_INFINITE_RESOURCES) return;
+  const r = state.resources;
+  if(r.holz<TEST_RESOURCE_FLOOR) r.holz = TEST_RESOURCE_FLOOR;
+  if(r.stein<TEST_RESOURCE_FLOOR) r.stein = TEST_RESOURCE_FLOOR;
+  if(r.coins<TEST_RESOURCE_FLOOR) r.coins = TEST_RESOURCE_FLOOR;
+  if(r.gems<TEST_RESOURCE_FLOOR) r.gems = TEST_RESOURCE_FLOOR;
+}
 function load(){
   try {
     const raw = localStorage.getItem(SAVE_KEY);
@@ -515,6 +539,16 @@ function gearItemDef(item){ return { slot:GEAR_SLOT_INFO[item.slot], rarity:RARI
 function gearLevelCost(item){ return Math.round(15*(rarityIndex(item.rarity)+1)*Math.pow(1.4, item.level-1)); }
 function gearStarCost(item){ return Math.round(250*(rarityIndex(item.rarity)+1)*Math.pow(1.6, item.stars)); }
 function gearKraft(item){ return Math.round(gearPower(item.rarity, item.level, item.stars)*6); }
+// Summe der Coins, die bisher in Level+Sterne dieses Exemplars gesteckt
+// wurden - rekonstruiert aus den Kosten-Formeln (kein eigenes Feld noetig,
+// bleibt also automatisch korrekt). Wird beim Kombinieren gebraucht, damit
+// investierte Teile nicht ersatzlos verschwinden.
+function gearInvestedCoins(item){
+  let total = 0;
+  for(let lv=1; lv<item.level; lv++) total += gearLevelCost({rarity:item.rarity, level:lv});
+  for(let st=0; st<item.stars; st++) total += gearStarCost({rarity:item.rarity, stars:st});
+  return total;
+}
 
 function findGearItem(id){ return state.player.gearInventory.find(g=>g.id===id) || null; }
 function equippedGear(slot){ const id = state.player.gearEquipped[slot]; return id ? findGearItem(id) : null; }
@@ -543,17 +577,27 @@ function pullGear(){
   return item;
 }
 // 3 gleiche (Slot + Rarität) -> 1 Exemplar der naechsten Rarität, frisch
-// auf Level 1 / 0 Sterne. Gibt das neue Teil zurueck oder null.
+// auf Level 1 / 0 Sterne. Verbraucht bevorzugt die am wenigsten investierten
+// Exemplare (Sortierung nach investedCoins) und erstattet FUSE_REFUND_RATE
+// der darin investierten Coins zurueck - so kann ein aus Versehen
+// mitgenommenes hochgelevletes Teil nie ersatzlos verloren gehen.
+// Gibt {item, refund} zurueck oder null.
+const FUSE_REFUND_RATE = 0.7;
 function fuseGear(slot, rarity){
   const nextRarity = RARITIES[rarityIndex(rarity)+1];
   if(!nextRarity) return null;
-  const pool = state.player.gearInventory.filter(g=>g.slot===slot && g.rarity===rarity && g.id!==state.player.gearEquipped[slot]);
+  const pool = state.player.gearInventory
+    .filter(g=>g.slot===slot && g.rarity===rarity && g.id!==state.player.gearEquipped[slot])
+    .sort((a,b)=> gearInvestedCoins(a)-gearInvestedCoins(b));
   if(pool.length<GEAR_FUSE_COUNT) return null;
-  const used = pool.slice(0,GEAR_FUSE_COUNT).map(g=>g.id);
+  const consumed = pool.slice(0,GEAR_FUSE_COUNT);
+  const used = consumed.map(g=>g.id);
+  const refund = Math.round(consumed.reduce((sum,g)=>sum+gearInvestedCoins(g),0) * FUSE_REFUND_RATE);
   state.player.gearInventory = state.player.gearInventory.filter(g=>!used.includes(g.id));
+  state.resources.coins += refund;
   const item = { id: state.player.nextGearId++, slot, rarity:nextRarity, level:1, stars:0 };
   state.player.gearInventory.push(item);
-  return item;
+  return { item, refund };
 }
 
 // ================= Faehigkeiten: passive Boni, gekauft mit Juwelen, aber
@@ -1234,7 +1278,7 @@ function pointerEnd(e){
       openProfileHub();
     } else {
       const w = screenToWorld(pos.x,pos.y);
-      handleTap(w.x,w.y);
+      handleTap(w.x,w.y,e.pointerType==="mouse");
     }
   }
   if(pointers.size<2) pinchStartDist=0;
@@ -1294,6 +1338,29 @@ function joystickEnd(e){
 }
 joystickEl.addEventListener("pointerup", joystickEnd);
 joystickEl.addEventListener("pointercancel", joystickEnd);
+
+// ================= Tastatur (WASD/Pfeiltasten) - Desktop-Testkomfort neben
+// dem Joystick. Uebersteuert wie der Joystick ein automatisches Laufziel,
+// ignoriert Tasten aber, solange ein Menue (.buildmenu) offen ist, damit
+// man darin nicht versehentlich den Spieler durchs Wasser schickt. =======
+const pressedKeys = new Set();
+const MOVE_KEYS = ["w","a","s","d","arrowup","arrowdown","arrowleft","arrowright"];
+window.addEventListener("keydown", e=>{
+  const k = e.key.toLowerCase();
+  if(MOVE_KEYS.includes(k)) pressedKeys.add(k);
+});
+window.addEventListener("keyup", e=>{
+  pressedKeys.delete(e.key.toLowerCase());
+});
+function keyboardDir(){
+  if(document.querySelector(".buildmenu")) return {x:0,y:0};
+  let x=0,y=0;
+  if(pressedKeys.has("a")||pressedKeys.has("arrowleft")) x-=1;
+  if(pressedKeys.has("d")||pressedKeys.has("arrowright")) x+=1;
+  if(pressedKeys.has("w")||pressedKeys.has("arrowup")) y-=1;
+  if(pressedKeys.has("s")||pressedKeys.has("arrowdown")) y+=1;
+  return {x,y};
+}
 
 // ================= Rendern =================
 
@@ -2825,7 +2892,7 @@ function render(){
 // statt normal ein Menue zu oeffnen.
 let moveSource = null;
 
-function handleTap(wx,wy){
+function handleTap(wx,wy,isMouseClick){
   const gridSize = gridSizeForLevel(state.basisLevel);
   const c0 = centerOf(gridSize);
 
@@ -2851,7 +2918,12 @@ function handleTap(wx,wy){
 
   const c = Math.round(wx/CELL + c0);
   const r = Math.round(wy/CELL + c0);
-  if(c<0||c>=gridSize||r<0||r>=gridSize) return;
+  if(c<0||c>=gridSize||r<0||r>=gridSize){
+    // Ausserhalb der Insel (Wasser): fuer Maus-Klicks (Desktop-Testkomfort
+    // neben WASD) laeuft der Spieler direkt dorthin, wie beim Joystick.
+    if(isMouseClick) state.player.moveTarget = { x:wx, y:wy, nodeId:null };
+    return;
+  }
   if(c===c0 && r===c0){ openBasisMenu(); return; }
   openBuildMenu(c,r);
 }
@@ -2917,13 +2989,19 @@ const LEVELUP_FX_DURATION = 1600;
 function updatePlayer(dt){
   const pl = state.player;
   const joyLen = Math.hypot(joystickDir.x, joystickDir.y);
-  if(joyLen>JOYSTICK_DEADZONE){
-    // Manuelle Steuerung per Joystick geht vor - bricht ein per Tap gesetztes
-    // Auto-Ziel ab, der Spieler bestimmt direkt die Richtung.
+  const kDir = keyboardDir();
+  const kLen = Math.hypot(kDir.x, kDir.y);
+  const useJoy = joyLen>JOYSTICK_DEADZONE;
+  const useKey = !useJoy && kLen>0;
+  if(useJoy || useKey){
+    // Manuelle Steuerung per Joystick oder Tastatur geht vor - bricht ein per
+    // Tap/Klick gesetztes Auto-Ziel ab, der Spieler bestimmt direkt die Richtung.
     pl.moveTarget = null;
-    const speedMult = Math.min(1, joyLen);
-    pl.x += (joystickDir.x/joyLen)*PLAYER_SPEED*playerSpeedMult()*speedMult*dt;
-    pl.y += (joystickDir.y/joyLen)*PLAYER_SPEED*playerSpeedMult()*speedMult*dt;
+    const dir = useJoy ? joystickDir : kDir;
+    const len = useJoy ? joyLen : kLen;
+    const speedMult = useJoy ? Math.min(1, joyLen) : 1;
+    pl.x += (dir.x/len)*PLAYER_SPEED*playerSpeedMult()*speedMult*dt;
+    pl.y += (dir.y/len)*PLAYER_SPEED*playerSpeedMult()*speedMult*dt;
     collectNearbyNode(pl);
   } else if(pl.moveTarget){
     const dx = pl.moveTarget.x-pl.x, dy = pl.moveTarget.y-pl.y;
@@ -2999,6 +3077,21 @@ function openBasisMenu(){
   addCloseBtn(box, overlay);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+}
+
+// Kurze, sich selbst entfernende Hinweis-Meldung oben am Bildschirm -
+// fuer Feedback wie die Coin-Erstattung beim Kombinieren, das keinen
+// eigenen Dialog braucht.
+function showToast(text){
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = text;
+  document.body.appendChild(el);
+  requestAnimationFrame(()=>el.classList.add("show"));
+  setTimeout(()=>{
+    el.classList.remove("show");
+    setTimeout(()=>el.remove(), 300);
+  }, 1800);
 }
 
 // Kurzer Flavor-Titel je Spieler-Level - unser Gegenstueck zur
@@ -3221,9 +3314,14 @@ function openGearPicker(slot, returnMode){
       opt.className = "buildopt";
       opt.innerHTML = `<span>🔀 3x ${RARITY_INFO[rarity].name}<small>Ergibt 1x ${RARITY_INFO[nextRarity].name}</small></span><b>→</b>`;
       opt.addEventListener("click", ()=>{
-        fuseGear(slot, rarity);
+        const result = fuseGear(slot, rarity);
         save();
         refresh();
+        if(result && result.refund>0){
+          showToast(`🔀 Kombiniert! +🪙 ${result.refund} Erstattung`);
+        } else if(result){
+          showToast(`🔀 Kombiniert zu ${RARITY_INFO[nextRarity].name}!`);
+        }
       });
       box.appendChild(opt);
     });
@@ -3728,6 +3826,7 @@ function loop(now){
   updateTraining(dt);
   updateHospital(dt);
   updatePlayer(dt);
+  enforceTestResources();
   render();
   requestAnimationFrame(loop);
 }
