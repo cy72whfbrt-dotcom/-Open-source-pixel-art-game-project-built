@@ -543,9 +543,11 @@ function tradeRate(level){ return Math.min(0.85, 0.5+level*0.05+abilityScaled("h
 // nur Turm-Level -> ein einzelner Turm laesst sich unabhaengig vom
 // Spielfortschritt hochkaufen.
 const WEAPONS = {
-  bogen:   { name:"Bogen",   desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
-  kanone:  { name:"Kanone",  desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 },
-  moerser: { name:"Mörser",  desc:"Flächenschaden, aber Mindestreichweite - trifft nichts direkt daneben.", unlockLevel:6 }
+  bogen:     { name:"Bogen",     desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
+  armbrust:  { name:"Armbrust",  desc:"Deutlich schnellere Schüsse, weniger Schaden pro Treffer - hohe Dauerleistung gegen einzelne schnelle Gegner.", unlockLevel:2 },
+  kanone:    { name:"Kanone",    desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:3 },
+  moerser:   { name:"Mörser",    desc:"Flächenschaden, aber Mindestreichweite - trifft nichts direkt daneben.", unlockLevel:6 },
+  feuerturm: { name:"Feuerturm", desc:"Entzündet Getroffene - sie nehmen einige Sekunden lang zusätzlichen Schaden über Zeit.", unlockLevel:8 }
 };
 
 function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,level-1)), stein: Math.round(45*Math.pow(1.55,level-1)) }; }
@@ -943,12 +945,20 @@ function nodeWorldPos(node){
 // ================= Wellen: Gegner spawnen, Tuerme feuern =================
 
 const WEAPON_STATS = {
-  bogen:   { dmg: 6,  range: 130, rate: 0.9,  pierce:false },
-  kanone:  { dmg: 14, range: 150, rate: 1.6,  pierce:true  },
+  bogen:     { dmg: 6,  range: 130, rate: 0.9,  pierce:false },
+  // Armbrust: mehr als doppelt so schnelle Feuerrate wie der Bogen bei
+  // niedrigerem Einzelschaden - hoehere Dauerleistung (DPS), aber schwaecher
+  // gegen Ruestung (kein pierce) als die Kanone.
+  armbrust:  { dmg: 4,  range: 125, rate: 0.4,  pierce:false },
+  kanone:    { dmg: 14, range: 150, rate: 1.6,  pierce:true  },
   // Moerser: Flaechenschaden statt Einzelziel, aber mit Mindestreichweite
   // (kann nichts direkt neben sich treffen) und langsamer Feuerrate - stark
   // gegen mehrere Laeufer auf einmal, schwach gegen ein einzelnes Ziel.
-  moerser: { dmg: 8,  range: 190, minRange: 55, rate: 2.4, pierce:false, splash: 42 }
+  moerser:   { dmg: 8,  range: 190, minRange: 55, rate: 2.4, pierce:false, splash: 42 },
+  // Feuerturm: moderater Direktschaden, entzuendet das Ziel zusaetzlich -
+  // der Brand tickt unabhaengig von weiteren Treffern (siehe burnDps/
+  // burnTime in updateWave) und wird bei jedem neuen Treffer aufgefrischt.
+  feuerturm: { dmg: 5,  range: 140, rate: 1.3,  pierce:false, burnDps: 4, burnDuration: 3, color:"#ff7a3d" }
 };
 function towerDamage(b){ const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen; return (w.dmg + (b.level-1)*2)*(1+abilityScaled("scharfschuetze",0.35))*gearTowerDmgMult(); }
 function maxBaseHp(){ return 100 + (state.basisLevel-1)*20 + Math.round(abilityScaled("lebenskraft",100)); }
@@ -1147,6 +1157,12 @@ function updateWave(dt){
 
   const c0 = centerOf(gridSize);
   enemies.forEach(e=>{
+    // Brand-Effekt (Feuerturm): tickt unabhaengig vom Bewegungs-/Kampf-Status
+    // weiter, auch wenn der Gegner gerade nicht im Nahkampf mit irgendwas ist.
+    if(e.burnTime>0){
+      e.hp -= e.burnDps*dt;
+      e.burnTime -= dt;
+    }
     if(!e.path) e.path = [];
     if(e.pathIndex===undefined) e.pathIndex = 0;
 
@@ -1246,7 +1262,7 @@ function updateWave(dt){
     if(nearest){
       b.fireCd = w.rate;
       const ang = Math.atan2(nearest.y-p.y, nearest.x-p.x);
-      projectiles.push({x:p.x,y:p.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b),pierce:w.pierce,splash:w.splash});
+      projectiles.push({x:p.x,y:p.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b),pierce:w.pierce,splash:w.splash,burnDps:w.burnDps,burnDuration:w.burnDuration,color:w.color});
     }
   });
 
@@ -1288,6 +1304,9 @@ function updateWave(dt){
         } else {
           const dmg = (e.armor && !pr.pierce) ? Math.max(1, pr.dmg-e.armor) : pr.dmg;
           e.hp -= dmg;
+          // Feuerturm-Treffer entzuenden das Ziel - Brand wird bei jedem
+          // neuen Treffer aufgefrischt statt zu stapeln (kein Dauer-Stacking).
+          if(pr.burnDps){ e.burnDps = pr.burnDps; e.burnTime = pr.burnDuration; }
         }
         hit = true;
       }
@@ -2052,18 +2071,29 @@ function drawEnemy(e){
   ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(e.x-w/2,by,w,4);
   ctx.fillStyle = ratio>0.5 ? "#6ad46a" : ratio>0.25 ? "#e0c34a" : "#e04a4a";
   ctx.fillRect(e.x-w/2,by,w*ratio,4);
+
+  // Brand (Feuerturm-Treffer): flackernder oranger Ring, solange burnTime
+  // laeuft - klarer sichtbarer Hinweis auf den Schaden-ueber-Zeit-Effekt.
+  if(e.burnTime>0){
+    const flicker = 0.55+0.35*Math.sin(performance.now()/90+e.x);
+    ctx.beginPath(); ctx.arc(e.x,e.y,e.r+2.5,0,Math.PI*2);
+    ctx.strokeStyle = `rgba(255,122,61,${flicker})`; ctx.lineWidth=2; ctx.stroke();
+  }
 }
 
 function drawProjectile(pr){
+  // Feuerturm-Geschosse bekommen eine eigene orange Farbe statt dem
+  // Standard-Warmgelb - sichtbarer Hinweis auf den Brand-Effekt.
+  const core = pr.color || "#f2c94c";
   const ang = Math.atan2(pr.vy,pr.vx);
   const tx = pr.x-Math.cos(ang)*9, ty = pr.y-Math.sin(ang)*9;
   const trail = ctx.createLinearGradient(tx,ty,pr.x,pr.y);
-  trail.addColorStop(0,"rgba(242,201,76,0)"); trail.addColorStop(1,"rgba(255,224,140,0.85)");
+  trail.addColorStop(0,core+"00"); trail.addColorStop(1,core+"d9");
   ctx.strokeStyle=trail; ctx.lineWidth=2.6; ctx.lineCap="round";
   ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(pr.x,pr.y); ctx.stroke();
   ctx.lineCap="butt";
   const glow = ctx.createRadialGradient(pr.x,pr.y,0,pr.x,pr.y,5);
-  glow.addColorStop(0,"rgba(255,240,190,0.9)"); glow.addColorStop(1,"rgba(255,240,190,0)");
+  glow.addColorStop(0,core+"e6"); glow.addColorStop(1,core+"00");
   ctx.beginPath(); ctx.arc(pr.x,pr.y,5,0,Math.PI*2); ctx.fillStyle=glow; ctx.fill();
   ctx.beginPath(); ctx.arc(pr.x,pr.y,2.6,0,Math.PI*2);
   ctx.fillStyle="#fff3c4"; ctx.fill();
@@ -2144,9 +2174,18 @@ function drawTowerSprite(x,y,b){
     ctx.strokeStyle="#1a2e1f"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(-5,-3,10,15,3); ctx.stroke();
     ctx.restore();
   } else {
-    const weaponColor = b.weapon==="kanone" ? "#3a3a42" : "#8a6a3a";
-    ctx.fillStyle = weaponColor; ctx.fillRect(x-3,y-19,6,11);
-    ctx.fillStyle = b.weapon==="kanone" ? "#6a6a75" : "#c9a06a"; ctx.fillRect(x-3,y-19,6,3);
+    // Eigene Lauf-Farbe je Waffe, damit sich Tuerme auch von oben/aus der
+    // Distanz unterscheiden lassen statt alle bis auf den Moerser gleich
+    // auszusehen.
+    const BARREL_COLORS = {
+      bogen:     ["#8a6a3a","#c9a06a"],
+      armbrust:  ["#5a4632","#c9a570"],
+      kanone:    ["#3a3a42","#6a6a75"],
+      feuerturm: ["#7a2e18","#ff7a3d"]
+    };
+    const [base,tip] = BARREL_COLORS[b.weapon] || BARREL_COLORS.bogen;
+    ctx.fillStyle = base; ctx.fillRect(x-3,y-19,6,11);
+    ctx.fillStyle = tip; ctx.fillRect(x-3,y-19,6,3);
   }
   drawLevelPips(x, y+18, b.level);
   drawHpBar(x, y+22, b.hp, maxHpFor("turm",b.level), 34);
