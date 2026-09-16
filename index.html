@@ -554,6 +554,9 @@ const GEAR_MAX_STARS = 5;
 const GEAR_FUSE_COUNT = 3;
 const PULL_COST_1X = 1000;
 const PULL_COST_10X = 9000; // kleiner Rabatt gegenueber 10x Einzelpreis
+const ABILITY_PULL_COST_1X = 15;
+const ABILITY_PULL_COST_10X = 135; // kleiner Rabatt, gleiches Muster wie die Ausruestungs-Kiste
+const ABILITY_DUPE_REFUND = 8; // Juwelen zurueck, wenn eine bereits besessene Faehigkeit gezogen wird
 
 function rarityIndex(rarity){ return RARITIES.indexOf(rarity); }
 // Rohe "Power" eines Gegenstands: Rarität dominiert (Faktor 2.5 pro Stufe),
@@ -630,21 +633,22 @@ function fuseGear(slot, rarity){
   return { item, refund };
 }
 
-// ================= Faehigkeiten: passive Boni, gekauft mit Juwelen, aber
-// nur bis zu ABILITY_EQUIP_MAX gleichzeitig AKTIV =================
+// ================= Faehigkeiten: passive Boni, gezogen im Shop wie
+// Ausruestung (Kiste mit Juwelen statt freier Auswahl), aber nur bis zu
+// ABILITY_EQUIP_MAX gleichzeitig AKTIV =================
 // Bewusst andere Wirkungsbereiche als die Ausruestung (die deckt Spieler-
 // Grundwerte ab) - hier geht es um Wellen/Wirtschaft/Verteidigung, damit
 // beide Systeme sich sinnvoll ergaenzen statt zu ueberschneiden.
 const ABILITY_EQUIP_MAX = 5;
 const ABILITY_DEFS = {
-  sammelradius:   { name:"Sammelradius",    icon:"🧲", desc:"Größerer Wirkbereich beim Einsammeln im Vorbeilaufen.", cost:8 },
-  baumeister:     { name:"Baumeister",      icon:"🔨", desc:"10% günstigere Baukosten für Türme, Mauern und Gebäude.", cost:8 },
-  standhaft:      { name:"Standhaft",       icon:"🛡️", desc:"Deutlich längere Unverwundbarkeit nach einem K.o.", cost:8 },
-  haendler:       { name:"Händler",         icon:"💰", desc:"Besserer Tauschkurs am Handelsposten.", cost:8 },
-  scharfschuetze: { name:"Scharfschütze",   icon:"🏹", desc:"Mehr Schaden für alle Türme.", cost:10 },
-  lebenskraft:    { name:"Lebenskraft",     icon:"❤️", desc:"Mehr maximale Basis-Lebenspunkte.", cost:10 },
-  vorbereitung:   { name:"Vorbereitung",    icon:"⏱️", desc:"Mehr Zeit zwischen zwei Wellen.", cost:10 },
-  gluecksbringer: { name:"Glücksbringer",   icon:"💎", desc:"Ein zusätzliches Juwel pro überstandener Welle.", cost:12 }
+  sammelradius:   { name:"Sammelradius",    icon:"🧲", desc:"Größerer Wirkbereich beim Einsammeln im Vorbeilaufen." },
+  baumeister:     { name:"Baumeister",      icon:"🔨", desc:"10% günstigere Baukosten für Türme, Mauern und Gebäude." },
+  standhaft:      { name:"Standhaft",       icon:"🛡️", desc:"Deutlich längere Unverwundbarkeit nach einem K.o." },
+  haendler:       { name:"Händler",         icon:"💰", desc:"Besserer Tauschkurs am Handelsposten." },
+  scharfschuetze: { name:"Scharfschütze",   icon:"🏹", desc:"Mehr Schaden für alle Türme." },
+  lebenskraft:    { name:"Lebenskraft",     icon:"❤️", desc:"Mehr maximale Basis-Lebenspunkte." },
+  vorbereitung:   { name:"Vorbereitung",    icon:"⏱️", desc:"Mehr Zeit zwischen zwei Wellen." },
+  gluecksbringer: { name:"Glücksbringer",   icon:"💎", desc:"Ein zusätzliches Juwel pro überstandener Welle." }
 };
 function hasAbility(key){ return state.player.abilitiesEquipped.includes(key); }
 function toggleAbilityEquip(key){
@@ -653,6 +657,19 @@ function toggleAbilityEquip(key){
   if(idx>=0) eq.splice(idx,1);
   else if(eq.length<ABILITY_EQUIP_MAX) eq.push(key);
   save();
+}
+// Zieht eine zufaellige Faehigkeit aus dem festen 8er-Pool. Bereits
+// besessene ("Dupe") schalten nichts Neues frei - dafuer gibt es eine
+// kleine Juwelen-Erstattung, damit ein Zug nach "schon alles besessen"
+// nie komplett ins Leere laeuft (gleiches Prinzip wie die Coin-Erstattung
+// beim Ausruestungs-Kombinieren).
+function pullAbility(){
+  const keys = Object.keys(ABILITY_DEFS);
+  const key = keys[Math.floor(Math.random()*keys.length)];
+  const isDupe = state.player.abilitiesOwned.includes(key);
+  if(isDupe) state.resources.gems += ABILITY_DUPE_REFUND;
+  else state.player.abilitiesOwned.push(key);
+  return { key, isDupe };
 }
 
 // ================= Spieler-Level/EXP - eigenstaendig von Basis-Level =================
@@ -3127,9 +3144,11 @@ function showComingSoonPanel(title, text){
 }
 
 // Kleiner Auswahl-Dialog fuer einen LEEREN Faehigkeiten-Slot im Ring -
-// listet eigene (noch nicht aktive) Faehigkeiten sowie freischaltbare
-// (bezahlt mit Juwelen). Wird ueber dem Profil-Hub eingeblendet, schliesst
-// sich selbst und ruft onPick(key) nach einer gueltigen Auswahl auf.
+// listet nur noch eigene (bereits im Shop gezogene, noch nicht aktive)
+// Faehigkeiten. Freies Direktkaufen gibt es nicht mehr - neue Faehigkeiten
+// kommen nur noch zufaellig aus der Kiste im Shop (wie Ausruestung).
+// Wird ueber dem Profil-Hub eingeblendet, schliesst sich selbst und ruft
+// onPick(key) nach einer gueltigen Auswahl auf.
 function openAbilityPicker(onPick){
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
@@ -3139,33 +3158,21 @@ function openAbilityPicker(onPick){
 
   const owned = state.player.abilitiesOwned;
   const equipped = state.player.abilitiesEquipped;
+  const pickable = owned.filter(key=>!equipped.includes(key));
 
-  owned.filter(key=>!equipped.includes(key)).forEach(key=>{
+  if(pickable.length===0){
+    const empty = document.createElement("div");
+    empty.className = "hint2";
+    empty.textContent = "Noch keine freie Fähigkeit - im Shop ziehen (🛒-Knopf am Bildschirmrand).";
+    box.appendChild(empty);
+  }
+
+  pickable.forEach(key=>{
     const def = ABILITY_DEFS[key];
     const opt = document.createElement("div");
     opt.className = "buildopt";
     opt.innerHTML = `<span>${def.icon} ${def.name}<small>${def.desc}</small></span><b>Wählen</b>`;
     opt.addEventListener("click", ()=>{ document.body.removeChild(overlay); onPick(key); });
-    box.appendChild(opt);
-  });
-
-  const lockedLabel = document.createElement("div");
-  lockedLabel.className = "sectionLabel";
-  lockedLabel.textContent = "Freischaltbar";
-  box.appendChild(lockedLabel);
-
-  Object.entries(ABILITY_DEFS).filter(([key])=>!owned.includes(key)).forEach(([key,def])=>{
-    const opt = document.createElement("div");
-    opt.className = "buildopt"+(state.resources.gems<def.cost?" disabled":"");
-    opt.innerHTML = `<span>${def.icon} ${def.name}<small>${def.desc}</small></span><b>💎 ${def.cost}</b>`;
-    opt.addEventListener("click", ()=>{
-      if(state.resources.gems<def.cost) return;
-      state.resources.gems -= def.cost;
-      state.player.abilitiesOwned.push(key);
-      save();
-      document.body.removeChild(overlay);
-      onPick(key);
-    });
     box.appendChild(opt);
   });
 
@@ -3176,14 +3183,26 @@ function openAbilityPicker(onPick){
   document.body.appendChild(overlay);
 }
 
-// Gacha-Shop: eine Kiste, 1x oder 10x ziehen, bezahlt mit Coins. Liefert
-// zufaelligen Slot + Rarität Grau-Lila (Gold aufwaerts nur combinieren).
+// Gacha-Shop: zwei Kisten untereinander. Ausruestung (bezahlt mit Coins,
+// liefert zufaelligen Slot + Rarität Grau-Lila, Gold aufwaerts nur durchs
+// Kombinieren) und Faehigkeiten (bezahlt mit Juwelen, liefert eine
+// zufaellige aus dem festen 8er-Pool - kein Direktkauf mehr, siehe
+// openAbilityPicker).
 function openGearShop(){
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
   box.className = "box";
-  box.innerHTML = `<h3>🛒 Shop</h3><div class="hint2">Kiste öffnen für zufällige Ausrüstung (Grau bis Lila). Gold, Türkis und Mystisch gibt es nur durchs Kombinieren.</div>`;
+  box.innerHTML = `<h3>🛒 Shop</h3>`;
+
+  const gearLabel = document.createElement("div");
+  gearLabel.className = "sectionLabel";
+  gearLabel.textContent = "🛡️ Ausrüstung";
+  box.appendChild(gearLabel);
+  const gearHint = document.createElement("div");
+  gearHint.className = "hint2";
+  gearHint.textContent = "Kiste öffnen für zufällige Ausrüstung (Grau bis Lila). Gold, Türkis und Mystisch gibt es nur durchs Kombinieren.";
+  box.appendChild(gearHint);
 
   const crate = document.createElement("div");
   crate.className = "gearCrate";
@@ -3209,6 +3228,39 @@ function openGearShop(){
   });
   box.appendChild(row);
 
+  const abilityLabel = document.createElement("div");
+  abilityLabel.className = "sectionLabel";
+  abilityLabel.textContent = "🌟 Fähigkeiten";
+  box.appendChild(abilityLabel);
+  const abilityHint = document.createElement("div");
+  abilityHint.className = "hint2";
+  abilityHint.textContent = "Kiste öffnen für eine zufällige Fähigkeit. Bereits besessene geben stattdessen Juwelen zurück.";
+  box.appendChild(abilityHint);
+
+  const abilityCrate = document.createElement("div");
+  abilityCrate.className = "gearCrate";
+  abilityCrate.innerHTML = `<div class="crateIcon">🌟</div>`;
+  box.appendChild(abilityCrate);
+
+  const abilityRow = document.createElement("div");
+  abilityRow.className = "crateBtnRow";
+  [[1,ABILITY_PULL_COST_1X],[10,ABILITY_PULL_COST_10X]].forEach(([count,cost])=>{
+    const btn = document.createElement("div");
+    btn.className = "crateBtn"+(state.resources.gems<cost?" disabled":"");
+    btn.innerHTML = `${count}x Ziehen<b>💎 ${cost}</b>`;
+    btn.addEventListener("click", ()=>{
+      if(state.resources.gems<cost) return;
+      state.resources.gems -= cost;
+      const results = [];
+      for(let i=0;i<count;i++) results.push(pullAbility());
+      save();
+      document.body.removeChild(overlay);
+      showAbilityPullResults(results);
+    });
+    abilityRow.appendChild(btn);
+  });
+  box.appendChild(abilityRow);
+
   addCloseBtn(box, overlay);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
@@ -3228,6 +3280,32 @@ function showPullResults(results){
     cell.className = "pullResultCell";
     cell.style.borderColor = rInfo.color;
     cell.innerHTML = `<div class="prIcon">${slotInfo.icon}</div><div class="prRarity" style="color:${rInfo.color}">${rInfo.name}</div>`;
+    grid.appendChild(cell);
+  });
+  box.appendChild(grid);
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+// Wie showPullResults, aber fuer Faehigkeiten-Zuege: neue Faehigkeiten
+// gruen umrandet, Dupes gedimmt mit Juwelen-Erstattungs-Hinweis statt
+// Raritaetsname (Faehigkeiten haben keine Raritaet).
+function showAbilityPullResults(results){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>Gezogen!</h3>`;
+  const grid = document.createElement("div");
+  grid.className = "pullResultGrid";
+  results.forEach(({key,isDupe})=>{
+    const def = ABILITY_DEFS[key];
+    const cell = document.createElement("div");
+    cell.className = "pullResultCell";
+    cell.style.borderColor = isDupe ? "var(--border)" : "var(--accent)";
+    cell.style.opacity = isDupe ? "0.6" : "1";
+    cell.innerHTML = `<div class="prIcon">${def.icon}</div><div class="prRarity" style="color:${isDupe?"var(--text-dim)":"var(--accent)"}">${isDupe?"+💎"+ABILITY_DUPE_REFUND:def.name}</div>`;
     grid.appendChild(cell);
   });
   box.appendChild(grid);
