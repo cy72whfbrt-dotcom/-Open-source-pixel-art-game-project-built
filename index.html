@@ -301,10 +301,12 @@ window.addEventListener("orientationchange", resizeCanvas);
 
 const WATER_RADIUS = 700;
 const UNLOCK_BATCH = 4;      // pro Basis-Level werden 4 neue Felder frei
-// Das Raster waechst in mehreren Stufen ueber die Basis-Level verteilt (bis
-// Level 20 angelegt), nicht nur einmal - je hoeher das Level, desto mehr
-// Platz zum Bauen und desto mehr Raum fuer echte Pfad-Entscheidungen.
-const GRID_GROWTH_STEPS = [ {level:1,size:5}, {level:7,size:7}, {level:14,size:9} ];
+// Das Raster waechst in mehreren Stufen ueber die Basis-Level verteilt, nicht
+// nur einmal - je hoeher das Level, desto mehr Platz zum Bauen und desto mehr
+// Raum fuer echte Pfad-Entscheidungen. Insgesamt deutlich groesser als vorher
+// (7x7 statt 5x5 zum Start, bis 13x13 spaeter) - WATER_RADIUS (700) hat bei
+// 13x13 (gridHalfExtent=403) noch reichlich Puffer fuer den Wasserring drumherum.
+const GRID_GROWTH_STEPS = [ {level:1,size:7}, {level:7,size:9}, {level:14,size:11}, {level:20,size:13} ];
 
 // ================= Raster-Geometrie (Groesse haengt vom Basis-Level ab) =================
 
