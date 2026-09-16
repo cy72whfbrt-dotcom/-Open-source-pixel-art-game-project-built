@@ -73,19 +73,24 @@
   .slot.empty { background:rgba(255,255,255,0.04); color:var(--text-dim); cursor:pointer; }
   .slot.empty.disabled { opacity:.4; cursor:default; }
 
-  /* ===== Profil-Hub: Anordnung an der Sword x Staff-Referenz orientiert -
-     Portrait mittig, Ausruestung als Icon-Kreise ringsherum, Level-Leiste
-     mit Kraft-Plakette daneben, Werte-Kacheln darunter. ===== */
+  /* ===== Profil-Hub: 1:1 an der Sword x Staff-Referenz ausgerichtet -
+     Emblem+Titel oben, Portrait mittig mit GENAU 6 Ausruestungs-Kreisen
+     (3 links / 3 rechts gestapelt, mit rotem Benachrichtigungs-Punkt),
+     grosse Level-Zahl mit EXP-Leiste und Kraft-Plakette daneben, darunter
+     ein "Werte"-Abschnitt mit grossen Stat-Kacheln. ===== */
   .profileBox { padding-top:10px; }
-  .profileTitleRow { text-align:center; margin-bottom:10px; }
-  .profileTitle {
-    display:inline-block; font-size:11px; font-weight:800; color:var(--accent);
-    background:rgba(45,214,189,0.14); border:1px solid rgba(45,214,189,0.45);
-    border-radius:999px; padding:4px 14px;
+  .titleEmblem { text-align:center; margin-bottom:8px; }
+  .titleIcon {
+    width:42px; height:42px; margin:0 auto 4px; border-radius:50%; font-size:20px;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #6a8cff, #1c2a6e);
+    border:2px solid rgba(255,255,255,0.65); box-shadow:0 4px 12px rgba(0,0,0,0.4);
   }
-  .avatarStage { position:relative; width:190px; height:170px; margin:0 auto 16px; }
+  .titleText { font-size:12px; font-weight:800; color:var(--text); }
+
+  .avatarStage { position:relative; width:250px; height:230px; margin:0 auto 14px; }
   .avatarBig {
-    position:absolute; left:50%; top:42%; transform:translate(-50%,-50%);
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
     width:104px; height:104px; border-radius:50%; overflow:hidden;
     background:radial-gradient(circle at 35% 30%, #4a5fb8, #20265a);
     border:3px solid rgba(255,255,255,0.85); box-shadow:0 6px 16px rgba(0,0,0,0.45);
@@ -99,34 +104,48 @@
     border-radius:50%; background:rgba(255,255,255,0.88);
   }
   .levelChip {
-    position:absolute; left:50%; top:calc(42% + 44px); transform:translateX(-50%);
+    position:absolute; left:50%; top:calc(50% + 44px); transform:translateX(-50%);
     background:rgba(10,13,20,0.92); border:1px solid rgba(255,255,255,0.3); color:#fff;
     font-size:11px; font-weight:800; border-radius:999px; padding:2px 10px; white-space:nowrap;
   }
-  .gearSlot { position:absolute; width:56px; text-align:center; cursor:pointer; }
+  /* Genau 6 Slots: 3 links / 3 rechts uebereinander, wie im Referenzbild. */
+  .gearSlot { position:absolute; width:58px; text-align:center; cursor:pointer; }
   .gearSlot .badge {
-    width:46px; height:46px; margin:0 auto 3px; border-radius:50%; font-size:20px;
+    position:relative; width:46px; height:46px; margin:0 auto 3px; border-radius:50%; font-size:20px;
     display:flex; align-items:center; justify-content:center;
-    background:rgba(18,24,34,0.9); border:2px solid rgba(255,255,255,0.18);
+    background:rgba(60,16,16,0.55); border:2px solid rgba(255,255,255,0.2);
     box-shadow:0 4px 10px rgba(0,0,0,0.4);
   }
-  .gearSlot.owned .badge { border-color:var(--accent); }
+  .gearSlot.owned .badge { border-color:var(--accent); background:rgba(20,60,50,0.55); }
+  .gearSlot.locked .badge { background:rgba(30,34,42,0.6); filter:grayscale(1); opacity:.7; }
   .gearSlot.disabled { opacity:.55; cursor:default; }
+  .gearSlot .ping {
+    position:absolute; top:-2px; right:0; width:15px; height:15px; border-radius:50%;
+    background:#e0453f; border:2px solid #1a1015; color:#fff; font-size:10px; font-weight:800;
+    display:flex; align-items:center; justify-content:center; line-height:1;
+  }
   .gearSlot .bonus { font-size:10.5px; font-weight:800; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.8); }
   .gearSlot .cost { font-size:9.5px; color:var(--text-dim); }
-  .gearSlot.pos-tl { left:-8px; top:0; }
-  .gearSlot.pos-tr { right:-8px; top:0; }
-  .gearSlot.pos-bl { left:-8px; bottom:0; }
-  .gearSlot.pos-br { right:-8px; bottom:0; }
+  .gearSlot.pos-l1 { left:-10px; top:0; }
+  .gearSlot.pos-l2 { left:-16px; top:50%; margin-top:-31px; }
+  .gearSlot.pos-l3 { left:-10px; bottom:0; }
+  .gearSlot.pos-r1 { right:-10px; top:0; }
+  .gearSlot.pos-r2 { right:-16px; top:50%; margin-top:-31px; }
+  .gearSlot.pos-r3 { right:-10px; bottom:0; }
 
-  .levelRow { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .valuesHeader {
+    font-size:11px; font-weight:800; color:var(--text-dim); margin:2px 0 6px; letter-spacing:.02em;
+  }
+  .levelRow { display:flex; align-items:flex-end; gap:10px; margin-bottom:10px; }
   .levelRow .lvBarWrap { flex:1; min-width:0; }
+  .levelRow .lvBig { font-size:20px; font-weight:800; color:var(--text); line-height:1; margin-bottom:4px; }
+  .levelRow .lvBig span { font-size:12px; font-weight:700; color:var(--text-dim); }
   .levelRow .lvLabel { font-size:10.5px; color:var(--text-dim); margin-bottom:3px; }
   .levelRow .lvBar { height:9px; border-radius:5px; background:rgba(255,255,255,0.08); overflow:hidden; }
   .levelRow .lvBar > div { height:100%; background:linear-gradient(90deg,#9ed13a,#eef27a); }
   .rankBadge {
     font-size:10px; font-weight:800; color:#0b1a17; background:linear-gradient(180deg,#6bf0d2,#18a98f);
-    border-radius:8px; padding:5px 10px; text-align:center; white-space:nowrap; line-height:1.3;
+    border-radius:8px; padding:6px 12px; text-align:center; white-space:nowrap; line-height:1.3;
   }
 
   .statsGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
@@ -134,7 +153,7 @@
     background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:var(--radius-sm);
     padding:7px 10px; font-size:11px; color:var(--text-dim);
   }
-  .statTile b { display:block; color:var(--text); font-size:14px; margin-top:1px; }
+  .statTile b { display:block; color:var(--text); font-size:16px; margin-top:1px; }
   .gearLegend { font-size:10.5px; color:var(--text-dim); text-align:center; margin-bottom:10px; }
 
   #joystick {
@@ -2822,35 +2841,58 @@ function playerTitle(){
   return "🌱 Rekrut";
 }
 
+// Zwei Plaetze ohne echte Spielmechanik dahinter (wir haben nur vier
+// Spielerwerte zum Aufwerten) - klar als "bald verfuegbar" markiert statt
+// eine Wirkung vorzutaeuschen, die es nicht gibt. Damit landen wir trotzdem
+// bei GENAU 6 Slots wie im Referenzbild (3 links / 3 rechts).
+const EQUIP_COMING_SOON = [
+  { icon:"⚔️", name:"Waffe" },
+  { icon:"📖", name:"Zauber" }
+];
+
 // Profil-Hub: staerkt den SPIELER dauerhaft (HP/Tempo/Rucksack/EXP-Rate),
 // bezahlt mit Juwelen - der erste echte Nutzen fuer eine bisher tote
-// Waehrung. Erreichbar ueber das Portrait oben links im HUD. Anordnung
-// bewusst an der mitgeschickten Sword x Staff-Referenz ausgerichtet:
-// Portrait mittig mit Level-Plakette darunter, Ausruestung als Icon-Kreise
-// ringsherum (statt einer Liste), Level-/EXP-Leiste mit Kraft-Plakette
-// daneben, Werte-Kacheln darunter.
+// Waehrung. Erreichbar ueber das Portrait oben links im HUD. Layout 1:1
+// an der mitgeschickten Sword x Staff-Referenz: Emblem+Titel oben,
+// Portrait mittig mit GENAU 6 Ausruestungs-Kreisen drumherum (3 links /
+// 3 rechts, mit rotem Benachrichtigungspunkt bei verfuegbarem Upgrade),
+// grosse Level-Zahl mit EXP-Leiste und Kraft-Plakette daneben, darunter
+// ein "Werte"-Abschnitt mit grossen Stat-Kacheln.
+//
+// Bewusste Abweichungen von der Referenz (mit Grund, nicht aus Faulheit):
+// - Dunkler Panel-Hintergrund statt hellem Himmel-Blau, damit der Hub
+//   nicht als Fremdkoerper neben den anderen (dunklen) Menues dieses
+//   Spiels wirkt.
+// - Kein Begleit-Kreatur-Icon, weil dieses Spiel keine Pets/Begleiter hat.
+// - Emoji statt gemalter Item-Grafik, weil keine eigenen Icon-Assets
+//   existieren.
 function openProfileHub(){
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
   box.className = "box profileBox";
 
-  const xpRatio = Math.max(0,Math.min(1, state.playerXp/xpForLevel(state.playerLevel)));
-  const GEAR_POS = { ruestung:"pos-tl", stiefel:"pos-tr", amulett:"pos-bl", kompass:"pos-br" };
+  const xpNow = xpForLevel(state.playerLevel);
+  const xpRatio = Math.max(0,Math.min(1, state.playerXp/xpNow));
+  const GEAR_POS = ["pos-l1","pos-r1","pos-l2","pos-r2"];
 
   box.innerHTML = `
-    <div class="profileTitleRow"><span class="profileTitle">${playerTitle()}</span></div>
+    <div class="titleEmblem">
+      <div class="titleIcon">🛡️</div>
+      <div class="titleText">${playerTitle()}</div>
+    </div>
     <div class="avatarStage" id="avatarStage">
       <div class="avatarBig"><div class="avHead"></div><div class="avBody"></div></div>
       <div class="levelChip">Lv. ${state.playerLevel}</div>
     </div>
     <div class="levelRow">
       <div class="lvBarWrap">
-        <div class="lvLabel">${state.playerXp}/${xpForLevel(state.playerLevel)} EXP</div>
+        <div class="lvBig">Level ${state.playerLevel} <span>${state.playerXp}/${xpNow} EXP</span></div>
         <div class="lvBar"><div style="width:${Math.round(xpRatio*100)}%"></div></div>
       </div>
       <div class="rankBadge">⚡ ${formatCompactNumber(computeKraft())}<br>Kraft</div>
     </div>
+    <div class="valuesHeader">🔍 Werte</div>
     <div class="statsGrid">
       <div class="statTile">❤ Leben<b>${Math.round(playerMaxHp())}</b></div>
       <div class="statTile">🏃 Tempo<b>+${Math.round((playerSpeedMult()-1)*100)}%</b></div>
@@ -2861,7 +2903,7 @@ function openProfileHub(){
   `;
 
   const stage = box.querySelector("#avatarStage");
-  Object.entries(EQUIP_DEFS).forEach(([key,def])=>{
+  Object.entries(EQUIP_DEFS).forEach(([key,def],i)=>{
     const level = state.player.equip[key]||0;
     const maxed = level>=EQUIP_MAX_LEVEL;
     const current = level*def.bonusPerLevel;
@@ -2870,9 +2912,9 @@ function openProfileHub(){
     const canAffordGear = state.resources.gems>=cost;
 
     const slot = document.createElement("div");
-    slot.className = "gearSlot "+GEAR_POS[key]+(level>0?" owned":"")+((!maxed && !canAffordGear)?" disabled":"");
+    slot.className = "gearSlot "+GEAR_POS[i]+(level>0?" owned":"")+((!maxed && !canAffordGear)?" disabled":"");
     slot.title = def.desc;
-    slot.innerHTML = `<div class="badge">${def.icon}</div>
+    slot.innerHTML = `<div class="badge">${def.icon}${(!maxed && canAffordGear)?'<span class="ping">!</span>':''}</div>
       <div class="bonus">${level>0?currentText:"—"}</div>
       ${maxed ? `<div class="cost">Max</div>` : `<div class="cost">💎${cost}</div>`}`;
     if(!maxed){
@@ -2885,6 +2927,14 @@ function openProfileHub(){
         openProfileHub();
       });
     }
+    stage.appendChild(slot);
+  });
+
+  EQUIP_COMING_SOON.forEach((def,i)=>{
+    const slot = document.createElement("div");
+    slot.className = "gearSlot locked "+["pos-l3","pos-r3"][i];
+    slot.title = def.name+" - bald verfügbar";
+    slot.innerHTML = `<div class="badge">${def.icon}<span class="ping" style="background:#565b64;">🔒</span></div><div class="bonus">Bald</div>`;
     stage.appendChild(slot);
   });
 
