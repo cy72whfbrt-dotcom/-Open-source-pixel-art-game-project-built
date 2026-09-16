@@ -3960,6 +3960,7 @@ function openBuildMenu(c,r){
         payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level);
         addPlayerXp(buildingUpgradeXp(b.level));
         save(); document.body.removeChild(overlay); render();
+        openBuildMenu(c,r);
       }
     });
     box.appendChild(upOpt);
@@ -3970,7 +3971,7 @@ function openBuildMenu(c,r){
       repOpt.className = "buildopt" + (!canAfford(rCost) ? " disabled":"");
       repOpt.innerHTML = `<span>Reparieren<small>Stellt volle HP wieder her</small></span><b>${formatCost(rCost)}</b>`;
       repOpt.addEventListener("click", ()=>{
-        if(canAfford(rCost)){ payCost(rCost); b.hp = maxHp; save(); document.body.removeChild(overlay); render(); }
+        if(canAfford(rCost)){ payCost(rCost); b.hp = maxHp; save(); document.body.removeChild(overlay); render(); openBuildMenu(c,r); }
       });
       box.appendChild(repOpt);
     }
@@ -4014,6 +4015,7 @@ function openBuildMenu(c,r){
                   payCost(trainDef.cost);
                   state.npc.training = { kind, timeLeft: trainDef.baseTime, totalTime: trainDef.baseTime };
                   save(); document.body.removeChild(overlay); render();
+                  openBuildMenu(c,r);
                 });
               }
             }
@@ -4074,6 +4076,7 @@ function openBuildMenu(c,r){
             state.resources.holz -= TRADE_AMOUNT;
             state.resources.stein = Math.min(cap, state.resources.stein+gain);
             save(); document.body.removeChild(overlay); render();
+            openBuildMenu(c,r);
           }
         });
         box.appendChild(toStein);
@@ -4087,6 +4090,7 @@ function openBuildMenu(c,r){
             state.resources.stein -= TRADE_AMOUNT;
             state.resources.holz = Math.min(cap, state.resources.holz+gain);
             save(); document.body.removeChild(overlay); render();
+            openBuildMenu(c,r);
           }
         });
         box.appendChild(toHolz);
@@ -4117,7 +4121,7 @@ function openBuildMenu(c,r){
                : "Braucht Turm-Level "+w.unlockLevel;
         }
         wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${hint}</small></span>`;
-        if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ b.weapon=key2; save(); document.body.removeChild(overlay); render(); });
+        if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ b.weapon=key2; save(); document.body.removeChild(overlay); render(); openBuildMenu(c,r); });
         box.appendChild(wOpt);
       });
     }
