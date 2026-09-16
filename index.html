@@ -374,10 +374,16 @@ const TEST_RESOURCE_FLOOR = 999999;
 function enforceTestResources(){
   if(!TEST_INFINITE_RESOURCES) return;
   const r = state.resources;
-  if(r.holz<TEST_RESOURCE_FLOOR) r.holz = TEST_RESOURCE_FLOOR;
-  if(r.stein<TEST_RESOURCE_FLOOR) r.stein = TEST_RESOURCE_FLOOR;
-  if(r.coins<TEST_RESOURCE_FLOOR) r.coins = TEST_RESOURCE_FLOOR;
-  if(r.gems<TEST_RESOURCE_FLOOR) r.gems = TEST_RESOURCE_FLOOR;
+  let changed = false;
+  if(r.holz<TEST_RESOURCE_FLOOR){ r.holz = TEST_RESOURCE_FLOOR; changed = true; }
+  if(r.stein<TEST_RESOURCE_FLOOR){ r.stein = TEST_RESOURCE_FLOOR; changed = true; }
+  if(r.coins<TEST_RESOURCE_FLOOR){ r.coins = TEST_RESOURCE_FLOOR; changed = true; }
+  if(r.gems<TEST_RESOURCE_FLOOR){ r.gems = TEST_RESOURCE_FLOOR; changed = true; }
+  // Andere Systeme (Welle-Loot, Rucksack-Abgabe, Handelsposten) klemmen
+  // Holz/Stein auf storageCap() und speichern das sofort - ohne dieses
+  // Nachziehen wuerde ein Reload zwischen diesem Klemmen und dem naechsten
+  // Frame den niedrigen, echten Wert aus dem Speicher zeigen.
+  if(changed) save();
 }
 function load(){
   try {
@@ -1352,6 +1358,10 @@ window.addEventListener("keydown", e=>{
 window.addEventListener("keyup", e=>{
   pressedKeys.delete(e.key.toLowerCase());
 });
+// Ohne das wuerde eine beim Fokusverlust (Alt-Tab, Klick in DevTools o.ae.)
+// haengen gebliebene Taste den Spieler nach dem Zurueckkommen unkontrolliert
+// weiterlaufen lassen, weil das zugehoerige keyup nie ankommt.
+window.addEventListener("blur", ()=>pressedKeys.clear());
 function keyboardDir(){
   if(document.querySelector(".buildmenu")) return {x:0,y:0};
   let x=0,y=0;
@@ -3083,6 +3093,7 @@ function openBasisMenu(){
 // fuer Feedback wie die Coin-Erstattung beim Kombinieren, das keinen
 // eigenen Dialog braucht.
 function showToast(text){
+  document.querySelectorAll(".toast").forEach(t=>t.remove());
   const el = document.createElement("div");
   el.className = "toast";
   el.textContent = text;
