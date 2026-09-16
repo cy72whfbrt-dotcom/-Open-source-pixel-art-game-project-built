@@ -58,7 +58,7 @@
   }
 
   .buildmenu {
-    position:fixed; inset:0; background:rgba(6,10,15,.68); display:flex; align-items:center; justify-content:center; z-index:20;
+    position:fixed; inset:0; background:rgba(6,10,15,.72); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; z-index:20;
   }
   .toast {
     position:fixed; top:14px; left:50%; transform:translate(-50%,-14px); z-index:60;
@@ -69,11 +69,19 @@
   }
   .toast.show { opacity:1; transform:translate(-50%,0); }
   .buildmenu .box {
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
-    padding:16px; width:300px; max-width:88vw; max-height:82vh; overflow-y:auto;
-    box-shadow:0 12px 32px rgba(0,0,0,0.4);
+    position:relative;
+    background:var(--panel); border:1px solid var(--border); border-radius:20px;
+    padding:20px; width:340px; max-width:92vw; max-height:85vh; overflow-y:auto;
+    box-shadow:0 20px 48px rgba(0,0,0,0.5);
   }
-  .buildmenu h3 { margin:0 0 4px; font-size:15px; font-weight:700; }
+  .buildmenu h3 { margin:0 34px 4px 0; font-size:16px; font-weight:800; }
+  .modalCloseX {
+    position:absolute; top:14px; right:14px; width:30px; height:30px; border-radius:50%;
+    background:rgba(255,255,255,0.06); border:1px solid var(--border); color:var(--text-dim);
+    display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:700;
+    cursor:pointer; line-height:1; transition:background .15s, color .15s;
+  }
+  .modalCloseX:hover { background:rgba(255,255,255,0.12); color:var(--text); }
   .buildmenu .hint2 { color:var(--text-dim); font-size:11.5px; margin-bottom:10px; }
   .buildopt {
     display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid var(--border);
@@ -212,6 +220,22 @@
 
   /* Ausruestungs-Liste im Slot-Picker: farbiger Rand nach Rarität. */
   .gearRow { border-width:1.5px !important; align-items:center; }
+
+  /* Eigene Exemplare eines Slots als Icon-Kacheln statt Textzeilen - 3 pro
+     Reihe, Rand faerbt sich nach Rarität, antippen oeffnet die Detailseite. */
+  .gearItemGrid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:4px; }
+  .gearItemCell {
+    aspect-ratio:1; border-radius:var(--radius-md); border:2px solid; background:rgba(255,255,255,0.04);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    position:relative; cursor:pointer;
+  }
+  .gearItemCell .prIcon { font-size:22px; }
+  .gearItemLv { font-size:9.5px; font-weight:800; color:var(--text-dim); }
+  .gearItemCheck {
+    position:absolute; top:4px; right:4px; width:15px; height:15px; border-radius:50%;
+    background:var(--accent); color:var(--accent-text); font-size:9px; font-weight:900;
+    display:flex; align-items:center; justify-content:center;
+  }
 
   #joystick {
     position:absolute; left:14px; bottom:14px; width:104px; height:104px; border-radius:50%;
@@ -654,7 +678,14 @@ function addPlayerXp(amount){
 
 // ================= Basis-Level: schaltet Felder frei, laesst das Raster wachsen =================
 
-function unlockCountForLevel(level){ return TUTORIAL_START_UNLOCK + (level-1)*UNLOCK_BATCH; }
+function unlockCountForLevel(level){
+  // Testphase: Level 1 bleibt fuers Tutorial gefuehrt (3x3 um die Base),
+  // ab Level 2 ist das komplette Raster sofort frei statt schrittweise -
+  // Math.min mit der echten Feldanzahl in applyUnlocksForCurrentLevel()
+  // deckelt das automatisch, wenn das Raster spaeter waechst (7x7, 9x9).
+  if(TEST_INFINITE_RESOURCES && level>=2) return Infinity;
+  return TUTORIAL_START_UNLOCK + (level-1)*UNLOCK_BATCH;
+}
 
 function applyUnlocksForCurrentLevel(){
   const gridSize = gridSizeForLevel(state.basisLevel);
@@ -3171,13 +3202,9 @@ function openAbilityPicker(onPick){
     box.appendChild(opt);
   });
 
-  // Eigener Schliessen-Knopf statt addCloseBtn: der Aufrufer hat das
-  // Profil-Hub bereits geschlossen, ohne Rueckkehr wuerde "Schließen"
-  // sonst im Nichts enden.
-  const close = document.createElement("div");
-  close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
-  close.addEventListener("click", ()=>{ document.body.removeChild(overlay); openProfileHub("abilities"); });
-  box.appendChild(close);
+  // Eigenes onClose statt Standard: der Aufrufer hat das Profil-Hub bereits
+  // geschlossen, ohne Rueckkehr wuerde Schliessen sonst im Nichts enden.
+  addCloseBtn(box, overlay, ()=>{ document.body.removeChild(overlay); openProfileHub("abilities"); });
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
@@ -3265,53 +3292,26 @@ function openGearPicker(slot, returnMode){
     box.appendChild(empty);
   }
 
-  items.forEach(item=>{
-    const rInfo = RARITY_INFO[item.rarity];
-    const isEquipped = item.id===equippedId;
-    const maxed = item.level>=GEAR_MAX_LEVEL;
-    const starMaxed = item.stars>=GEAR_MAX_STARS;
-
-    const row = document.createElement("div");
-    row.className = "buildopt gearRow";
-    row.style.borderColor = rInfo.color;
-    row.innerHTML = `<span style="color:${rInfo.color}">${rInfo.name} · Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""}${isEquipped?" · Getragen":""}<small style="color:var(--text-dim)">Kraft ${gearKraft(item)}</small></span><b>${isEquipped?"✓":"Tragen"}</b>`;
-    if(!isEquipped){
-      row.addEventListener("click", ()=>{
-        state.player.gearEquipped[slot] = item.id;
-        save();
-        refresh();
+  // Eigene Exemplare als Icon-Kacheln (3 pro Reihe) statt Textzeilen -
+  // antippen oeffnet die Detailseite mit Tragen/Aufwerten (openGearItemDetail).
+  if(items.length>0){
+    const grid = document.createElement("div");
+    grid.className = "gearItemGrid";
+    items.forEach(item=>{
+      const rInfo = RARITY_INFO[item.rarity];
+      const isEquipped = item.id===equippedId;
+      const cell = document.createElement("div");
+      cell.className = "gearItemCell";
+      cell.style.borderColor = rInfo.color;
+      cell.innerHTML = `${isEquipped?'<div class="gearItemCheck">✓</div>':""}<div class="prIcon">${info.icon}</div><div class="gearItemLv" style="color:${rInfo.color}">Lv.${item.level}${item.stars>0?" "+"★".repeat(item.stars):""}</div>`;
+      cell.addEventListener("click", ()=>{
+        document.body.removeChild(overlay);
+        openGearItemDetail(item, slot, returnMode);
       });
-    }
-    box.appendChild(row);
-
-    if(!maxed){
-      const cost = gearLevelCost(item);
-      const opt = document.createElement("div");
-      opt.className = "buildopt"+(state.resources.coins<cost?" disabled":"");
-      opt.innerHTML = `<span>⬆️ Level ${item.level} → ${item.level+1}</span><b>🪙 ${cost}</b>`;
-      opt.addEventListener("click", ()=>{
-        if(state.resources.coins<cost) return;
-        state.resources.coins -= cost;
-        item.level++;
-        save();
-        refresh();
-      });
-      box.appendChild(opt);
-    } else if(!starMaxed){
-      const cost = gearStarCost(item);
-      const opt = document.createElement("div");
-      opt.className = "buildopt"+(state.resources.coins<cost?" disabled":"");
-      opt.innerHTML = `<span>⭐ Stern ${item.stars} → ${item.stars+1}</span><b>🪙 ${cost}</b>`;
-      opt.addEventListener("click", ()=>{
-        if(state.resources.coins<cost) return;
-        state.resources.coins -= cost;
-        item.stars++;
-        save();
-        refresh();
-      });
-      box.appendChild(opt);
-    }
-  });
+      grid.appendChild(cell);
+    });
+    box.appendChild(grid);
+  }
 
   const fuseables = RARITIES.slice(0,-1).filter(r=>items.filter(g=>g.rarity===r && g.id!==equippedId).length>=GEAR_FUSE_COUNT);
   if(fuseables.length>0){
@@ -3338,19 +3338,92 @@ function openGearPicker(slot, returnMode){
     });
   }
 
-  // Eigener Schliessen-Knopf statt addCloseBtn: fuehrt zurueck zum
-  // Profil-Hub statt im Nichts zu enden (der ist beim Oeffnen des Pickers
-  // bereits geschlossen worden).
-  const close = document.createElement("div");
-  close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
-  close.addEventListener("click", ()=>{ document.body.removeChild(overlay); openProfileHub(returnMode); });
-  box.appendChild(close);
+  // Eigenes onClose statt Standard: fuehrt zurueck zum Profil-Hub statt im
+  // Nichts zu enden (der ist beim Oeffnen des Pickers bereits geschlossen
+  // worden).
+  addCloseBtn(box, overlay, ()=>{ document.body.removeChild(overlay); openProfileHub(returnMode); });
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
   function refresh(){
     document.body.removeChild(overlay);
     openGearPicker(slot, returnMode);
+  }
+}
+
+// Detailseite eines einzelnen Ausruestungs-Exemplars, geoeffnet per Antippen
+// der Icon-Kachel im Slot-Picker: Tragen sowie Level-/Stern-Aufwerten, statt
+// alles gleichzeitig als Textzeilen in der Liste zu zeigen.
+function openGearItemDetail(item, slot, returnMode){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  const info = GEAR_SLOT_INFO[slot];
+  const rInfo = RARITY_INFO[item.rarity];
+  const isEquipped = state.player.gearEquipped[slot]===item.id;
+  const maxed = item.level>=GEAR_MAX_LEVEL;
+  const starMaxed = item.stars>=GEAR_MAX_STARS;
+
+  box.innerHTML = `<h3>${info.icon} <span style="color:${rInfo.color}">${rInfo.name}</span> ${info.name}</h3>
+    <div class="hint2">Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""} · Kraft ${gearKraft(item)}${isEquipped?" · Getragen":""}</div>`;
+
+  if(isEquipped){
+    const hint = document.createElement("div");
+    hint.className = "buildopt gearRow";
+    hint.style.borderColor = rInfo.color;
+    hint.innerHTML = `<span>✓ Ausgerüstet</span>`;
+    box.appendChild(hint);
+  } else {
+    const wear = document.createElement("div");
+    wear.className = "buildopt gearRow";
+    wear.style.borderColor = rInfo.color;
+    wear.innerHTML = `<span>Ausrüsten</span><b>Tragen</b>`;
+    wear.addEventListener("click", ()=>{
+      state.player.gearEquipped[slot] = item.id;
+      save();
+      reopen();
+    });
+    box.appendChild(wear);
+  }
+
+  if(!maxed){
+    const cost = gearLevelCost(item);
+    const opt = document.createElement("div");
+    opt.className = "buildopt"+(state.resources.coins<cost?" disabled":"");
+    opt.innerHTML = `<span>⬆️ Level ${item.level} → ${item.level+1}</span><b>🪙 ${cost}</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources.coins<cost) return;
+      state.resources.coins -= cost;
+      item.level++;
+      save();
+      reopen();
+    });
+    box.appendChild(opt);
+  } else if(!starMaxed){
+    const cost = gearStarCost(item);
+    const opt = document.createElement("div");
+    opt.className = "buildopt"+(state.resources.coins<cost?" disabled":"");
+    opt.innerHTML = `<span>⭐ Stern ${item.stars} → ${item.stars+1}</span><b>🪙 ${cost}</b>`;
+    opt.addEventListener("click", ()=>{
+      if(state.resources.coins<cost) return;
+      state.resources.coins -= cost;
+      item.stars++;
+      save();
+      reopen();
+    });
+    box.appendChild(opt);
+  }
+
+  // Schliessen fuehrt zurueck zum Icon-Grid des Slots statt nur das Overlay
+  // zu entfernen - dieselbe Rueckkehr-Logik wie beim Slot-Picker selbst.
+  addCloseBtn(box, overlay, ()=>{ document.body.removeChild(overlay); openGearPicker(slot, returnMode); });
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function reopen(){
+    document.body.removeChild(overlay);
+    openGearItemDetail(item, slot, returnMode);
   }
 }
 
@@ -3793,11 +3866,20 @@ function openBuildMenu(c,r){
   document.body.appendChild(overlay);
 }
 
-function addCloseBtn(box, overlay){
-  const close = document.createElement("div");
-  close.className="buildopt"; close.style.justifyContent="center"; close.textContent="Schließen";
-  close.addEventListener("click", ()=> document.body.removeChild(overlay));
-  box.appendChild(close);
+// Modernes Schliessen: "X" oben rechts in der Box + Antippen ausserhalb der
+// Box schliesst ebenfalls - kein eigener "Schließen"-Knopf mehr am Ende der
+// Liste noetig. onClose optional fuer Picker, die zu einem Eltern-Panel
+// zurueckkehren muessen statt nur das Overlay zu entfernen.
+function addCloseBtn(box, overlay, onClose){
+  const close = onClose || (()=>{ document.body.removeChild(overlay); });
+  const x = document.createElement("div");
+  x.className = "modalCloseX";
+  x.textContent = "✕";
+  x.addEventListener("click", close);
+  box.appendChild(x);
+  overlay.addEventListener("click", e=>{
+    if(e.target===overlay) close();
+  });
 }
 
 function showIntroIfNeeded(){
