@@ -192,10 +192,14 @@ function defaultState(){
     npc: { reparaturCount: 0, angreifer: [], training: null },
     repairJob: null,
     nextWaveComposition: null,
-    player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0 }
+    player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
+      equip: { ruestung:0, stiefel:0, amulett:0, kompass:0 } }
   };
 }
 let state = load();
+// Alte Speicherstaende kennen equip noch nicht - defensiv nachruesten statt
+// bei jedem Zugriff extra abzusichern.
+if(!state.player.equip) state.player.equip = { ruestung:0, stiefel:0, amulett:0, kompass:0 };
 
 // Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
 // anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
@@ -310,6 +314,25 @@ const WEAPONS = {
 
 function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,level-1)), stein: Math.round(45*Math.pow(1.55,level-1)) }; }
 
+// ================= Ausruestung: staerkt den SPIELER, nicht die Basis =================
+// Bewusst nur Stufen fuer Werte, die es schon wirklich gibt (HP, Lauftempo,
+// Rucksack, EXP-Rate) - kein Waffen-Slot, weil der Spieler aktuell gar
+// nicht zurueckschlagen kann (nur Tuerme/Angreifer kaempfen). Bezahlt wird
+// mit Juwelen, die bisher nur angezeigt, aber nie ausgegeben wurden.
+const EQUIP_MAX_LEVEL = 5;
+const EQUIP_DEFS = {
+  ruestung: { name:"Rüstung", icon:"🛡️", desc:"Erhöht deine maximalen Lebenspunkte.", bonusPerLevel:15, unit:" HP", percent:false },
+  stiefel:  { name:"Stiefel", icon:"👢", desc:"Erhöht dein Lauftempo.", bonusPerLevel:0.08, percent:true },
+  amulett:  { name:"Amulett", icon:"📿", desc:"Erhöht deine Rucksack-Kapazität.", bonusPerLevel:6, unit:"", percent:false },
+  kompass:  { name:"Kompass", icon:"🧭", desc:"Erhöht die EXP aus Wellen und Ausbau.", bonusPerLevel:0.08, percent:true }
+};
+function equipCost(level){ return Math.round(3*Math.pow(1.7,level)); }
+function equipBonus(key){ return (state.player.equip[key]||0) * EQUIP_DEFS[key].bonusPerLevel; }
+function playerMaxHp(){ return PLAYER_MAX_HP + equipBonus("ruestung"); }
+function playerSpeedMult(){ return 1+equipBonus("stiefel"); }
+function playerBackpackCapacity(){ return Math.round(BACKPACK_CAPACITY + equipBonus("amulett")); }
+function xpMultiplier(){ return 1+equipBonus("kompass"); }
+
 // ================= Spieler-Level/EXP - eigenstaendig von Basis-Level =================
 // Kommt aus zwei echten Quellen: Wellen ueberstehen und irgendwas verbessern
 // (Basis-Level oder Gebaeude-Level) - keine Deko-Zahl ohne Bedeutung.
@@ -320,7 +343,7 @@ function basisUpgradeXp(newLevel){ return 25+newLevel*8; }
 function buildingUpgradeXp(newLevel){ return 6+newLevel*3; }
 
 function addPlayerXp(amount){
-  state.playerXp += amount;
+  state.playerXp += Math.round(amount*xpMultiplier());
   let leveledUp = false;
   while(state.playerXp >= xpForLevel(state.playerLevel)){
     state.playerXp -= xpForLevel(state.playerLevel);
@@ -371,6 +394,7 @@ function upgradeBasis(){
   }
   applyUnlocksForCurrentLevel();
   addPlayerXp(basisUpgradeXp(state.basisLevel));
+  state.resources.gems += 3; // Meilenstein-Bonus, zusaetzlich zu den Wellen-Juwelen
   save();
   return true;
 }
@@ -570,7 +594,9 @@ function spawnWave(){
 }
 
 function waveLoot(){
-  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3 };
+  // 1 Juwel pro ueberstandener Welle - bisher der einzige Weg, Juwelen zu
+  // verdienen (fuer die Ausruestung im Profil-Hub).
+  return { holz: 8+state.basisLevel*4, stein: 6+state.basisLevel*3, gems: 1 };
 }
 
 // ================= Wegfindung: Gegner suchen sich einen Weg zur Base statt =================
@@ -745,7 +771,7 @@ function updateWave(dt){
             // kurzer Unverwundbarkeit statt sofortigem erneuten Treffer.
             pl.backpack.holz = 0; pl.backpack.stein = 0;
             pl.x = 0; pl.y = 0;
-            pl.hp = PLAYER_MAX_HP;
+            pl.hp = playerMaxHp();
             pl.invulnCd = PLAYER_INVULN_TIME;
             pl.moveTarget = null;
             knockoutFx = { startedAt: performance.now() };
@@ -830,6 +856,7 @@ function updateWave(dt){
     const cap = storageCap();
     state.resources.holz = Math.min(cap, state.resources.holz+loot.holz);
     state.resources.stein = Math.min(cap, state.resources.stein+loot.stein);
+    state.resources.gems += loot.gems;
     waveActive = false;
     addPlayerXp(waveXpReward());
     save();
@@ -948,8 +975,16 @@ function pointerEnd(e){
   const pos = pointers.get(e.pointerId);
   pointers.delete(e.pointerId);
   if(wasSingle && dragTotal<8 && pos){
-    const w = screenToWorld(pos.x,pos.y);
-    handleTap(w.x,w.y);
+    // HUD sitzt in Bildschirmkoordinaten UEBER der Kamera-Transformation -
+    // erst hier pruefen, sonst wird der Tap faelschlich als Welt-Tap
+    // interpretiert (screenToWorld kennt das Portrait nicht).
+    const av = avatarHotspot();
+    if(Math.hypot(pos.x-av.cx, pos.y-av.cy) <= av.r){
+      openProfileHub();
+    } else {
+      const w = screenToWorld(pos.x,pos.y);
+      handleTap(w.x,w.y);
+    }
   }
   if(pointers.size<2) pinchStartDist=0;
 }
@@ -1428,7 +1463,7 @@ function drawPlayerSprite(){
   drawShadow(x,y+13,10,4);
   // Rucksack (hinter dem Koerper), Fuellstand als kleiner Ring
   const total = backpackTotal();
-  const fillRatio = Math.max(0, Math.min(1, total/BACKPACK_CAPACITY));
+  const fillRatio = Math.max(0, Math.min(1, total/playerBackpackCapacity()));
   const bpX = x-9, bpY = y-2;
   drawRoundRect(bpX-6,bpY-7,12,15,3,"#6a4c2a");
   ctx.strokeStyle="#3a2612"; ctx.lineWidth=1.2; ctx.strokeRect(bpX-6,bpY-7,12,15);
@@ -1458,7 +1493,7 @@ function drawPlayerSprite(){
   // Rucksack-Kapazitaet als x/x ueber dem Kopf
   ctx.font = "bold 10px system-ui, sans-serif";
   ctx.textAlign = "center";
-  const capLabel = total+"/"+BACKPACK_CAPACITY;
+  const capLabel = total+"/"+playerBackpackCapacity();
   ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
   ctx.strokeText(capLabel, x, y-24);
   ctx.fillStyle = fillRatio>=1 ? "#e04a4a" : "#fff";
@@ -1468,7 +1503,7 @@ function drawPlayerSprite(){
   ctx.restore();
   // HP-Leiste (ausserhalb des Blink-Alpha, damit sie auch waehrend der
   // Unverwundbarkeit klar lesbar bleibt)
-  drawHpBar(x, y-38, pl.hp, PLAYER_MAX_HP, 24);
+  drawHpBar(x, y-38, pl.hp, playerMaxHp(), 24);
 }
 
 function drawDepositFx(){
@@ -2361,12 +2396,16 @@ function drawLightingPass(){
   ctx.restore();
 }
 
+// Geometrie des Portrait-Kreises oben links - eine Quelle fuer Zeichnen
+// UND Antippen (Profil-Hub oeffnen), damit beides nie auseinanderlaeuft.
+function avatarHotspot(){ const pad=12, r=24; return { cx:pad+r, cy:pad+r, r }; }
+
 function drawInGameHud(){
   const pad = 12;
 
   // ---- Links: Portrait, Level-Plakette, Name, EXP-Leiste, Kraft-Pille -
   // alles frei schwebend statt in einem Panel, wie in der Referenz.
-  const avatarR = 24, avatarCx = pad+avatarR, avatarCy = pad+avatarR;
+  const { cx:avatarCx, cy:avatarCy, r:avatarR } = avatarHotspot();
   drawAvatarPortrait(avatarCx, avatarCy, avatarR);
   drawLevelBadge(avatarCx, avatarCy+avatarR-9, state.playerLevel);
 
@@ -2595,7 +2634,7 @@ function collectNearbyNode(pl){
   });
   if(!closest) return;
   const def = WATER_NODE_DEFS.find(d=>d.id===closest.id);
-  const room = BACKPACK_CAPACITY - backpackTotal();
+  const room = playerBackpackCapacity() - backpackTotal();
   const take = Math.min(closest.amount, room);
   if(take>0){
     pl.backpack[def.type] += take;
@@ -2631,22 +2670,22 @@ function updatePlayer(dt){
     // Auto-Ziel ab, der Spieler bestimmt direkt die Richtung.
     pl.moveTarget = null;
     const speedMult = Math.min(1, joyLen);
-    pl.x += (joystickDir.x/joyLen)*PLAYER_SPEED*speedMult*dt;
-    pl.y += (joystickDir.y/joyLen)*PLAYER_SPEED*speedMult*dt;
+    pl.x += (joystickDir.x/joyLen)*PLAYER_SPEED*playerSpeedMult()*speedMult*dt;
+    pl.y += (joystickDir.y/joyLen)*PLAYER_SPEED*playerSpeedMult()*speedMult*dt;
     collectNearbyNode(pl);
   } else if(pl.moveTarget){
     const dx = pl.moveTarget.x-pl.x, dy = pl.moveTarget.y-pl.y;
     const dist = Math.hypot(dx,dy);
     if(dist>PLAYER_ARRIVE_RADIUS){
       const ang = Math.atan2(dy,dx);
-      pl.x += Math.cos(ang)*PLAYER_SPEED*dt;
-      pl.y += Math.sin(ang)*PLAYER_SPEED*dt;
+      pl.x += Math.cos(ang)*PLAYER_SPEED*playerSpeedMult()*dt;
+      pl.y += Math.sin(ang)*PLAYER_SPEED*playerSpeedMult()*dt;
     } else {
       if(pl.moveTarget.nodeId){
         const node = state.nodes.find(n=>n.id===pl.moveTarget.nodeId);
         if(node && node.amount>0){
           const def = WATER_NODE_DEFS.find(d=>d.id===node.id);
-          const room = BACKPACK_CAPACITY - backpackTotal();
+          const room = playerBackpackCapacity() - backpackTotal();
           const take = Math.min(node.amount, room);
           if(take>0){
             pl.backpack[def.type] += take;
@@ -2661,7 +2700,7 @@ function updatePlayer(dt){
       }
       pl.moveTarget = null;
       // Rucksack voll -> automatisch zur Base zurücklaufen, statt extra Klick
-      if(backpackTotal()>=BACKPACK_CAPACITY){
+      if(backpackTotal()>=playerBackpackCapacity()){
         pl.moveTarget = { x:0, y:0, nodeId:null };
       }
       save();
@@ -2705,6 +2744,48 @@ function openBasisMenu(){
     });
     box.appendChild(opt);
   }
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+// Profil-Hub: staerkt den SPIELER dauerhaft (HP/Tempo/Rucksack/EXP-Rate),
+// bezahlt mit Juwelen - der erste echte Nutzen fuer eine bisher tote
+// Waehrung. Erreichbar ueber das Portrait oben links im HUD.
+function openProfileHub(){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>👤 ${state.playerName}</h3>
+    <div class="hint2">Level ${state.playerLevel} · Kraft ${computeKraft()}</div>
+    <div class="hint2">❤ ${Math.round(playerMaxHp())} HP · 🏃 Tempo +${Math.round((playerSpeedMult()-1)*100)}% · 🎒 ${playerBackpackCapacity()} Rucksack · ✨ EXP +${Math.round((xpMultiplier()-1)*100)}%</div>`;
+
+  Object.entries(EQUIP_DEFS).forEach(([key,def])=>{
+    const level = state.player.equip[key]||0;
+    const current = level*def.bonusPerLevel;
+    const currentText = def.percent ? "+"+Math.round(current*100)+"%" : "+"+Math.round(current)+def.unit;
+    const opt = document.createElement("div");
+    opt.className = "buildopt";
+    if(level>=EQUIP_MAX_LEVEL){
+      opt.innerHTML = `<span>${def.icon} ${def.name} · Stufe ${level}<small>${def.desc} Aktuell: ${currentText}</small></span><b>Max</b>`;
+    } else {
+      const cost = equipCost(level);
+      const nextText = def.percent ? "+"+Math.round(def.bonusPerLevel*100)+"%" : "+"+Math.round(def.bonusPerLevel)+def.unit;
+      if(state.resources.gems<cost) opt.classList.add("disabled");
+      opt.innerHTML = `<span>${def.icon} ${def.name}${level>0?" · Stufe "+level:""}<small>${def.desc} ${level>0?"Aktuell "+currentText+" · ":""}Naechste Stufe ${nextText}</small></span><b>💎 ${cost}</b>`;
+      opt.addEventListener("click", ()=>{
+        if(state.resources.gems<cost) return;
+        state.resources.gems -= cost;
+        state.player.equip[key] = level+1;
+        save();
+        document.body.removeChild(overlay);
+        openProfileHub();
+      });
+    }
+    box.appendChild(opt);
+  });
+
   addCloseBtn(box, overlay);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
