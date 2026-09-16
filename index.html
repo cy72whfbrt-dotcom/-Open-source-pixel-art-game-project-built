@@ -89,8 +89,9 @@
   }
   .titleText { font-size:12px; font-weight:800; color:var(--text); }
 
-  /* Kategorie-Pille wie "Fähigkeit" im Referenzbild - eigenes System hat
-     keinen Skillbaum, darum als klar markierter Vorschau-Knopf. */
+  /* Kategorie-Pille wie "Fähigkeit" im Referenzbild. "Fähigkeiten" schaltet
+     den Ring um Portrait zwischen Ausruestung/Faehigkeiten um (aktiver
+     Zustand hervorgehoben), "Schmiede" oeffnet einen Hinweis. */
   .categoryRow { display:flex; justify-content:center; gap:8px; margin-bottom:12px; }
   .categoryPill {
     display:flex; align-items:center; gap:5px; font-size:11px; font-weight:700; color:var(--text-dim);
@@ -98,6 +99,7 @@
     padding:5px 12px; cursor:pointer;
   }
   .categoryPill:active { background:rgba(255,255,255,0.09); }
+  .categoryPill.active { background:rgba(45,214,189,0.16); border-color:var(--accent); color:var(--text); }
 
   .avatarStage { position:relative; width:250px; height:230px; margin:0 auto 14px; }
   .avatarBig {
@@ -169,18 +171,6 @@
   .statTile b { display:block; color:var(--text); font-size:18px; margin-top:2px; }
   .gearLegend { font-size:10.5px; color:var(--text-dim); text-align:center; margin-bottom:10px; }
 
-  /* Faehigkeiten-Hub: Reihe aus 5 Aktiv-Slots oben, Liste (besessen /
-     freischaltbar) darunter - eigenes, einfacheres Layout als der
-     Ausruestungs-Ring, weil hier kein Portrait im Zentrum steht. */
-  .abilitySlotRow { display:flex; justify-content:center; gap:8px; margin:6px 0 14px; }
-  .abilitySlot {
-    width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-    font-size:18px; color:var(--text-dim); background:rgba(255,255,255,0.04); border:1.5px dashed var(--border);
-  }
-  .abilitySlot.filled {
-    background:rgba(45,214,189,0.14); border:2px solid var(--accent); border-style:solid;
-    cursor:pointer; color:var(--text);
-  }
   .sectionLabel { font-size:11px; font-weight:800; color:var(--text-dim); margin:12px 0 6px; }
 
   #joystick {
@@ -2918,59 +2908,26 @@ function showComingSoonPanel(title, text){
   document.body.appendChild(inner);
 }
 
-// Faehigkeiten-Hub: bis zu ABILITY_EQUIP_MAX (5) aktive Slots oben, darunter
-// die eigenen (besessenen) Faehigkeiten zum An-/Abwaehlen und ganz unten die
-// noch freischaltbaren (bezahlt mit Juwelen). Erreichbar ueber den
-// "Fähigkeiten"-Knopf im Profil-Hub.
-function openAbilitiesHub(){
+// Kleiner Auswahl-Dialog fuer einen LEEREN Faehigkeiten-Slot im Ring -
+// listet eigene (noch nicht aktive) Faehigkeiten sowie freischaltbare
+// (bezahlt mit Juwelen). Wird ueber dem Profil-Hub eingeblendet, schliesst
+// sich selbst und ruft onPick(key) nach einer gueltigen Auswahl auf.
+function openAbilityPicker(onPick){
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
   box.className = "box";
+  box.innerHTML = `<h3>Fähigkeit wählen</h3>`;
 
-  const equipped = state.player.abilitiesEquipped;
   const owned = state.player.abilitiesOwned;
+  const equipped = state.player.abilitiesEquipped;
 
-  box.innerHTML = `<h3>🌟 Fähigkeiten</h3><div class="hint2">Wähle bis zu ${ABILITY_EQUIP_MAX} aktive Fähigkeiten aus deinem Besitz.</div>`;
-
-  const slotRow = document.createElement("div");
-  slotRow.className = "abilitySlotRow";
-  for(let i=0;i<ABILITY_EQUIP_MAX;i++){
-    const key = equipped[i];
-    const slot = document.createElement("div");
-    slot.className = "abilitySlot"+(key?" filled":"");
-    slot.textContent = key ? ABILITY_DEFS[key].icon : "+";
-    if(key){
-      slot.title = ABILITY_DEFS[key].name+" (antippen zum Entfernen)";
-      slot.addEventListener("click", ()=>{ toggleAbilityEquip(key); refresh(); });
-    }
-    slotRow.appendChild(slot);
-  }
-  box.appendChild(slotRow);
-
-  const ownedLabel = document.createElement("div");
-  ownedLabel.className = "sectionLabel";
-  ownedLabel.textContent = "Deine Fähigkeiten";
-  box.appendChild(ownedLabel);
-
-  if(owned.length===0){
-    const empty = document.createElement("div");
-    empty.className = "hint2";
-    empty.textContent = "Noch keine Fähigkeit freigeschaltet - siehe unten.";
-    box.appendChild(empty);
-  }
-  owned.forEach(key=>{
+  owned.filter(key=>!equipped.includes(key)).forEach(key=>{
     const def = ABILITY_DEFS[key];
-    const isEquipped = equipped.includes(key);
-    const full = !isEquipped && equipped.length>=ABILITY_EQUIP_MAX;
     const opt = document.createElement("div");
-    opt.className = "buildopt"+(full?" disabled":"");
-    opt.innerHTML = `<span>${def.icon} ${def.name}${isEquipped?" · Aktiv":""}<small>${def.desc}</small></span><b>${isEquipped?"✓":"—"}</b>`;
-    opt.addEventListener("click", ()=>{
-      if(full) return;
-      toggleAbilityEquip(key);
-      refresh();
-    });
+    opt.className = "buildopt";
+    opt.innerHTML = `<span>${def.icon} ${def.name}<small>${def.desc}</small></span><b>Wählen</b>`;
+    opt.addEventListener("click", ()=>{ document.body.removeChild(overlay); onPick(key); });
     box.appendChild(opt);
   });
 
@@ -2988,7 +2945,8 @@ function openAbilitiesHub(){
       state.resources.gems -= def.cost;
       state.player.abilitiesOwned.push(key);
       save();
-      refresh();
+      document.body.removeChild(overlay);
+      onPick(key);
     });
     box.appendChild(opt);
   });
@@ -2996,21 +2954,18 @@ function openAbilitiesHub(){
   addCloseBtn(box, overlay);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
-
-  function refresh(){
-    document.body.removeChild(overlay);
-    openAbilitiesHub();
-  }
 }
 
-// Profil-Hub: staerkt den SPIELER dauerhaft (HP/Tempo/Rucksack/EXP-Rate),
-// bezahlt mit Juwelen - der erste echte Nutzen fuer eine bisher tote
-// Waehrung. Erreichbar ueber das Portrait oben links im HUD. Layout 1:1
-// an der mitgeschickten Sword x Staff-Referenz: Emblem+Titel oben,
-// Portrait mittig mit GENAU 6 Ausruestungs-Kreisen drumherum (3 links /
-// 3 rechts, mit rotem Benachrichtigungspunkt bei verfuegbarem Upgrade),
-// grosse Level-Zahl mit EXP-Leiste und Kraft-Plakette daneben, darunter
-// ein "Werte"-Abschnitt mit grossen Stat-Kacheln.
+// Profil-Hub: staerkt den SPIELER dauerhaft, bezahlt mit Juwelen. Layout
+// an der Sword x Staff-Referenz: Emblem+Titel oben, Portrait mittig mit
+// GENAU 5 Kreisen drumherum (2 links / 3 rechts), grosse Level-Zahl mit
+// EXP-Leiste und Kraft-Plakette daneben, "Werte"-Abschnitt darunter.
+//
+// Der Ring hat ZWEI Modi, die dasselbe Panel/Layout teilen statt ein neues
+// Menue zu oeffnen: "equip" zeigt die 4 Ausruestungs-Werte + 1 Vorschau-
+// Platz, "abilities" zeigt bis zu 5 frei waehlbare Faehigkeiten aus dem
+// eigenen Besitz. Der "Fähigkeiten"-Knopf schaltet zwischen beiden um -
+// exakt das gleiche visuelle Ring-Design fuer beide, wie gewuenscht.
 //
 // Bewusste Abweichungen von der Referenz (mit Grund, nicht aus Faulheit):
 // - Dunkler Panel-Hintergrund statt hellem Himmel-Blau, damit der Hub
@@ -3019,7 +2974,8 @@ function openAbilitiesHub(){
 // - Kein Begleit-Kreatur-Icon, weil dieses Spiel keine Pets/Begleiter hat.
 // - Emoji statt gemalter Item-Grafik, weil keine eigenen Icon-Assets
 //   existieren.
-function openProfileHub(){
+function openProfileHub(mode){
+  mode = mode || "equip";
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
@@ -3028,6 +2984,7 @@ function openProfileHub(){
   const xpNow = xpForLevel(state.playerLevel);
   const xpRatio = Math.max(0,Math.min(1, state.playerXp/xpNow));
   const GEAR_POS = ["pos-l1","pos-l2","pos-r1","pos-r2"];
+  const ABILITY_POS = ["pos-l1","pos-l2","pos-r1","pos-r2","pos-r3"];
 
   box.innerHTML = `
     <div class="titleEmblem">
@@ -3039,7 +2996,7 @@ function openProfileHub(){
       <div class="levelChip">Lv. ${state.playerLevel}</div>
     </div>
     <div class="categoryRow">
-      <div class="categoryPill" id="btnFaehigkeiten">🌟 Fähigkeiten</div>
+      <div class="categoryPill${mode==="abilities"?" active":""}" id="btnFaehigkeiten">🌟 Fähigkeiten</div>
       <div class="categoryPill" id="btnSchmiede">🔨 Schmiede</div>
     </div>
     <div class="levelHeaderRow">
@@ -3054,49 +3011,81 @@ function openProfileHub(){
       <div class="statTile">🎒 Rucksack<b>${playerBackpackCapacity()}</b></div>
       <div class="statTile">✨ EXP-Rate<b>+${Math.round((xpMultiplier()-1)*100)}%</b></div>
     </div>
-    <div class="gearLegend">Ausrüstung antippen zum Aufwerten (bezahlt mit 💎)</div>
+    <div class="gearLegend">${mode==="abilities"
+      ? "Fähigkeit antippen zum Entfernen · leeren Platz antippen zum Auswählen"
+      : "Ausrüstung antippen zum Aufwerten (bezahlt mit 💎)"}</div>
   `;
 
-  box.querySelector("#btnFaehigkeiten").addEventListener("click", openAbilitiesHub);
+  box.querySelector("#btnFaehigkeiten").addEventListener("click", ()=>{
+    document.body.removeChild(overlay);
+    openProfileHub(mode==="abilities" ? "equip" : "abilities");
+  });
   box.querySelector("#btnSchmiede").addEventListener("click", ()=>{
     showComingSoonPanel("🔨 Schmiede", "Noch ohne eigene Mechanik dahinter - der Button ist schon da, der Inhalt kommt später.");
   });
 
   const stage = box.querySelector("#avatarStage");
-  Object.entries(EQUIP_DEFS).forEach(([key,def],i)=>{
-    const level = state.player.equip[key]||0;
-    const maxed = level>=EQUIP_MAX_LEVEL;
-    const current = level*def.bonusPerLevel;
-    const currentText = def.percent ? "+"+Math.round(current*100)+"%" : "+"+Math.round(current)+def.unit;
-    const cost = equipCost(level);
-    const canAffordGear = state.resources.gems>=cost;
 
-    const slot = document.createElement("div");
-    slot.className = "gearSlot "+GEAR_POS[i]+(level>0?" owned":"")+((!maxed && !canAffordGear)?" disabled":"");
-    slot.title = def.desc;
-    slot.innerHTML = `<div class="badge">${def.icon}${(!maxed && canAffordGear)?'<span class="ping">!</span>':''}</div>
-      <div class="bonus">${level>0?currentText:"—"}</div>
-      ${maxed ? `<div class="cost">Max</div>` : `<div class="cost">💎${cost}</div>`}`;
-    if(!maxed){
+  if(mode==="abilities"){
+    const equipped = state.player.abilitiesEquipped;
+    for(let i=0;i<ABILITY_EQUIP_MAX;i++){
+      const key = equipped[i];
+      const def = key ? ABILITY_DEFS[key] : null;
+      const slot = document.createElement("div");
+      slot.className = "gearSlot "+ABILITY_POS[i]+(key?" owned":"");
+      if(def) slot.title = def.desc;
+      slot.innerHTML = `<div class="badge">${def?def.icon:"+"}</div>
+        <div class="bonus">${def?def.name:"—"}</div>`;
       slot.addEventListener("click", ()=>{
-        if(state.resources.gems<cost) return;
-        state.resources.gems -= cost;
-        state.player.equip[key] = level+1;
-        save();
         document.body.removeChild(overlay);
-        openProfileHub();
+        if(key){
+          toggleAbilityEquip(key);
+          openProfileHub("abilities");
+        } else {
+          openAbilityPicker((pickedKey)=>{
+            toggleAbilityEquip(pickedKey);
+            openProfileHub("abilities");
+          });
+        }
       });
+      stage.appendChild(slot);
     }
-    stage.appendChild(slot);
-  });
+  } else {
+    Object.entries(EQUIP_DEFS).forEach(([key,def],i)=>{
+      const level = state.player.equip[key]||0;
+      const maxed = level>=EQUIP_MAX_LEVEL;
+      const current = level*def.bonusPerLevel;
+      const currentText = def.percent ? "+"+Math.round(current*100)+"%" : "+"+Math.round(current)+def.unit;
+      const cost = equipCost(level);
+      const canAffordGear = state.resources.gems>=cost;
 
-  EQUIP_COMING_SOON.forEach((def,i)=>{
-    const slot = document.createElement("div");
-    slot.className = "gearSlot locked "+["pos-r3"][i];
-    slot.title = def.name+" - bald verfügbar";
-    slot.innerHTML = `<div class="badge">${def.icon}<span class="ping" style="background:#565b64;">🔒</span></div><div class="bonus">Bald</div>`;
-    stage.appendChild(slot);
-  });
+      const slot = document.createElement("div");
+      slot.className = "gearSlot "+GEAR_POS[i]+(level>0?" owned":"")+((!maxed && !canAffordGear)?" disabled":"");
+      slot.title = def.desc;
+      slot.innerHTML = `<div class="badge">${def.icon}${(!maxed && canAffordGear)?'<span class="ping">!</span>':''}</div>
+        <div class="bonus">${level>0?currentText:"—"}</div>
+        ${maxed ? `<div class="cost">Max</div>` : `<div class="cost">💎${cost}</div>`}`;
+      if(!maxed){
+        slot.addEventListener("click", ()=>{
+          if(state.resources.gems<cost) return;
+          state.resources.gems -= cost;
+          state.player.equip[key] = level+1;
+          save();
+          document.body.removeChild(overlay);
+          openProfileHub("equip");
+        });
+      }
+      stage.appendChild(slot);
+    });
+
+    EQUIP_COMING_SOON.forEach((def,i)=>{
+      const slot = document.createElement("div");
+      slot.className = "gearSlot locked "+["pos-r3"][i];
+      slot.title = def.name+" - bald verfügbar";
+      slot.innerHTML = `<div class="badge">${def.icon}<span class="ping" style="background:#565b64;">🔒</span></div><div class="bonus">Bald</div>`;
+      stage.appendChild(slot);
+    });
+  }
 
   addCloseBtn(box, overlay);
   overlay.appendChild(box);
