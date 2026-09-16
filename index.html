@@ -1834,11 +1834,11 @@ function drawPlayerSprite(){
   // Beine
   ctx.fillStyle="#3a3f5a";
   ctx.fillRect(x-5,y+6,4,9); ctx.fillRect(x+1,y+6,4,9);
-  // Koerper - gedecktes Stahlblau statt Comic-Hellblau
+  // Koerper - kraeftiges, gesaettigtes Comic-Blau statt gedecktem Stahlblau
   const bodyGrad = ctx.createLinearGradient(x,y-8,x,y+8);
-  bodyGrad.addColorStop(0,"#3f6699"); bodyGrad.addColorStop(1,"#2a4a73");
+  bodyGrad.addColorStop(0,"#5a9bf0"); bodyGrad.addColorStop(1,"#3868c0");
   drawRoundRect(x-8,y-8,16,15,4,bodyGrad);
-  ctx.strokeStyle="#1c3350"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-8,y-8,16,15,4); ctx.stroke();
+  ctx.strokeStyle="#1f3f80"; ctx.lineWidth=1.3; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-8,y-8,16,15,4); ctx.stroke();
   // Kopf
   ctx.beginPath(); ctx.arc(x,y-13,7,0,Math.PI*2);
   ctx.fillStyle="#e8b48a"; ctx.fill();
@@ -1904,12 +1904,14 @@ function drawKnockoutFx(){
 function drawEnemy(e){
   const type = ENEMY_TYPES[e.typeKey] || {color:"#8a2f2f"};
   drawShadow(e.x,e.y+e.r,e.r*1.3,4);
-  const bodyGrad = ctx.createRadialGradient(e.x-e.r*0.35,e.y-e.r*0.35,e.r*0.1,e.x,e.y,e.r*1.15);
-  bodyGrad.addColorStop(0, shadeColor(type.color,45));
-  bodyGrad.addColorStop(1, shadeColor(type.color,-25));
+  // Flacher 2-Ton-Verlauf statt kugelig-realistischer Lichtkugel-Schattierung
+  // (vorher +45/-25 Kontrast liess sie wie eine gerenderte 3D-Kugel wirken).
+  const bodyGrad = ctx.createLinearGradient(e.x,e.y-e.r,e.x,e.y+e.r);
+  bodyGrad.addColorStop(0, shadeColor(type.color,22));
+  bodyGrad.addColorStop(1, shadeColor(type.color,-14));
   ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
   ctx.fillStyle=bodyGrad; ctx.fill();
-  ctx.strokeStyle="rgba(0,0,0,0.45)"; ctx.lineWidth=2; ctx.stroke();
+  ctx.strokeStyle="rgba(0,0,0,0.4)"; ctx.lineWidth=2; ctx.stroke();
   if(e.armor){
     // Ruestungsplatten mit Nieten
     ctx.strokeStyle="rgba(225,228,235,0.85)"; ctx.lineWidth=2;
@@ -1970,70 +1972,52 @@ function drawTutorialHighlight(x,y,label){
   ctx.textAlign="left";
 }
 
-// Fuellt eine Flaeche mit einer echten Material-Textur und legt danach
-// Licht/Schatten darueber: Lichtkante oben links, Kernschatten unten rechts,
-// dunkler Rand aussen. Das ist der Unterschied zwischen "flache Farbe" und
-// "Material mit Volumen".
-function fillTexturedBlock(x0,y0,w,h,r,pattern,seed,tintTop,tintBottom){
-  ctx.save();
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x0,y0,w,h,r); else ctx.rect(x0,y0,w,h);
-  ctx.clip();
-  ctx.save();
-  ctx.translate(x0-((seed*29)%128), y0-((seed*61)%128));
-  ctx.fillStyle = pattern;
-  ctx.fillRect(0,0,w+128,h+128);
-  ctx.restore();
-  // Materialfarbe einfaerben (multiply behaelt die Struktur)
-  ctx.globalCompositeOperation = "multiply";
-  const tint = ctx.createLinearGradient(x0,y0,x0,y0+h);
-  tint.addColorStop(0,tintTop); tint.addColorStop(1,tintBottom);
-  ctx.fillStyle = tint; ctx.fillRect(x0,y0,w,h);
-  // Volumen: Licht oben links, Schatten unten rechts
-  ctx.globalCompositeOperation = "source-over";
-  const vol = ctx.createLinearGradient(x0,y0,x0+w*0.7,y0+h);
-  vol.addColorStop(0,"rgba(255,246,222,0.2)");
-  vol.addColorStop(0.42,"rgba(255,255,255,0)");
-  vol.addColorStop(1,"rgba(10,14,22,0.36)");
-  ctx.fillStyle = vol; ctx.fillRect(x0,y0,w,h);
-  // Innerer dunkler Saum (Ambient Occlusion an den Kanten)
-  ctx.strokeStyle="rgba(12,16,22,0.3)"; ctx.lineWidth=3;
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x0+1.5,y0+1.5,w-3,h-3,Math.max(1,r-1)); ctx.stroke();
-  ctx.restore();
+// Flacher Baustein-Fuellstil: gesaettigter 2-Ton-Verlauf + duenne klare
+// Kontur + eine einzelne leichte Lichtkante oben - der gleiche Aufbau wie
+// bei den Waehrungs-/Fuellstands-Pillen im HUD. Kein Rauschen, keine
+// Multiply-Materialtextur und kein Ambient-Occlusion-Saum mehr: das war der
+// "Material mit echtem Volumen"-Look, der zu fotorealistisch wirkte statt
+// modern-flach wie der Rest des Spiels.
+function fillFlatBlock(x0,y0,w,h,r,tintTop,tintBottom){
+  const g = ctx.createLinearGradient(x0,y0,x0,y0+h);
+  g.addColorStop(0,tintTop); g.addColorStop(1,tintBottom);
+  drawRoundRect(x0,y0,w,h,r,g);
+  ctx.strokeStyle="rgba(20,24,32,0.3)"; ctx.lineWidth=2;
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x0+1,y0+1,w-2,h-2,Math.max(1,r-1)); ctx.stroke();
+  ctx.fillStyle="rgba(255,255,255,0.18)";
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x0+2,y0+2,w-4,Math.max(2,h*0.1),Math.max(1,r-1)); ctx.fill();
 }
 
 function drawTowerSprite(x,y,b){
   const s=25;
   drawShadow(x,y+s-2,21,6);
-  fillTexturedBlock(x-s,y-s,s*2,s*2,5,TEX.stone,b.level*7+3,
-    "rgba(188,196,206,1)","rgba(128,138,150,1)");
-  // Steinfugen, leicht versetzt wie echtes Mauerwerk
+  fillFlatBlock(x-s,y-s,s*2,s*2,5, HUD.stoneA, HUD.stoneB);
+  // Steinfugen als einfache, duenne Linien - Struktur-Hinweis statt
+  // gemaltem Mauerwerk mit eigener Licht-/Schattenkante pro Fuge.
   ctx.save();
   ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s,y-s,s*2,s*2,5); ctx.clip();
+  ctx.strokeStyle="rgba(20,26,34,0.22)"; ctx.lineWidth=1.3;
   for(let i=1;i<5;i++){
     const yy=y-s+i*(s*2/5);
-    ctx.strokeStyle="rgba(18,22,28,0.3)"; ctx.lineWidth=1.3;
     ctx.beginPath(); ctx.moveTo(x-s,yy); ctx.lineTo(x+s,yy); ctx.stroke();
-    ctx.strokeStyle="rgba(255,252,240,0.1)"; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(x-s,yy+1.2); ctx.lineTo(x+s,yy+1.2); ctx.stroke();
     const off = (i%2===0)?0:(s*2)/3/2;
     for(let xx=x-s+off; xx<x+s; xx+=(s*2)/3){
-      ctx.strokeStyle="rgba(18,22,28,0.26)"; ctx.lineWidth=1.2;
       ctx.beginPath(); ctx.moveTo(xx,yy); ctx.lineTo(xx,yy-(s*2/5)); ctx.stroke();
     }
   }
   ctx.restore();
-  // Zinnen (Kraneliert) oben, jede mit eigener Licht-/Schattenseite
+  // Zinnen (Krenelierung) oben - flache Bloecke im gleichen Baustein-Stil
   const cz=6.5;
   [-s+2, -s+2+cz*2.2, s-cz*3.2, s-cz-2].forEach(dx=>{
-    fillTexturedBlock(x+dx,y-s-4,cz,8,1.5,TEX.stone,dx+11,
-      "rgba(196,204,214,1)","rgba(140,150,162,1)");
+    fillFlatBlock(x+dx,y-s-4,cz,8,1.5, HUD.stoneA, HUD.stoneB);
   });
-  // Wach-Kuppel mit Verlauf - gedecktes Rostrot statt Comic-Rot
+  // Wach-Kuppel mit Verlauf - kraeftiges, gesaettigtes Rot aus der
+  // HUD-Gefahrenfarbe statt gedecktem Rostrot.
   const domeGrad = ctx.createRadialGradient(x-4,y-8,2,x,y-3,14);
-  domeGrad.addColorStop(0,"#a44a44"); domeGrad.addColorStop(1,"#6e2c28");
+  domeGrad.addColorStop(0,HUD.dangerA); domeGrad.addColorStop(1,HUD.dangerB);
   ctx.beginPath(); ctx.arc(x,y-3,13,0,Math.PI*2);
   ctx.fillStyle=domeGrad; ctx.fill();
-  ctx.strokeStyle="#421a18"; ctx.lineWidth=2; ctx.stroke();
+  ctx.strokeStyle="#6e211f"; ctx.lineWidth=2; ctx.stroke();
   // Sichtschlitz
   ctx.fillStyle="rgba(20,10,10,0.5)"; drawRoundRect(x-4,y-6,8,5,2,"rgba(20,10,10,0.5)");
   ctx.beginPath(); ctx.arc(x-4,y-7,3,0,Math.PI*2);
@@ -2056,22 +2040,17 @@ function drawTowerSprite(x,y,b){
 
 function drawWallSpriteWood(x,y,b){
   const s=25;
-  // Einzelne Palisaden-Bohlen, jede mit eigener Maserung und eigener
-  // Licht-/Schattenseite - statt einer Flaeche mit aufgemalten Linien.
+  // Einzelne Palisaden-Bohlen als flache Baustein-Streifen mit duenner
+  // Trennlinie - Struktur-Hinweis statt Maserung mit eigener Volumenkante
+  // pro Bohle.
   const planks = 4, pw = (s*2)/planks;
   for(let i=0;i<planks;i++){
     const px = x-s+i*pw;
-    fillTexturedBlock(px+0.5, y-s, pw-1, s*2, 2, TEX.wood, i*17+b.level,
-      "rgba(196,150,104,1)","rgba(132,94,58,1)");
-    // Rundung der Bohle: Glanzkante links, Schattenkante rechts
-    ctx.fillStyle="rgba(255,240,210,0.14)"; ctx.fillRect(px+1,y-s,1.6,s*2);
-    ctx.fillStyle="rgba(16,10,4,0.26)"; ctx.fillRect(px+pw-2.4,y-s,1.8,s*2);
+    fillFlatBlock(px+0.5, y-s, pw-1, s*2, 2, HUD.woodA, HUD.woodB);
   }
   // Zwei Querbalken, deutlich davor liegend
   [-8, 12].forEach(dy=>{
-    fillTexturedBlock(x-s-1, y+dy, s*2+2, 8, 2, TEX.wood, dy+41,
-      "rgba(176,132,88,1)","rgba(112,78,46,1)");
-    ctx.fillStyle="rgba(10,6,2,0.22)"; ctx.fillRect(x-s-1, y+dy+8, s*2+2, 2.4);
+    fillFlatBlock(x-s-1, y+dy, s*2+2, 8, 2, HUD.woodA, HUD.woodB);
     // Nagelkoepfe
     [-s+6, 0, s-8].forEach(dx=>{
       ctx.beginPath(); ctx.arc(x+dx, y+dy+4, 1.5, 0, Math.PI*2);
@@ -2091,38 +2070,26 @@ function drawWallSpriteStone(x,y,b){
   // Ab Level 3: verstaerkte Steinmauer statt Holzpalisade - sichtbare
   // Belohnung fuers Investieren, kein neuer Mechanismus.
   const s=25;
-  fillTexturedBlock(x-s,y-s,s*2,s*2,3,TEX.stone,b.level*13+5,
-    "rgba(198,204,212,1)","rgba(126,134,144,1)");
-  // Einzelne Quader im Verband, jeder mit Fuge und Lichtkante
+  fillFlatBlock(x-s,y-s,s*2,s*2,3, HUD.stoneA, HUD.stoneB);
+  // Einzelne Quader im Verband als duenne flache Fugenlinien
   ctx.save();
   ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x-s,y-s,s*2,s*2,3); ctx.clip();
+  ctx.strokeStyle="rgba(18,22,30,0.24)"; ctx.lineWidth=1.3;
   const rows=4, rowH=(s*2)/rows;
   for(let i=0;i<rows;i++){
     const yy0=y-s+i*rowH;
-    if(i>0){
-      ctx.strokeStyle="rgba(14,18,24,0.42)"; ctx.lineWidth=1.6;
-      ctx.beginPath(); ctx.moveTo(x-s,yy0); ctx.lineTo(x+s,yy0); ctx.stroke();
-      ctx.strokeStyle="rgba(255,252,242,0.13)"; ctx.lineWidth=1.1;
-      ctx.beginPath(); ctx.moveTo(x-s,yy0+1.4); ctx.lineTo(x+s,yy0+1.4); ctx.stroke();
-    }
+    if(i>0){ ctx.beginPath(); ctx.moveTo(x-s,yy0); ctx.lineTo(x+s,yy0); ctx.stroke(); }
     const offset=(i%2===0)?0:(s*2)/4;
     for(let xx=x-s+offset; xx<x+s; xx+=(s*2)/2){
-      ctx.strokeStyle="rgba(14,18,24,0.38)"; ctx.lineWidth=1.5;
       ctx.beginPath(); ctx.moveTo(xx,yy0); ctx.lineTo(xx,yy0+rowH); ctx.stroke();
-      ctx.strokeStyle="rgba(255,252,242,0.1)"; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(xx+1.2,yy0); ctx.lineTo(xx+1.2,yy0+rowH); ctx.stroke();
     }
   }
   ctx.restore();
-  // Eisenverstaerkung als Band, mit Metallglanz
-  const bandGrad = ctx.createLinearGradient(x,y-4,x,y+4);
-  bandGrad.addColorStop(0,"#6e655c"); bandGrad.addColorStop(0.35,"#8d8378");
-  bandGrad.addColorStop(0.6,"#4e463f"); bandGrad.addColorStop(1,"#332d28");
-  ctx.fillStyle=bandGrad; ctx.fillRect(x-s,y-4,s*2,8);
-  ctx.strokeStyle="rgba(12,10,8,0.6)"; ctx.lineWidth=1; ctx.strokeRect(x-s,y-4,s*2,8);
+  // Eisenverstaerkung als flaches Band statt Metallglanz-Verlauf
+  ctx.fillStyle="#5c534b"; ctx.fillRect(x-s,y-4,s*2,8);
+  ctx.strokeStyle="rgba(12,10,8,0.5)"; ctx.lineWidth=1; ctx.strokeRect(x-s,y-4,s*2,8);
   [-16,-5,6,16].forEach(dx=>{
-    ctx.beginPath(); ctx.arc(x+dx,y,1.8,0,Math.PI*2); ctx.fillStyle="#57504a"; ctx.fill();
-    ctx.beginPath(); ctx.arc(x+dx-0.5,y-0.5,1,0,Math.PI*2); ctx.fillStyle="rgba(226,222,214,0.7)"; ctx.fill();
+    ctx.beginPath(); ctx.arc(x+dx,y,1.8,0,Math.PI*2); ctx.fillStyle="#8a8078"; ctx.fill();
   });
 }
 
@@ -3354,7 +3321,7 @@ function openGearPicker(slot, returnMode){
 // Detailseite eines einzelnen Ausruestungs-Exemplars, geoeffnet per Antippen
 // der Icon-Kachel im Slot-Picker: Tragen sowie Level-/Stern-Aufwerten, statt
 // alles gleichzeitig als Textzeilen in der Liste zu zeigen.
-function openGearItemDetail(item, slot, returnMode){
+function openGearItemDetail(item, slot, returnMode, onBack){
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
@@ -3417,13 +3384,16 @@ function openGearItemDetail(item, slot, returnMode){
 
   // Schliessen fuehrt zurueck zum Icon-Grid des Slots statt nur das Overlay
   // zu entfernen - dieselbe Rueckkehr-Logik wie beim Slot-Picker selbst.
-  addCloseBtn(box, overlay, ()=>{ document.body.removeChild(overlay); openGearPicker(slot, returnMode); });
+  // onBack erlaubt anderen Aufrufern (z.B. der Ausruestungs-Uebersicht im
+  // Profil-Hub) ein eigenes Rueckkehr-Ziel statt des Slot-Pickers.
+  const back = onBack || (()=>openGearPicker(slot, returnMode));
+  addCloseBtn(box, overlay, ()=>{ document.body.removeChild(overlay); back(); });
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
   function reopen(){
     document.body.removeChild(overlay);
-    openGearItemDetail(item, slot, returnMode);
+    openGearItemDetail(item, slot, returnMode, onBack);
   }
 }
 
@@ -3529,15 +3499,24 @@ function openProfileHub(mode){
       empty.textContent = "Noch keine Ausrüstung - im Shop ziehen (🛒-Knopf am Bildschirmrand).";
       mid.appendChild(empty);
     } else {
+      // Icon-Kacheln (3 pro Reihe) statt Textzeilen - gleiches Muster wie im
+      // Slot-Picker: antippen oeffnet die Detailseite zum Tragen/Aufwerten.
+      const grid = document.createElement("div");
+      grid.className = "gearItemGrid";
       owned.forEach(item=>{
         const slotInfo = GEAR_SLOT_INFO[item.slot], rInfo = RARITY_INFO[item.rarity];
         const isEquipped = state.player.gearEquipped[item.slot]===item.id;
-        const row = document.createElement("div");
-        row.className = "buildopt gearRow";
-        row.style.borderColor = rInfo.color;
-        row.innerHTML = `<span>${slotInfo.icon} ${slotInfo.name}<small style="color:${rInfo.color}">${rInfo.name} · Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""}${isEquipped?" · Getragen":""}</small></span><b>${gearKraft(item)}⚡</b>`;
-        mid.appendChild(row);
+        const cell = document.createElement("div");
+        cell.className = "gearItemCell";
+        cell.style.borderColor = rInfo.color;
+        cell.innerHTML = `${isEquipped?'<div class="gearItemCheck">✓</div>':""}<div class="prIcon">${slotInfo.icon}</div><div class="gearItemLv" style="color:${rInfo.color}">Lv.${item.level}${item.stars>0?" "+"★".repeat(item.stars):""}</div>`;
+        cell.addEventListener("click", ()=>{
+          document.body.removeChild(overlay);
+          openGearItemDetail(item, item.slot, "gear", ()=>openProfileHub("gear"));
+        });
+        grid.appendChild(cell);
       });
+      mid.appendChild(grid);
     }
   } else {
     mid.innerHTML = `
