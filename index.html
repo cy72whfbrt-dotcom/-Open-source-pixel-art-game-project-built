@@ -3644,10 +3644,18 @@ function openAbilityItemDetail(item, key, returnMode, onBack){
     <div class="hint2">Lv.${item.level}${item.stars>0?" · "+"★".repeat(item.stars):""} · Kraft ${abilityKraft(item)}${isEquipped?" · Aktiv":""}</div>`;
 
   if(isEquipped){
+    // Anders als Ausruestung (die immer alle 6 Slots gleichzeitig traegt)
+    // sind bei Faehigkeiten nur bis zu ABILITY_EQUIP_MAX von 8 gleichzeitig
+    // aktiv - ohne Deaktivieren-Knopf waere ein einmal befuellter Ring-Platz
+    // fuer immer blockiert, sobald das Limit erreicht ist.
     const hint = document.createElement("div");
     hint.className = "buildopt gearRow";
     hint.style.borderColor = rInfo.color;
-    hint.innerHTML = `<span>✓ Aktiv</span>`;
+    hint.innerHTML = `<span>✓ Aktiv</span><b>Deaktivieren</b>`;
+    hint.addEventListener("click", ()=>{
+      setAbilityEquipped(key, null);
+      reopen();
+    });
     box.appendChild(hint);
   } else {
     const wear = document.createElement("div");
