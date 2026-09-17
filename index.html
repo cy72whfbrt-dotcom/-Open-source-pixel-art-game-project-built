@@ -80,6 +80,32 @@
   }
   #boatExitBtn.show { display:block; }
 
+  /* Nur sichtbar beim Ansehen einer fremden Basis (worldMode "visiting") -
+     gleicher Look wie der Aussteigen-Knopf, damit klar ist "das ist der
+     Weg zurueck", egal in welchem Modus man gerade steckt. */
+  #visitBackBtn {
+    display:none; position:absolute; left:50%; top:14px; transform:translateX(-50%);
+    background:var(--panel); border:1.5px solid var(--accent); border-radius:999px;
+    color:var(--text); font-size:13px; font-weight:800; padding:8px 18px; cursor:pointer;
+    box-shadow:0 6px 16px rgba(0,0,0,0.4); z-index:15;
+  }
+  #visitBackBtn.show { display:block; }
+
+  /* Kurzer Ladebildschirm bei jedem Wechsel Heimat <-> Open World <->
+     fremde Basis - deckt den harten Szenenwechsel ab statt ihn abrupt
+     "aufploppen" zu lassen. */
+  #loadingScreen {
+    display:none; position:fixed; inset:0; z-index:90; background:#0b1e28;
+    flex-direction:column; align-items:center; justify-content:center; gap:14px;
+  }
+  #loadingScreen.show { display:flex; }
+  .loadingSpinner {
+    width:44px; height:44px; border-radius:50%; border:4px solid rgba(255,255,255,0.18);
+    border-top-color:#6ad4c9; animation:loadspin 0.8s linear infinite;
+  }
+  @keyframes loadspin { to { transform:rotate(360deg); } }
+  #loadingLabel { color:#fff; font-size:13.5px; font-weight:700; letter-spacing:0.2px; }
+
   .buildmenu {
     position:fixed; inset:0; background:rgba(6,10,15,.72); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; z-index:20;
   }
@@ -301,8 +327,14 @@
     <button id="shopBtn">🛒</button>
     <button id="questBtn">📜<div class="questDot"></div></button>
     <button id="boatExitBtn">🚶 Aussteigen</button>
+    <button id="visitBackBtn">↩️ Zurück zur Open World</button>
     <div id="joystick"><div id="joystickKnob"></div></div>
   </div>
+</div>
+
+<div id="loadingScreen">
+  <div class="loadingSpinner"></div>
+  <div id="loadingLabel"></div>
 </div>
 
 <script>
@@ -1598,6 +1630,10 @@ document.getElementById("questBtn").addEventListener("click", openQuestPanel);
 const questBtnEl = document.getElementById("questBtn");
 const boatExitBtnEl = document.getElementById("boatExitBtn");
 boatExitBtnEl.addEventListener("click", ()=>{ exitBoat(); render(); });
+const visitBackBtnEl = document.getElementById("visitBackBtn");
+visitBackBtnEl.addEventListener("click", ()=>{ leaveVisiting(); render(); });
+const loadingScreenEl = document.getElementById("loadingScreen");
+const loadingLabelEl = document.getElementById("loadingLabel");
 const joystickEl = document.getElementById("joystick");
 const joystickKnob = document.getElementById("joystickKnob");
 const JOYSTICK_MAX = 40; // px, wie weit der Knopf aus der Mitte wandern kann
@@ -1844,7 +1880,8 @@ function drawShadow(x,y,rx,ry){
   });
 }
 
-function drawWater(){
+function drawWater(showEdgeHint){
+  if(showEdgeHint===undefined) showEdgeHint = true;
   const t = performance.now()/1000;
 
   // 1. Tiefenverlauf: klares, einladendes Tuerkis nah an der Insel, das
@@ -1923,12 +1960,14 @@ function drawWater(){
   edge.addColorStop(0,"rgba(6,18,34,0)"); edge.addColorStop(1,"rgba(6,18,34,0.45)");
   ctx.fillStyle=edge; ctx.beginPath(); ctx.arc(0,0,WATER_RADIUS*1.5,0,Math.PI*2); ctx.fill();
 
-  ctx.beginPath(); ctx.arc(0,0,WATER_RADIUS,0,Math.PI*2);
-  ctx.strokeStyle = "rgba(215,245,240,0.24)"; ctx.lineWidth = 2/camera.scale;
-  ctx.setLineDash([16/camera.scale,14/camera.scale]); ctx.stroke(); ctx.setLineDash([]);
-  ctx.fillStyle = "rgba(228,247,244,0.5)"; ctx.font = "600 "+(13/camera.scale)+"px sans-serif"; ctx.textAlign="center";
-  ctx.fillText("offene See →", 0, -WATER_RADIUS+24/camera.scale);
-  ctx.textAlign="left";
+  if(showEdgeHint){
+    ctx.beginPath(); ctx.arc(0,0,WATER_RADIUS,0,Math.PI*2);
+    ctx.strokeStyle = "rgba(215,245,240,0.24)"; ctx.lineWidth = 2/camera.scale;
+    ctx.setLineDash([16/camera.scale,14/camera.scale]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(228,247,244,0.5)"; ctx.font = "600 "+(13/camera.scale)+"px sans-serif"; ctx.textAlign="center";
+    ctx.fillText("offene See →", 0, -WATER_RADIUS+24/camera.scale);
+    ctx.textAlign="left";
+  }
 }
 
 // ================= Hafen (Steg mit Bootsplaetzen, ab HAFEN_UNLOCK_LEVEL) =================
@@ -1972,15 +2011,35 @@ function updateBoatDriving(dt){
   const kLen = Math.hypot(kDir.x, kDir.y);
   const useJoy = joyLen>JOYSTICK_DEADZONE;
   const useKey = !useJoy && kLen>0;
-  if(useJoy || useKey){
-    const dir = useJoy ? joystickDir : kDir;
-    const len = useJoy ? joyLen : kLen;
-    const speedMult = useJoy ? Math.min(1, joyLen) : 1;
-    boatX += (dir.x/len)*BOAT_SPEED*speedMult*dt;
-    boatY += (dir.y/len)*BOAT_SPEED*speedMult*dt;
-    const d = Math.hypot(boatX,boatY), maxD = WATER_RADIUS-30;
-    if(d>maxD){ boatX = boatX/d*maxD; boatY = boatY/d*maxD; }
+  if(!useJoy && !useKey){
+    if(worldMode==="home") collectNearbyNodeIntoBoat();
+    return;
   }
+  const dir = useJoy ? joystickDir : kDir;
+  const len = useJoy ? joyLen : kLen;
+  const speedMult = useJoy ? Math.min(1, joyLen) : 1;
+  const dx = (dir.x/len)*BOAT_SPEED*speedMult*dt;
+  const dy = (dir.y/len)*BOAT_SPEED*speedMult*dt;
+
+  if(worldMode==="openworld"){
+    const nx = owBoatX+dx, ny = owBoatY+dy;
+    const d = Math.hypot(nx,ny), maxD = OPEN_WORLD_RADIUS-20;
+    if(d>maxD){ owBoatX = nx/d*maxD; owBoatY = ny/d*maxD; } else { owBoatX = nx; owBoatY = ny; }
+    return;
+  }
+
+  // worldMode === "home": normale Fahrt in der eigenen Bucht. Verlaesst das
+  // Boot dabei den Wasser-Kreis um die Insel, geht es statt eines simplen
+  // Klemmens am Rand in die Open World (siehe enterOpenWorld).
+  const nx = boatX+dx, ny = boatY+dy;
+  const d = Math.hypot(nx,ny);
+  if(d>WATER_RADIUS){
+    const exitAngle = Math.atan2(ny,nx);
+    boatX = nx/d*WATER_RADIUS; boatY = ny/d*WATER_RADIUS;
+    enterOpenWorld(exitAngle);
+    return;
+  }
+  boatX = nx; boatY = ny;
   collectNearbyNodeIntoBoat();
 }
 
@@ -2144,6 +2203,178 @@ function drawBoatDriving(){
   ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(boatX-w/2,by,w,5);
   ctx.fillStyle = ratio>=1 ? "#e0c34a" : "#6ad4c9";
   ctx.fillRect(boatX-w/2,by,w*ratio,5);
+}
+
+// ================= Open World (erstmal nur lokal/lokaler Speicher) =================
+// Alles hier ist bewusst Platzhalter fuer spaeteres echtes Server-Backend
+// mit richtigen Mitspielern - fuer jetzt gibt es nur EINEN hart codierten
+// Testspieler mit eigener kleiner Basis. Faehrt man mit dem Boot ueber den
+// Wasser-Kreis um die eigene Insel hinaus, kommt kurz ein Ladebildschirm,
+// danach die Open-World-Uebersicht mit der eigenen Insel (Mitte) und den
+// anderen Basen drumherum. Antippen einer fremden Basis -> "Angreifen" ->
+// wieder kurz laden -> man sieht ihre Basis (nur ansehen, kein Kampf noch -
+// der kommt erst mit dem Server-Backend).
+let worldMode = "home"; // "home" | "loading" | "openworld" | "visiting"
+let loadingLabel = "";
+let loadingUntil = 0;
+let pendingTransition = null;
+let visitingPlayer = null;
+let owBoatX = 0, owBoatY = 0;
+const OPEN_WORLD_RADIUS = 600; // absichtlich innerhalb der bestehenden Kamera-Klemme (WATER_RADIUS-40)
+
+function startLoadingTransition(label, applyFn){
+  loadingLabel = label;
+  loadingUntil = performance.now() + 900;
+  pendingTransition = applyFn;
+  worldMode = "loading";
+}
+
+// Feste kleine Test-Basis mit ein paar unterschiedlich bewaffneten Tuermen
+// und einer Mauer - keine echten Spielerdaten, nur damit es in der Open
+// World ueberhaupt etwas zum Ansehen/Angreifen gibt.
+function buildTestPlayerBase(){
+  const level = 5;
+  const c0 = centerOf(gridSizeForLevel(level));
+  const cells = {};
+  const put = (dc,dr,building)=>{ cells[(c0+dc)+","+(c0+dr)] = { unlocked:true, building }; };
+  const tower = (weapon,lvl)=>({ type:"turm", level:lvl, hp:maxHpFor("turm",lvl), weapon });
+  const wallAt = (lvl)=>({ type:"mauer", level:lvl, hp:maxHpFor("mauer",lvl) });
+  put(-1,0, tower("bogen",3));
+  put(1,0, tower("kanone",4));
+  put(0,-1, tower("armbrust",3));
+  put(2,0, tower("feuerturm",2));
+  put(0,1, wallAt(3));
+  put(-1,-1, wallAt(2));
+  put(1,-1, wallAt(2));
+  put(-1,1, wallAt(2));
+  put(1,1, { type:"kaserne", level:2, hp:maxHpFor("kaserne",2) });
+  put(-2,0, { type:"lager", level:1, hp:maxHpFor("lager",1) });
+  return { basisLevel: level, baseHp: 100+(level-1)*20, cellsByCoord: cells };
+}
+
+const TEST_PLAYERS = [
+  Object.assign({ id:"npc_rocker", name:"Rocker_88", angle:55, dist:420 }, buildTestPlayerBase())
+];
+
+function enterOpenWorld(exitAngle){
+  startLoadingTransition("Fahre raus auf offene See …", ()=>{
+    owBoatX = Math.cos(exitAngle)*140; owBoatY = Math.sin(exitAngle)*140;
+    camera.x = 0; camera.y = 0;
+    worldMode = "openworld";
+  });
+}
+function returnHomeFromOpenWorld(){
+  const angle = Math.atan2(owBoatY, owBoatX) || 0;
+  startLoadingTransition("Fahre zurück nach Hause …", ()=>{
+    boatX = Math.cos(angle)*(WATER_RADIUS-80); boatY = Math.sin(angle)*(WATER_RADIUS-80);
+    camera.x = 0; camera.y = 0;
+    worldMode = "home";
+  });
+}
+function enterVisiting(p){
+  startLoadingTransition("Lade Basis von "+p.name+" …", ()=>{
+    visitingPlayer = p;
+    camera.x = 0; camera.y = 0;
+    worldMode = "visiting";
+  });
+}
+function leaveVisiting(){
+  startLoadingTransition("Lade Open World …", ()=>{
+    visitingPlayer = null;
+    camera.x = 0; camera.y = 0;
+    worldMode = "openworld";
+  });
+}
+
+function openEnemyBaseMenu(p){
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>⚔️ ${p.name}</h3><div class="hint2">Level ${p.basisLevel} · Basis-HP ${p.baseHp}</div>`;
+  const atkOpt = document.createElement("div");
+  atkOpt.className = "buildopt";
+  atkOpt.innerHTML = `<span>Angreifen<small>Zur Basis fahren und ansehen</small></span><b>⚔️</b>`;
+  atkOpt.addEventListener("click", ()=>{
+    document.body.removeChild(overlay);
+    enterVisiting(p);
+  });
+  box.appendChild(atkOpt);
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function handleOpenWorldTap(wx,wy){
+  if(Math.hypot(wx,wy) <= 110){ returnHomeFromOpenWorld(); return; }
+  for(const p of TEST_PLAYERS){
+    const x = Math.cos(p.angle*Math.PI/180)*p.dist, y = Math.sin(p.angle*Math.PI/180)*p.dist;
+    if(Math.hypot(wx-x,wy-y) <= 60){ openEnemyBaseMenu(p); return; }
+  }
+}
+
+function drawWorldLabel(text,x,y){
+  ctx.font="700 12px sans-serif"; ctx.textAlign="center";
+  ctx.strokeStyle="rgba(0,0,0,0.5)"; ctx.lineWidth=3;
+  ctx.strokeText(text,x,y);
+  ctx.fillStyle="#fff"; ctx.fillText(text,x,y);
+  ctx.textAlign="left";
+}
+
+function drawOpenWorld(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(W/2,H/2);
+  ctx.scale(camera.scale, camera.scale);
+  ctx.translate(-camera.x,-camera.y);
+
+  drawWater(false);
+
+  drawBaseSprite(0,0, state.basisLevel, state.baseHp, maxBaseHp());
+  drawWorldLabel("Zuhause", 0, -62);
+
+  TEST_PLAYERS.forEach(p=>{
+    const x = Math.cos(p.angle*Math.PI/180)*p.dist, y = Math.sin(p.angle*Math.PI/180)*p.dist;
+    drawBaseSprite(x,y, p.basisLevel, p.baseHp, p.baseHp);
+    drawWorldLabel(p.name, x, y-62);
+  });
+
+  drawBoatPlanks(owBoatX, owBoatY);
+  ctx.restore();
+}
+
+// Zeigt die (feste, nicht interaktive) Basis eines fremden Spielers - nur
+// Gras + platzierte Gebaeude, keine leeren Bauplaetze/Plus-Knoepfe, damit
+// nicht so wirkt als koennte man hier selbst bauen.
+function drawVisitingBase(){
+  const p = visitingPlayer;
+  if(!p) return;
+  const gridSize = gridSizeForLevel(p.basisLevel);
+  const list = cellList(gridSize);
+
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(W/2,H/2);
+  ctx.scale(camera.scale, camera.scale);
+  ctx.translate(-camera.x,-camera.y);
+
+  drawWater(false);
+  drawIslandBase(gridSize);
+
+  ctx.save();
+  traceIslandPath(gridHalfExtent(gridSize)+14, 13, 4.4);
+  ctx.clip();
+  list.forEach(([c,r])=>{ const pos=cellCenter(c,r,gridSize); drawGrassTile(pos.x,pos.y,c,r); });
+  { const pos = cellCenter(centerOf(gridSize),centerOf(gridSize),gridSize); drawGrassTile(pos.x,pos.y,0,0); }
+  ctx.restore();
+
+  list.forEach(([c,r])=>{
+    const slot = p.cellsByCoord[c+","+r];
+    if(slot && slot.building){ const pos = cellCenter(c,r,gridSize); drawBuildingSprite(pos.x,pos.y,slot.building); }
+  });
+  { const pos = cellCenter(centerOf(gridSize),centerOf(gridSize),gridSize); drawBaseSprite(pos.x,pos.y,p.basisLevel,p.baseHp,p.baseHp); }
+
+  ctx.restore();
 }
 
 function drawGrassTile(x,y,c,r){
@@ -2709,7 +2940,10 @@ function drawHandelspostenSprite(x,y,b){
   drawHpBar(x, y+22, b.hp, maxHpFor("handelsposten",b.level), 34);
 }
 
-function drawBaseSprite(x,y){
+function drawBaseSprite(x,y,level,hp,maxHp){
+  if(level===undefined) level = state.basisLevel;
+  if(hp===undefined) hp = state.baseHp;
+  if(maxHp===undefined) maxHp = maxBaseHp();
   const s=28;
   drawShadow(x,y+s-4,27,8);
   const grad = ctx.createLinearGradient(x,y-s,x,y+s);
@@ -2749,10 +2983,10 @@ function drawBaseSprite(x,y){
 
   ctx.fillStyle="#fff"; ctx.font="700 11px sans-serif"; ctx.textAlign="center";
   ctx.strokeStyle="rgba(0,0,0,0.4)"; ctx.lineWidth=3;
-  ctx.strokeText("Lv "+state.basisLevel, x, y+34);
-  ctx.fillText("Lv "+state.basisLevel, x, y+34);
+  ctx.strokeText("Lv "+level, x, y+34);
+  ctx.fillText("Lv "+level, x, y+34);
   ctx.textAlign="left";
-  drawHpBar(x, y+40, state.baseHp, maxBaseHp(), 44);
+  drawHpBar(x, y+40, hp, maxHp, 44);
 }
 
 function drawDestroyedOverlay(x,y){
@@ -3291,7 +3525,16 @@ function drawInGameHud(){
 
 function render(){
   questBtnEl.classList.toggle("hasReward", hasClaimableReward());
-  boatExitBtnEl.classList.toggle("show", inBoat);
+  boatExitBtnEl.classList.toggle("show", inBoat && worldMode==="home");
+  visitBackBtnEl.classList.toggle("show", worldMode==="visiting");
+  loadingScreenEl.classList.toggle("show", worldMode==="loading");
+  loadingLabelEl.textContent = loadingLabel;
+
+  // Ladebildschirm/Open-World/fremde Basis haben ihre eigene, viel simplere
+  // Zeichenroutine statt der vollen Heimatbasis-Szene weiter unten.
+  if(worldMode==="loading") return;
+  if(worldMode==="openworld"){ drawOpenWorld(); return; }
+  if(worldMode==="visiting"){ drawVisitingBase(); return; }
 
   const gridSize = gridSizeForLevel(state.basisLevel);
   const list = cellList(gridSize);
@@ -3384,6 +3627,11 @@ function render(){
 let moveSource = null;
 
 function handleTap(wx,wy,isMouseClick){
+  // Waehrend Ladebildschirm/fremder Basis gibt es nichts zum Antippen; in
+  // der Open World gilt ein eigener Treffertest (Basis-Marker statt Raster).
+  if(worldMode==="loading" || worldMode==="visiting") return;
+  if(worldMode==="openworld"){ handleOpenWorldTap(wx,wy); return; }
+
   // Waehrend der Bootsfahrt nur Joystick/WASD + der feste Aussteigen-Knopf -
   // ein Tap aufs Raster wuerde sonst ein Bau-/Basismenue OEFFNEN (volles
   // Overlay, liegt ueber dem Aussteigen-Knopf) und den Spieler mitten in der
@@ -3494,7 +3742,8 @@ let playerLevelUpFx = null;
 const LEVELUP_FX_DURATION = 1600;
 
 function updatePlayer(dt){
-  if(inBoat){ updateBoatDriving(dt); return; }
+  if(worldMode==="loading" || worldMode==="visiting") return;
+  if(worldMode==="openworld" || inBoat){ updateBoatDriving(dt); return; }
 
   const pl = state.player;
   // Boot-Ladung automatisch uebernehmen, sobald der Spieler zu Fuss nah
@@ -4801,6 +5050,10 @@ let lastT = performance.now();
 function loop(now){
   const dt = Math.min(0.05, (now-lastT)/1000);
   lastT = now;
+  if(worldMode==="loading" && now>=loadingUntil){
+    const fn = pendingTransition; pendingTransition = null;
+    if(fn) fn();
+  }
   updateWave(dt);
   updateRepairJob(dt);
   updateTraining(dt);
