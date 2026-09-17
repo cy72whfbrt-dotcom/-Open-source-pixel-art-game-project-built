@@ -70,6 +70,15 @@
     background:#f07872; border:2px solid #0c1620; display:none;
   }
   #questBtn.hasReward .questDot { display:block; }
+  /* Nur sichtbar, waehrend das Boot gefahren wird (siehe inBoat/render()) -
+     grosser, eindeutiger Knopf oben mittig statt irgendwo versteckt. */
+  #boatExitBtn {
+    display:none; position:absolute; left:50%; top:14px; transform:translateX(-50%);
+    background:var(--panel); border:1.5px solid var(--accent); border-radius:999px;
+    color:var(--text); font-size:13px; font-weight:800; padding:8px 18px; cursor:pointer;
+    box-shadow:0 6px 16px rgba(0,0,0,0.4); z-index:15;
+  }
+  #boatExitBtn.show { display:block; }
 
   .buildmenu {
     position:fixed; inset:0; background:rgba(6,10,15,.72); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; z-index:20;
@@ -291,6 +300,7 @@
     </div>
     <button id="shopBtn">🛒</button>
     <button id="questBtn">📜<div class="questDot"></div></button>
+    <button id="boatExitBtn">🚶 Aussteigen</button>
     <div id="joystick"><div id="joystickKnob"></div></div>
   </div>
 </div>
@@ -358,6 +368,11 @@ const TUTORIAL_START_UNLOCK = 8; // das ganze 3x3-Feld um die Base ist von Anfan
 const MIN_WAVE_GAP = 30; // Sekunden Mindestabstand zwischen zwei Wellen
 const PLAYER_MAX_HP = 60;
 const HAFEN_UNLOCK_LEVEL = 7;
+// Das Boot liegt im Wasser neben dem Steg, nicht auf ihm - ein Radius, der
+// nur um den Boots-Mittelpunkt herum reicht, verfehlt einen Spieler der auf
+// dem Steg selbst steht. Ein gemeinsamer, grosszuegigerer Radius deckt Steg
+// UND Boot ab, fuer Antippen (Menue oeffnen) und Ladung-Uebernahme gleich.
+const HAFEN_INTERACT_RADIUS = 95;
 // Die 8 Nachbarfelder: 4 gerade (Turm-Plaetze im Tutorial), 4 diagonal (Mauer-Plaetze)
 const TUTORIAL_TOWER_IDX = [1,3,4,6];
 const TUTORIAL_WALL_IDX  = [0,2,5,7];
@@ -394,7 +409,7 @@ function defaultState(){
     nextWaveComposition: null,
     dailyQuests: { date: null, progress: {}, claimed: [] },
     claimedChapters: [],
-    boot: { level: 1, hp: 90 },
+    boot: { level: 1, hp: 90, cargo: { holz:0, stein:0 } },
     player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
       abilitiesInventory: [], abilitiesEquipped: {}, nextAbilityId: 1,
       gearInventory: [], gearEquipped: { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null },
@@ -432,7 +447,8 @@ if(!state.player.nextGearId) state.player.nextGearId = 1;
 delete state.player.equip;
 if(!state.dailyQuests) state.dailyQuests = { date: null, progress: {}, claimed: [] };
 if(!state.claimedChapters) state.claimedChapters = [];
-if(!state.boot) state.boot = { level: 1, hp: 90 };
+if(!state.boot) state.boot = { level: 1, hp: 90, cargo: { holz:0, stein:0 } };
+if(!state.boot.cargo) state.boot.cargo = { holz:0, stein:0 };
 
 // Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
 // anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
@@ -1576,6 +1592,8 @@ document.getElementById("questBtn").addEventListener("click", openQuestPanel);
 // Wasser-Knoten werden NICHT mehr per Tap angelaufen, nur noch im
 // Vorbeilaufen mit dem Joystick eingesammelt (collectNearbyNode).
 const questBtnEl = document.getElementById("questBtn");
+const boatExitBtnEl = document.getElementById("boatExitBtn");
+boatExitBtnEl.addEventListener("click", ()=>{ exitBoat(); render(); });
 const joystickEl = document.getElementById("joystick");
 const joystickKnob = document.getElementById("joystickKnob");
 const JOYSTICK_MAX = 40; // px, wie weit der Knopf aus der Mitte wandern kann
@@ -1918,6 +1936,89 @@ function drawWater(){
 // Wasser stehen, einem Boot am freien Platz statt gaehnender Leere, und
 // einem gestrichelten "spaeter"-Platz statt einer schwarzen Box drueber.
 
+// Boot-Ladung: eigener, groesserer Vorrat als der Rucksack (Anreiz, wirklich
+// damit zu fahren statt nur zu Fuss zu sammeln) - getrennt von
+// state.resources, muss erst zum Spieler-Rucksack transportiert werden.
+function boatCargoCapacity(){ return 100 + state.boot.level*30; }
+function boatCargoTotal(){ return state.boot.cargo.holz + state.boot.cargo.stein; }
+// Automatisch, sobald der Spieler (zu Fuss, nicht im Boot) nah genug am
+// Boot ist - gleiche "einfach hinlaufen"-Logik wie beim Sammeln aus
+// Wasserknoten oder beim Abliefern an der Basis, nur umgekehrte Richtung.
+function transferBoatCargoToPlayer(){
+  const pl = state.player;
+  let room = playerBackpackCapacity() - backpackTotal();
+  if(room<=0) return;
+  const takeHolz = Math.min(state.boot.cargo.holz, room);
+  pl.backpack.holz += takeHolz; state.boot.cargo.holz -= takeHolz; room -= takeHolz;
+  const takeStein = Math.min(state.boot.cargo.stein, room);
+  pl.backpack.stein += takeStein; state.boot.cargo.stein -= takeStein;
+  if(takeHolz>0 || takeStein>0) save();
+}
+
+// Faehrt das Boot statt des Spielers - eigene Position (nicht gespeichert,
+// startet bei jedem Laden wieder zu Fuss am Steg statt mitten im Wasser
+// haengen zu bleiben) und eigene, groessere Sammelreichweite/-menge.
+const BOAT_SPEED = 150;
+let inBoat = false;
+let boatX = 0, boatY = 0;
+
+function updateBoatDriving(dt){
+  const joyLen = Math.hypot(joystickDir.x, joystickDir.y);
+  const kDir = keyboardDir();
+  const kLen = Math.hypot(kDir.x, kDir.y);
+  const useJoy = joyLen>JOYSTICK_DEADZONE;
+  const useKey = !useJoy && kLen>0;
+  if(useJoy || useKey){
+    const dir = useJoy ? joystickDir : kDir;
+    const len = useJoy ? joyLen : kLen;
+    const speedMult = useJoy ? Math.min(1, joyLen) : 1;
+    boatX += (dir.x/len)*BOAT_SPEED*speedMult*dt;
+    boatY += (dir.y/len)*BOAT_SPEED*speedMult*dt;
+    const d = Math.hypot(boatX,boatY), maxD = WATER_RADIUS-30;
+    if(d>maxD){ boatX = boatX/d*maxD; boatY = boatY/d*maxD; }
+  }
+  collectNearbyNodeIntoBoat();
+}
+
+function collectNearbyNodeIntoBoat(){
+  const cap = boatCargoCapacity();
+  if(boatCargoTotal()>=cap) return;
+  let closest=null, closestDist=PLAYER_ARRIVE_RADIUS*1.8;
+  state.nodes.forEach(n=>{
+    if(n.amount<=0) return;
+    const p = nodeWorldPos(n);
+    const d = Math.hypot(p.x-boatX, p.y-boatY);
+    if(d<closestDist){ closestDist=d; closest=n; }
+  });
+  if(!closest) return;
+  const def = WATER_NODE_DEFS.find(d=>d.id===closest.id);
+  const room = cap - boatCargoTotal();
+  const take = Math.min(closest.amount, room);
+  if(take>0){
+    state.boot.cargo[def.type] += take;
+    closest.amount -= take;
+    if(closest.amount<=0){
+      relocateNode(closest);
+      state.tutorialCollected = true;
+      checkTutorial();
+    }
+    save();
+  }
+}
+
+function enterBoat(){
+  const dock = hafenLayout(gridSizeForLevel(state.basisLevel)).boat;
+  boatX = dock.cx; boatY = dock.cy;
+  inBoat = true;
+}
+function exitBoat(){
+  const pier = hafenLayout(gridSizeForLevel(state.basisLevel)).pier;
+  state.player.x = pier.x+pier.w/2;
+  state.player.y = pier.y+pier.h/2;
+  inBoat = false;
+  save();
+}
+
 // Vierter Anlauf: der 1x5-Steg laeuft an der Kueste ENTLANG (5 Zellen in
 // Nord-Sued-Richtung), nicht von der Insel weg ins Wasser hinaus - nur 1
 // Zelle tief. Das Boot liegt laengsseits daneben im Wasser, ebenfalls
@@ -1991,12 +2092,29 @@ function drawHafen(gridSize){
   drawPilingPost(p.x+5, p.y+6);
   drawPilingPost(p.x+5, p.y+p.h-6);
 
-  // Boot liegt laengsseits im Wasser, Bug nach Norden - gleiche Ausrichtung
-  // wie der Steg statt quer dazu. Jetzt ein echtes Gebaeude (siehe
-  // openBoatMenu) - Level/HP werden genau wie bei Grid-Gebaeuden angezeigt.
-  drawBoatIcon(b.cx, b.cy, b.h, b.w, Math.PI/2);
-  drawLevelPips(b.cx, b.cy+b.w*0.7+10, state.boot.level);
-  drawHpBar(b.cx, b.cy+b.w*0.7+14, state.boot.hp, maxHpFor("boot",state.boot.level), 34);
+  // Boot liegt nur am Steg, wenn es nicht gerade gefahren wird (siehe
+  // inBoat/drawBoatDriving) - liegt laengsseits im Wasser, Bug nach Norden,
+  // gleiche Ausrichtung wie der Steg statt quer dazu. Echtes Gebaeude
+  // (siehe openBoatMenu) - Level/HP werden genau wie bei Grid-Gebaeuden
+  // angezeigt.
+  if(!inBoat){
+    drawBoatIcon(b.cx, b.cy, b.h, b.w, Math.PI/2);
+    drawLevelPips(b.cx, b.cy+b.w*0.7+10, state.boot.level);
+    drawHpBar(b.cx, b.cy+b.w*0.7+14, state.boot.hp, maxHpFor("boot",state.boot.level), 34);
+  }
+}
+
+// Waehrend der Fahrt: Boot an der Steuerposition statt am Steg, mit einer
+// kleinen Ladungsanzeige darunter (kein HP/Level-Schnickschnack hier, das
+// interessiert waehrend der Fahrt nicht).
+function drawBoatDriving(){
+  if(!inBoat) return;
+  drawBoatIcon(boatX, boatY, CELL*2, CELL, Math.PI/2);
+  const cap = boatCargoCapacity(), ratio = Math.min(1, boatCargoTotal()/cap);
+  const w = 40, by = boatY+CELL*0.85;
+  ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(boatX-w/2,by,w,5);
+  ctx.fillStyle = ratio>=1 ? "#e0c34a" : "#6ad4c9";
+  ctx.fillRect(boatX-w/2,by,w*ratio,5);
 }
 
 function drawGrassTile(x,y,c,r){
@@ -3144,6 +3262,7 @@ function drawInGameHud(){
 
 function render(){
   questBtnEl.classList.toggle("hasReward", hasClaimableReward());
+  boatExitBtnEl.classList.toggle("show", inBoat);
 
   const gridSize = gridSizeForLevel(state.basisLevel);
   const list = cellList(gridSize);
@@ -3199,7 +3318,9 @@ function render(){
 
   drawAngreiferUnits(gridSize);
   drawRepairIndicator(gridSize);
-  drawPlayerSprite();
+  // Waehrend der Bootsfahrt ersetzt das Boot die normale Spielfigur
+  // komplett, statt beide gleichzeitig zu zeigen.
+  if(inBoat) drawBoatDriving(); else drawPlayerSprite();
   drawDepositFx();
   drawKnockoutFx();
 
@@ -3261,7 +3382,7 @@ function handleTap(wx,wy,isMouseClick){
   // Treffertest statt ueber cellsByCoord wie bei normalen Gebaeuden.
   if(state.basisLevel>=HAFEN_UNLOCK_LEVEL){
     const boatPos = hafenLayout(gridSize).boat;
-    if(Math.hypot(wx-boatPos.cx, wy-boatPos.cy) <= Math.max(boatPos.w,boatPos.h)*0.65){
+    if(Math.hypot(wx-boatPos.cx, wy-boatPos.cy) <= HAFEN_INTERACT_RADIUS){
       openBoatMenu();
       return;
     }
@@ -3338,7 +3459,17 @@ let playerLevelUpFx = null;
 const LEVELUP_FX_DURATION = 1600;
 
 function updatePlayer(dt){
+  if(inBoat){ updateBoatDriving(dt); return; }
+
   const pl = state.player;
+  // Boot-Ladung automatisch uebernehmen, sobald der Spieler zu Fuss nah
+  // genug am (am Steg liegenden) Boot ist.
+  if(boatCargoTotal()>0 && state.basisLevel>=HAFEN_UNLOCK_LEVEL){
+    const dockBoat = hafenLayout(gridSizeForLevel(state.basisLevel)).boat;
+    if(Math.hypot(pl.x-dockBoat.cx, pl.y-dockBoat.cy) <= HAFEN_INTERACT_RADIUS){
+      transferBoatCargoToPlayer();
+    }
+  }
   const joyLen = Math.hypot(joystickDir.x, joystickDir.y);
   const kDir = keyboardDir();
   const kLen = Math.hypot(kDir.x, kDir.y);
@@ -4270,7 +4401,21 @@ function openBoatMenu(){
   const box = document.createElement("div");
   box.className = "box";
   box.innerHTML = `<h3>⛵ ${def.name}${isDestroyed?" (kaputt)":""}</h3><div class="hint2">Level ${boot.level} · HP ${Math.round(boot.hp)}/${maxHp}</div>
-    <div class="hint2">${def.desc} Aktuelle Lagerkapazität: ${storageCap()} pro Rohstoff.</div>`;
+    <div class="hint2">${def.desc} Aktuelle Lagerkapazität: ${storageCap()} pro Rohstoff.</div>
+    <div class="hint2">Boot-Ladung: ${boatCargoTotal()}/${boatCargoCapacity()}${boatCargoTotal()>0?" - einfach hinlaufen, um sie zu übernehmen":""}</div>`;
+
+  const enterOpt = document.createElement("div");
+  enterOpt.className = "buildopt" + (isDestroyed ? " disabled" : "");
+  enterOpt.innerHTML = isDestroyed
+    ? `<span>Einsteigen<small>Erst reparieren</small></span>`
+    : `<span>Einsteigen<small>Damit im Wasser Rohstoffe sammeln</small></span><b>⛵</b>`;
+  enterOpt.addEventListener("click", ()=>{
+    if(isDestroyed) return;
+    document.body.removeChild(overlay);
+    enterBoat();
+    render();
+  });
+  box.appendChild(enterOpt);
 
   const atLevelCap = boot.level>=state.basisLevel;
   const cost = upgradeCost("boot", boot.level);
