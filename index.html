@@ -394,6 +394,7 @@ function defaultState(){
     nextWaveComposition: null,
     dailyQuests: { date: null, progress: {}, claimed: [] },
     claimedChapters: [],
+    boot: { level: 1, hp: 90 },
     player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
       abilitiesInventory: [], abilitiesEquipped: {}, nextAbilityId: 1,
       gearInventory: [], gearEquipped: { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null },
@@ -431,6 +432,7 @@ if(!state.player.nextGearId) state.player.nextGearId = 1;
 delete state.player.equip;
 if(!state.dailyQuests) state.dailyQuests = { date: null, progress: {}, claimed: [] };
 if(!state.claimedChapters) state.claimedChapters = [];
+if(!state.boot) state.boot = { level: 1, hp: 90 };
 
 // Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
 // anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
@@ -494,7 +496,8 @@ const BUILDABLE_TYPES = {
   krankenhaus:  { name:"Krankenhaus",  desc:"Pflegeplätze für verletzte Angreifer, verkürzt die Heilzeit.", cost:{holz:45,stein:60}, baseHp:100, hpPerLevel:15 },
   lager:        { name:"Lager",        desc:"Erhöht die maximale Lagerkapazität für Holz und Stein.", cost:{holz:40,stein:40}, baseHp:90, hpPerLevel:15 },
   wachturm:     { name:"Wachturm",     desc:"Zeigt die Zusammensetzung der nächsten Welle vorher an.", cost:{holz:35,stein:45}, baseHp:80, hpPerLevel:10 },
-  handelsposten:{ name:"Handelsposten",desc:"Tauscht Holz und Stein gegeneinander (mit Verlust).", cost:{holz:40,stein:40}, baseHp:80, hpPerLevel:10 }
+  handelsposten:{ name:"Handelsposten",desc:"Tauscht Holz und Stein gegeneinander (mit Verlust).", cost:{holz:40,stein:40}, baseHp:80, hpPerLevel:10 },
+  boot:         { name:"Boot",         desc:"Zusätzlicher Lagerplatz für Holz und Stein.", cost:{holz:60,stein:20}, baseHp:90, hpPerLevel:18 }
 };
 function upgradeCost(type, level){ return scaleCost(BUILDABLE_TYPES[type].cost, Math.pow(1.5, level)*(1-abilityScaled("baumeister",0.25))); }
 function maxHpFor(type, level){ const d=BUILDABLE_TYPES[type]; return d.baseHp+(level-1)*d.hpPerLevel; }
@@ -544,8 +547,14 @@ const BASE_STORAGE_CAP = 150; // Kapazitaet pro Rohstoff, auch ganz ohne Lager
 function findLager(){ return findBuildingByType("lager"); }
 function hasLager(){ return !!findLager(); }
 // Ressourcen sind ohne Lager knapp gedeckelt - Ueberschuss beim Sammeln geht
-// verloren, das erzwingt aktives Ausgeben statt endlosem Horten.
-function storageCap(){ const l=findLager(); return BASE_STORAGE_CAP + (l ? l.level*80 : 0); }
+// verloren, das erzwingt aktives Ausgeben statt endlosem Horten. Das Boot
+// (ab HAFEN_UNLOCK_LEVEL) traegt zusaetzlich bei - kein Grid-Gebaeude, daher
+// eigenes state.boot statt findBuildingByType.
+function storageCap(){
+  const l=findLager();
+  const boatBonus = state.basisLevel>=HAFEN_UNLOCK_LEVEL ? state.boot.level*40 : 0;
+  return BASE_STORAGE_CAP + (l ? l.level*80 : 0) + boatBonus;
+}
 
 function findWachturm(){ return findBuildingByType("wachturm"); }
 function hasWachturm(){ return !!findWachturm(); }
@@ -1953,12 +1962,14 @@ function drawBoatIcon(cx,cy,len,wid,angle){
   ctx.lineTo(-len*0.08, wid*0.44);
   ctx.quadraticCurveTo(-len*0.4, wid*0.44, -len*0.44, 0);
   ctx.closePath();
+  // Rumpf aus Holz statt Blau/Plastik-Look, gleiche Planken-Farbe wie der
+  // Steg selbst - liest sich als "gehoert zusammen" statt als Fremdkoerper.
   const hullGrad = ctx.createLinearGradient(0,-wid*0.44,0,wid*0.44);
-  hullGrad.addColorStop(0, "#4a7ce0"); hullGrad.addColorStop(1, "#25468f");
+  hullGrad.addColorStop(0, HUD.woodA); hullGrad.addColorStop(1, HUD.woodB);
   ctx.fillStyle = hullGrad; ctx.fill();
-  ctx.strokeStyle = "rgba(12,20,45,0.55)"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.strokeStyle = "rgba(40,24,10,0.5)"; ctx.lineWidth = 2; ctx.stroke();
   drawRoundRect(-len*0.02, -wid*0.28, len*0.32, wid*0.56, 3, "#eee6d2");
-  ctx.strokeStyle = "rgba(12,20,45,0.35)"; ctx.lineWidth = 1.2;
+  ctx.strokeStyle = "rgba(40,24,10,0.35)"; ctx.lineWidth = 1.2;
   ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(-len*0.02,-wid*0.28,len*0.32,wid*0.56,3); ctx.stroke();
   ctx.restore();
 }
@@ -1981,8 +1992,11 @@ function drawHafen(gridSize){
   drawPilingPost(p.x+5, p.y+p.h-6);
 
   // Boot liegt laengsseits im Wasser, Bug nach Norden - gleiche Ausrichtung
-  // wie der Steg statt quer dazu.
+  // wie der Steg statt quer dazu. Jetzt ein echtes Gebaeude (siehe
+  // openBoatMenu) - Level/HP werden genau wie bei Grid-Gebaeuden angezeigt.
   drawBoatIcon(b.cx, b.cy, b.h, b.w, Math.PI/2);
+  drawLevelPips(b.cx, b.cy+b.w*0.7+10, state.boot.level);
+  drawHpBar(b.cx, b.cy+b.w*0.7+14, state.boot.hp, maxHpFor("boot",state.boot.level), 34);
 }
 
 function drawGrassTile(x,y,c,r){
@@ -3243,6 +3257,16 @@ function handleTap(wx,wy,isMouseClick){
     return;
   }
 
+  // Das Boot steht ausserhalb des Rasters im Wasser, deshalb eigener
+  // Treffertest statt ueber cellsByCoord wie bei normalen Gebaeuden.
+  if(state.basisLevel>=HAFEN_UNLOCK_LEVEL){
+    const boatPos = hafenLayout(gridSize).boat;
+    if(Math.hypot(wx-boatPos.cx, wy-boatPos.cy) <= Math.max(boatPos.w,boatPos.h)*0.65){
+      openBoatMenu();
+      return;
+    }
+  }
+
   const c = Math.round(wx/CELL + c0);
   const r = Math.round(wy/CELL + c0);
   if(c<0||c>=gridSize||r<0||r>=gridSize){
@@ -4225,6 +4249,58 @@ function openProfileHub(mode){
       });
       stage.appendChild(slot);
     });
+  }
+
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+// Boot-Menue: genau wie das Gebaeude-Verbessern/Reparieren im normalen
+// Baumenue (gleiche Kosten-/HP-Formeln ueber BUILDABLE_TYPES.boot), nur
+// eigenstaendig statt an eine Rasterzelle gebunden.
+function openBoatMenu(){
+  const boot = state.boot;
+  const def = BUILDABLE_TYPES.boot;
+  const maxHp = maxHpFor("boot", boot.level);
+  const isDestroyed = boot.hp<=0;
+
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>⛵ ${def.name}${isDestroyed?" (kaputt)":""}</h3><div class="hint2">Level ${boot.level} · HP ${Math.round(boot.hp)}/${maxHp}</div>
+    <div class="hint2">${def.desc} Aktuelle Lagerkapazität: ${storageCap()} pro Rohstoff.</div>`;
+
+  const atLevelCap = boot.level>=state.basisLevel;
+  const cost = upgradeCost("boot", boot.level);
+  const upOpt = document.createElement("div");
+  upOpt.className = "buildopt" + (isDestroyed || atLevelCap || !canAfford(cost) ? " disabled":"");
+  upOpt.innerHTML = isDestroyed
+    ? `<span>Verbessern auf Level ${boot.level+1}<small>Erst reparieren</small></span>`
+    : atLevelCap
+    ? `<span>Verbessern auf Level ${boot.level+1}<small>Erst ab Basis-Level ${boot.level+1} möglich</small></span>`
+    : `<span>Verbessern auf Level ${boot.level+1}<small>Repariert dabei auch komplett, mehr Lagerkapazität</small></span><b>${formatCost(cost)}</b>`;
+  upOpt.addEventListener("click", ()=>{
+    if(!isDestroyed && !atLevelCap && canAfford(cost)){
+      payCost(cost); boot.level++; boot.hp = maxHpFor("boot",boot.level);
+      addPlayerXp(buildingUpgradeXp(boot.level));
+      addQuestProgress("build", 1);
+      save(); document.body.removeChild(overlay); render();
+      openBoatMenu();
+    }
+  });
+  box.appendChild(upOpt);
+
+  if(boot.hp<maxHp){
+    const rCost = repairCost("boot", boot);
+    const repOpt = document.createElement("div");
+    repOpt.className = "buildopt" + (!canAfford(rCost) ? " disabled":"");
+    repOpt.innerHTML = `<span>Reparieren<small>Stellt volle HP wieder her</small></span><b>${formatCost(rCost)}</b>`;
+    repOpt.addEventListener("click", ()=>{
+      if(canAfford(rCost)){ payCost(rCost); boot.hp = maxHp; save(); document.body.removeChild(overlay); render(); openBoatMenu(); }
+    });
+    box.appendChild(repOpt);
   }
 
   addCloseBtn(box, overlay);
