@@ -2111,14 +2111,36 @@ function drawHafen(gridSize){
   }
 }
 
+// Bewusst nur 2 schlichte Holzplanken statt des vollen Rumpf-Icons: das
+// alte Icon hatte einen festen Blickwinkel (Bug immer "nach oben"), der
+// beim freien Steuern in beliebige Richtungen schief und falsch wirkte.
+// Zwei einfache, symmetrische Planken brauchen keinen Drehwinkel und sehen
+// aus jeder Fahrtrichtung gleich richtig aus. Mehr Deko (Rumpf, Kabine, ...)
+// gibt es dann erst wieder als Belohnung fuer hoehere Boot-Level.
+function drawBoatPlanks(cx,cy){
+  drawShadow(cx-13, cy+8, 24, 6);
+  const plankW = 46, plankH = 15, gap = 5;
+  const grad = ctx.createLinearGradient(cx,cy-plankH-gap/2,cx,cy+plankH+gap/2);
+  grad.addColorStop(0, HUD.woodA); grad.addColorStop(1, HUD.woodB);
+  drawRoundRect(cx-plankW/2, cy-gap/2-plankH, plankW, plankH, 4, grad);
+  drawRoundRect(cx-plankW/2, cy+gap/2, plankW, plankH, 4, grad);
+  ctx.strokeStyle = "rgba(40,24,10,0.45)"; ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  if(ctx.roundRect){
+    ctx.roundRect(cx-plankW/2, cy-gap/2-plankH, plankW, plankH, 4);
+    ctx.roundRect(cx-plankW/2, cy+gap/2, plankW, plankH, 4);
+  }
+  ctx.stroke();
+}
+
 // Waehrend der Fahrt: Boot an der Steuerposition statt am Steg, mit einer
 // kleinen Ladungsanzeige darunter (kein HP/Level-Schnickschnack hier, das
 // interessiert waehrend der Fahrt nicht).
 function drawBoatDriving(){
   if(!inBoat) return;
-  drawBoatIcon(boatX, boatY, CELL*2, CELL, Math.PI/2);
+  drawBoatPlanks(boatX, boatY);
   const cap = boatCargoCapacity(), ratio = Math.min(1, boatCargoTotal()/cap);
-  const w = 40, by = boatY+CELL*0.85;
+  const w = 40, by = boatY+CELL*0.55;
   ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(boatX-w/2,by,w,5);
   ctx.fillStyle = ratio>=1 ? "#e0c34a" : "#6ad4c9";
   ctx.fillRect(boatX-w/2,by,w*ratio,5);
@@ -3362,6 +3384,12 @@ function render(){
 let moveSource = null;
 
 function handleTap(wx,wy,isMouseClick){
+  // Waehrend der Bootsfahrt nur Joystick/WASD + der feste Aussteigen-Knopf -
+  // ein Tap aufs Raster wuerde sonst ein Bau-/Basismenue OEFFNEN (volles
+  // Overlay, liegt ueber dem Aussteigen-Knopf) und den Spieler mitten in der
+  // Fahrt aussperren, ohne dass er verstehen wuerde warum.
+  if(inBoat) return;
+
   const gridSize = gridSizeForLevel(state.basisLevel);
   const c0 = centerOf(gridSize);
 
