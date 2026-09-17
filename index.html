@@ -56,6 +56,20 @@
     background:linear-gradient(180deg,#3a2f14,#1a1608); color:#fff; font-size:19px; cursor:pointer; line-height:1;
     box-shadow:0 4px 14px rgba(0,0,0,0.4);
   }
+  /* Aufgaben-Knopf spiegelbildlich zum Shop-Knopf auf der linken Seite -
+     eigene Farbe (Pergament/Blau statt Gold) damit die beiden nicht wie
+     dieselbe Funktion wirken. Roter Punkt zeigt offene, abholbare Belohnungen. */
+  #questBtn {
+    position:absolute; left:10px; top:50%; transform:translateY(-50%);
+    width:44px; height:44px; border-radius:50%; border:1.5px solid rgba(150,200,255,0.5);
+    background:linear-gradient(180deg,#1c2f3a,#0c1620); color:#fff; font-size:19px; cursor:pointer; line-height:1;
+    box-shadow:0 4px 14px rgba(0,0,0,0.4);
+  }
+  #questBtn .questDot {
+    position:absolute; top:-2px; right:-2px; width:13px; height:13px; border-radius:50%;
+    background:#f07872; border:2px solid #0c1620; display:none;
+  }
+  #questBtn.hasReward .questDot { display:block; }
 
   .buildmenu {
     position:fixed; inset:0; background:rgba(6,10,15,.72); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; z-index:20;
@@ -275,6 +289,7 @@
       <button id="zoomOut">−</button>
     </div>
     <button id="shopBtn">🛒</button>
+    <button id="questBtn">📜<div class="questDot"></div></button>
     <div id="joystick"><div id="joystickKnob"></div></div>
   </div>
 </div>
@@ -376,6 +391,8 @@ function defaultState(){
     npc: { reparaturCount: 0, angreifer: [], training: null },
     repairJob: null,
     nextWaveComposition: null,
+    dailyQuests: { date: null, progress: {}, claimed: [] },
+    claimedChapters: [],
     player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
       abilitiesInventory: [], abilitiesEquipped: {}, nextAbilityId: 1,
       gearInventory: [], gearEquipped: { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null },
@@ -411,6 +428,8 @@ if(!state.player.gearInventory) state.player.gearInventory = [];
 if(!state.player.gearEquipped) state.player.gearEquipped = { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null };
 if(!state.player.nextGearId) state.player.nextGearId = 1;
 delete state.player.equip;
+if(!state.dailyQuests) state.dailyQuests = { date: null, progress: {}, claimed: [] };
+if(!state.claimedChapters) state.claimedChapters = [];
 
 // Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
 // anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
@@ -648,6 +667,7 @@ function pullGear(){
   const rarity = pickGachaRarity();
   const item = { id: state.player.nextGearId++, slot, rarity, level:1, stars:0 };
   state.player.gearInventory.push(item);
+  addQuestProgress("pull", 1);
   return item;
 }
 // 3 gleiche (Slot + Rarität) -> 1 Exemplar der naechsten Rarität, frisch
@@ -748,6 +768,7 @@ function pullAbility(){
   const rarity = pickGachaRarity();
   const item = { id: state.player.nextAbilityId++, key, rarity, level:1, stars:0 };
   state.player.abilitiesInventory.push(item);
+  addQuestProgress("pull", 1);
   return item;
 }
 // 3 gleiche (Key + Rarität) -> 1 Exemplar der naechsten Rarität - exakt wie
@@ -890,6 +911,76 @@ function tutorialProgressText(){
   }).length;
   const done = towersDone+wallsDone+(state.tutorialCollected?1:0);
   return done+"/9";
+}
+
+// ================= Aufgaben: taegliche Quests + Kapitel =================
+// Kapitel 1 ist das Tutorial selbst (weitere Kapitel folgen spaeter) -
+// beide Arten geben Belohnungen, die erst per Antippen im Aufgaben-Panel
+// abgeholt werden muessen, nicht automatisch beim Erfuellen. So bleibt der
+// rote Punkt am Aufgaben-Knopf ein ehrlicher Hinweis auf "hier gibt es was".
+const DAILY_QUEST_DEFS = [
+  { key:"collect", name:"Sammler",             icon:"🪵", desc:"Sammle 100 Holz oder Stein ein", goal:100, reward:{coins:60} },
+  { key:"build",   name:"Baumeister",          icon:"🔨", desc:"Baue oder verbessere 1 Gebäude", goal:1,   reward:{gems:10} },
+  { key:"wave",    name:"Verteidiger",         icon:"🛡️", desc:"Überstehe 1 Welle",              goal:1,   reward:{coins:80} },
+  { key:"pull",    name:"Sammelleidenschaft",  icon:"🎁", desc:"Ziehe 1x im Shop",               goal:1,   reward:{gems:15} }
+];
+
+function todayKey(){ return new Date().toISOString().slice(0,10); }
+
+// Sorgt dafuer, dass state.dailyQuests zum aktuellen Tag gehoert - bei
+// Datumswechsel (oder erstem Laden) wird Fortschritt/Abholstatus zurueckgesetzt.
+function ensureDailyQuestsCurrent(){
+  const today = todayKey();
+  if(state.dailyQuests.date!==today){
+    state.dailyQuests = { date: today, progress: {}, claimed: [] };
+    save();
+  }
+}
+
+function addQuestProgress(key, amount){
+  ensureDailyQuestsCurrent();
+  state.dailyQuests.progress[key] = (state.dailyQuests.progress[key]||0) + amount;
+  save();
+}
+
+function questProgress(key){ return state.dailyQuests.progress[key] || 0; }
+function questClaimable(def){ return questProgress(def.key)>=def.goal && !state.dailyQuests.claimed.includes(def.key); }
+function claimDailyQuest(key){
+  const def = DAILY_QUEST_DEFS.find(d=>d.key===key);
+  if(!def || !questClaimable(def)) return false;
+  grantReward(def.reward);
+  state.dailyQuests.claimed.push(key);
+  save();
+  return true;
+}
+
+const CHAPTER_DEFS = [
+  { id:1, name:"Kapitel 1: Grundverteidigung", icon:"🏰",
+    desc:"Baue Turm und Mauer wie im Tutorial gezeigt und sammle einmal Rohstoffe ein.",
+    isDone: ()=>state.tutorialDone, reward:{coins:200,gems:20} }
+];
+function chapterClaimable(def){ return def.isDone() && !state.claimedChapters.includes(def.id); }
+function claimChapter(id){
+  const def = CHAPTER_DEFS.find(c=>c.id===id);
+  if(!def || !chapterClaimable(def)) return false;
+  grantReward(def.reward);
+  state.claimedChapters.push(id);
+  save();
+  return true;
+}
+
+function grantReward(reward){
+  if(reward.coins) state.resources.coins += reward.coins;
+  if(reward.gems) state.resources.gems += reward.gems;
+  if(reward.holz) state.resources.holz += reward.holz;
+  if(reward.stein) state.resources.stein += reward.stein;
+}
+
+// Treibt den roten Punkt am Aufgaben-Knopf - true sobald irgendwo eine
+// Belohnung abholbereit liegt (taegliche Aufgabe erfuellt oder Kapitel fertig).
+function hasClaimableReward(){
+  ensureDailyQuestsCurrent();
+  return DAILY_QUEST_DEFS.some(questClaimable) || CHAPTER_DEFS.some(chapterClaimable);
 }
 
 // Naechstes Tutorial-Ziel: welches Feld/Element muss der Spieler als Naechstes antippen?
@@ -1324,6 +1415,7 @@ function updateWave(dt){
     state.resources.coins += loot.coins;
     waveActive = false;
     addPlayerXp(waveXpReward());
+    addQuestProgress("wave", 1);
     save();
   }
 }
@@ -1466,12 +1558,14 @@ document.getElementById("zoomIn").addEventListener("click", ()=>{ camera.scale*=
 document.getElementById("zoomOut").addEventListener("click", ()=>{ camera.scale*=0.83; clampCamera(); render(); });
 document.getElementById("centerBtn").addEventListener("click", ()=>{ camera.x=0; camera.y=0; camera.scale=1; render(); });
 document.getElementById("shopBtn").addEventListener("click", openGearShop);
+document.getElementById("questBtn").addEventListener("click", openQuestPanel);
 
 // ================= Joystick (Spieler-Steuerung) =================
 // Eigene, ungespeicherte Richtung - solange sie aktiv ist, uebersteuert sie
 // ein automatisches Laufziel (z.B. Rueckweg zur Base bei vollem Rucksack).
 // Wasser-Knoten werden NICHT mehr per Tap angelaufen, nur noch im
 // Vorbeilaufen mit dem Joystick eingesammelt (collectNearbyNode).
+const questBtnEl = document.getElementById("questBtn");
 const joystickEl = document.getElementById("joystick");
 const joystickKnob = document.getElementById("joystickKnob");
 const JOYSTICK_MAX = 40; // px, wie weit der Knopf aus der Mitte wandern kann
@@ -2996,6 +3090,8 @@ function drawInGameHud(){
 }
 
 function render(){
+  questBtnEl.classList.toggle("hasReward", hasClaimableReward());
+
   const gridSize = gridSizeForLevel(state.basisLevel);
   const list = cellList(gridSize);
 
@@ -3233,6 +3329,7 @@ function updatePlayer(dt){
     const cap = storageCap();
     state.resources.holz = Math.min(cap, state.resources.holz+pl.backpack.holz);
     state.resources.stein = Math.min(cap, state.resources.stein+pl.backpack.stein);
+    addQuestProgress("collect", pl.backpack.holz+pl.backpack.stein);
     depositFx = { holz: pl.backpack.holz, stein: pl.backpack.stein, startedAt: performance.now() };
     pl.backpack.holz = 0; pl.backpack.stein = 0;
     save();
@@ -3351,6 +3448,72 @@ function openAbilityPicker(onPick){
   addCloseBtn(box, overlay, ()=>{ document.body.removeChild(overlay); openProfileHub("abilities"); });
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+}
+
+function formatReward(reward){
+  const parts = [];
+  if(reward.coins) parts.push(`🪙 ${reward.coins}`);
+  if(reward.gems) parts.push(`💎 ${reward.gems}`);
+  if(reward.holz) parts.push(`🪵 ${reward.holz}`);
+  if(reward.stein) parts.push(`🪨 ${reward.stein}`);
+  return parts.join(" · ");
+}
+
+// Aufgaben-Panel: taegliche Quests oben, Kapitel darunter - beide mit
+// Fortschritt und einem Abholen-Knopf, sobald erfuellt (siehe
+// DAILY_QUEST_DEFS/CHAPTER_DEFS und hasClaimableReward()).
+function openQuestPanel(){
+  ensureDailyQuestsCurrent();
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>📜 Aufgaben</h3><div class="hint2">Tägliche Aufgaben setzen sich jeden Tag neu zusammen. Kapitel schaltest du dauerhaft frei.</div>`;
+
+  const questLabel = document.createElement("div");
+  questLabel.className = "sectionLabel";
+  questLabel.textContent = "📅 Tägliche Aufgaben";
+  box.appendChild(questLabel);
+
+  DAILY_QUEST_DEFS.forEach(def=>{
+    const prog = Math.min(questProgress(def.key), def.goal);
+    const claimed = state.dailyQuests.claimed.includes(def.key);
+    const claimable = questClaimable(def);
+    const row = document.createElement("div");
+    row.className = "buildopt" + (!claimable ? " disabled" : "");
+    row.innerHTML = `<span>${def.icon} ${def.name}<small>${def.desc} · ${prog}/${def.goal}</small></span><b>${claimed ? "✓" : (claimable ? "Abholen" : formatReward(def.reward))}</b>`;
+    if(claimable){
+      row.addEventListener("click", ()=>{ claimDailyQuest(def.key); refresh(); });
+    }
+    box.appendChild(row);
+  });
+
+  const chapterLabel = document.createElement("div");
+  chapterLabel.className = "sectionLabel";
+  chapterLabel.textContent = "📖 Kapitel";
+  box.appendChild(chapterLabel);
+
+  CHAPTER_DEFS.forEach(def=>{
+    const done = def.isDone();
+    const claimed = state.claimedChapters.includes(def.id);
+    const claimable = chapterClaimable(def);
+    const row = document.createElement("div");
+    row.className = "buildopt" + (!claimable ? " disabled" : "");
+    row.innerHTML = `<span>${def.icon} ${def.name}<small>${def.desc}</small></span><b>${claimed ? "✓" : (claimable ? "Abholen" : (done ? formatReward(def.reward) : "🔒"))}</b>`;
+    if(claimable){
+      row.addEventListener("click", ()=>{ claimChapter(def.id); refresh(); });
+    }
+    box.appendChild(row);
+  });
+
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function refresh(){
+    document.body.removeChild(overlay);
+    openQuestPanel();
+  }
 }
 
 // Gacha-Shop: zwei Kisten untereinander. Ausruestung (bezahlt mit Coins,
@@ -4069,6 +4232,7 @@ function openBuildMenu(c,r){
       if(!isDestroyed && !atLevelCap && canAfford(cost)){
         payCost(cost); b.level++; b.hp = maxHpFor(b.type,b.level);
         addPlayerXp(buildingUpgradeXp(b.level));
+        addQuestProgress("build", 1);
         save(); document.body.removeChild(overlay); render();
         openBuildMenu(c,r);
       }
@@ -4281,6 +4445,7 @@ function openBuildMenu(c,r){
           const hp = maxHpFor(type,1);
           slot.building = type==="turm" ? {type,level:1,weapon:"bogen",hp} : {type,level:1,hp};
           checkTutorial();
+          addQuestProgress("build", 1);
           save(); document.body.removeChild(overlay); render();
         }
       });
