@@ -84,9 +84,10 @@
   .toast.show { opacity:1; transform:translate(-50%,0); }
   .buildmenu .box {
     position:relative;
-    background:var(--panel); border:1px solid var(--border); border-radius:20px;
+    background:linear-gradient(165deg, rgba(30,38,58,0.97), rgba(13,17,27,0.98) 55%);
+    border:1px solid rgba(255,255,255,0.12); border-radius:20px;
     padding:20px; width:340px; max-width:92vw; max-height:85vh; overflow-y:auto;
-    box-shadow:0 20px 48px rgba(0,0,0,0.5);
+    box-shadow:0 20px 48px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
   }
   .buildmenu h3 { margin:0 34px 4px 0; font-size:16px; font-weight:800; }
   .modalCloseX {
@@ -164,10 +165,10 @@
   .gearSlot .badge {
     position:relative; width:46px; height:46px; margin:0 auto 3px; border-radius:50%; font-size:20px;
     display:flex; align-items:center; justify-content:center;
-    background:rgba(60,16,16,0.55); border:2px solid rgba(255,255,255,0.2);
+    background:rgba(255,255,255,0.06); border:2px dashed rgba(255,255,255,0.28);
     box-shadow:0 4px 10px rgba(0,0,0,0.4);
   }
-  .gearSlot.owned .badge { border-color:var(--accent); background:rgba(20,60,50,0.55); }
+  .gearSlot.owned .badge { border:2px solid var(--accent); background:rgba(20,60,50,0.55); }
   .gearSlot.locked .badge { background:rgba(30,34,42,0.6); filter:grayscale(1); opacity:.7; }
   .gearSlot.disabled { opacity:.55; cursor:default; }
   .gearSlot .ping {
