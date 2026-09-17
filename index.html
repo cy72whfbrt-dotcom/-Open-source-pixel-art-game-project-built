@@ -1909,19 +1909,19 @@ function drawWater(){
 // Wasser stehen, einem Boot am freien Platz statt gaehnender Leere, und
 // einem gestrichelten "spaeter"-Platz statt einer schwarzen Box drueber.
 
-const HAFEN_BERTH_SIZE = CELL*1.9; // kleiner/proportionierter als vorher (war CELL*3)
-const HAFEN_GAP = CELL*0.5;
-
+// Ein einziges zusammenhaengendes Deck fuer beide Bootsplaetze statt zwei
+// getrennter, versetzter Bloecke (Nutzer-Feedback: wirkte wie schwebende
+// Einzelteile statt einer echten kleinen Marina) - Planken-Farbe jetzt
+// verwittertes Grau-Beige statt dem warmen Mauer-Holzton, damit der Steg
+// nicht wie eine zweite Mauer aussieht.
 function hafenLayout(gridSize){
   const x0 = -gridHalfExtent(gridSize); // linke Kante der Insel
-  const berthW = HAFEN_BERTH_SIZE, berthH = HAFEN_BERTH_SIZE;
-  const totalH = berthH*2 + HAFEN_GAP;
-  const topY = -totalH/2;
-  const walkwayW = CELL*1.3;
+  const deckW = CELL*2.4, deckH = CELL*3.1;
+  const walkwayW = CELL*0.85;
+  const deckRightX = x0-walkwayW;
   return {
-    walkway: { x: x0-walkwayW, y: -CELL*0.24, w: walkwayW, h: CELL*0.48 },
-    berthA: { x: x0-walkwayW-berthW*0.72, y: topY, w: berthW, h: berthH, locked:false },
-    berthB: { x: x0-walkwayW-berthW*0.72, y: topY+berthH+HAFEN_GAP, w: berthW, h: berthH, locked:true }
+    walkway: { x: x0-walkwayW, y: -CELL*0.24, w: walkwayW+3, h: CELL*0.48 },
+    deck: { x: deckRightX-deckW, y: -deckH/2, w: deckW, h: deckH }
   };
 }
 
@@ -1962,42 +1962,41 @@ function drawBoatIcon(cx,cy,w,h){
 function drawHafen(gridSize){
   if(state.basisLevel < HAFEN_UNLOCK_LEVEL) return;
   const L = hafenLayout(gridSize);
+  const d = L.deck;
 
   // Steg zur Insel: schmale Planke statt eines breiten Blocks, mit zwei
   // Pfaehlen am wasserseitigen Ende.
-  fillFlatBlock(L.walkway.x, L.walkway.y, L.walkway.w, L.walkway.h, 3, HUD.woodA, HUD.woodB);
+  fillFlatBlock(L.walkway.x, L.walkway.y, L.walkway.w, L.walkway.h, 3, HUD.dockA, HUD.dockB);
   drawPilingPost(L.walkway.x+3, L.walkway.y+2);
   drawPilingPost(L.walkway.x+3, L.walkway.y+L.walkway.h-2);
 
-  [L.berthA, L.berthB].forEach(b=>{
-    const cx=b.x+b.w/2, cy=b.y+b.h/2;
-    if(b.locked){
-      // Gestrichelter Platzhalter statt schwarzer Box - gleiche Sprache wie
-      // die leeren Ausruestungs-/Faehigkeiten-Slots im HUD.
-      drawShadow(cx, b.y+b.h+3, b.w*0.4, 5);
-      ctx.save();
-      ctx.setLineDash([6,5]);
-      ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 2.2;
-      ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(b.x,b.y,b.w,b.h,8); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-      ctx.fillStyle="rgba(255,255,255,0.06)";
-      ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(b.x,b.y,b.w,b.h,8); ctx.fill();
-      ctx.font="18px sans-serif"; ctx.textAlign="center";
-      ctx.fillText("🔒", cx, cy+6);
-      ctx.textAlign="left";
-      [[b.x+4,b.y+4],[b.x+b.w-4,b.y+4],[b.x+4,b.y+b.h-4],[b.x+b.w-4,b.y+b.h-4]].forEach(([px,py])=>drawPilingPost(px,py));
-      return;
-    }
-    fillFlatBlock(b.x, b.y, b.w, b.h, 8, HUD.woodA, HUD.woodB);
-    ctx.strokeStyle = "rgba(0,0,0,0.15)"; ctx.lineWidth = 1.3;
-    for(let i=1;i<4;i++){
-      const ly = b.y + (b.h/4)*i;
-      ctx.beginPath(); ctx.moveTo(b.x+4, ly); ctx.lineTo(b.x+b.w-4, ly); ctx.stroke();
-    }
-    [[b.x+4,b.y+4],[b.x+b.w-4,b.y+4],[b.x+4,b.y+b.h-4],[b.x+b.w-4,b.y+b.h-4]].forEach(([px,py])=>drawPilingPost(px,py));
-    drawBoatIcon(cx, cy, b.w*0.82, b.h*0.82);
-  });
+  // Ein durchgehendes Deck fuer beide Plaetze statt zwei getrennter Bloecke -
+  // wirkt wie eine kleine Marina statt schwebender Einzelteile.
+  drawShadow(d.x+d.w/2, d.y+d.h+4, d.w*0.45, 6);
+  fillFlatBlock(d.x, d.y, d.w, d.h, 9, HUD.dockA, HUD.dockB);
+  ctx.strokeStyle = "rgba(0,0,0,0.13)"; ctx.lineWidth = 1.3;
+  for(let i=1;i<7;i++){
+    const ly = d.y + (d.h/7)*i;
+    ctx.beginPath(); ctx.moveTo(d.x+4, ly); ctx.lineTo(d.x+d.w-4, ly); ctx.stroke();
+  }
+  // Kraeftigere Trennlinie zwischen den beiden Bootsplaetzen
+  const midY = d.y+d.h/2;
+  ctx.strokeStyle = "rgba(0,0,0,0.3)"; ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.moveTo(d.x+3, midY); ctx.lineTo(d.x+d.w-3, midY); ctx.stroke();
+  [[d.x+5,d.y+5],[d.x+d.w-5,d.y+5],[d.x+5,d.y+d.h-5],[d.x+d.w-5,d.y+d.h-5]].forEach(([px,py])=>drawPilingPost(px,py));
+
+  drawBoatIcon(d.x+d.w/2, d.y+d.h*0.27, d.w*0.74, d.h*0.42);
+
+  // Gesperrter zweiter Platz: dieselbe Deck-Planke, kein Boot - nur eine
+  // kleine Schloss-Plakette in der Ecke statt eines grossen gestrichelten
+  // Rahmens mitten in der Spielwelt.
+  const lockCx = d.x+d.w-17, lockCy = d.y+d.h*0.74;
+  ctx.beginPath(); ctx.arc(lockCx,lockCy,11,0,Math.PI*2);
+  ctx.fillStyle="rgba(20,26,36,0.55)"; ctx.fill();
+  ctx.strokeStyle="rgba(255,255,255,0.32)"; ctx.lineWidth=1.4; ctx.stroke();
+  ctx.font="12px sans-serif"; ctx.textAlign="center";
+  ctx.fillText("🔒", lockCx, lockCy+4);
+  ctx.textAlign="left";
 }
 
 function drawGrassTile(x,y,c,r){
@@ -2826,6 +2825,7 @@ const HUD = {
   woodA: "#dba169", woodB: "#8a5a34",
   stoneA:"#c9d0d7", stoneB:"#7c8590",
   ironA: "#b7c2d6", ironB: "#4d5768",
+  dockA: "#c7b89a", dockB: "#8a7859",
   kraftA:"#ffb46a", kraftB:"#e0642e"
 };
 
