@@ -1298,7 +1298,11 @@ function updateWave(dt){
     // ab und greift ihn an - der Pfad selbst (pathIndex) bleibt dabei
     // unveraendert, sobald der Spieler wieder ausser Reichweite ist, geht's
     // exakt da weiter, wo der Gegner stehengeblieben ist.
-    if(pl.invulnCd<=0 && Math.hypot(pl.x-e.x,pl.y-e.y)<=PLAYER_AGGRO_RADIUS){
+    // Waehrend das Boot gefahren wird, steht die zu Fuss-Spielfigur
+    // unsichtbar auf ihrer letzten Position herum - ohne diese Ausnahme
+    // koennte ein Gegner sie dort angreifen, ohne dass der Spieler (der
+    // gerade das Boot steuert) das ueberhaupt mitbekommt.
+    if(!inBoat && pl.invulnCd<=0 && Math.hypot(pl.x-e.x,pl.y-e.y)<=PLAYER_AGGRO_RADIUS){
       target = {x:pl.x,y:pl.y,r:PLAYER_COMBAT_RADIUS,isPlayer:true};
     } else if(e.typeKey==="laeufer" && activeAngreiferCount()>0 &&
        Math.hypot(e.x,e.y) <= ANGREIFER_STATS.range){
@@ -2015,6 +2019,9 @@ function exitBoat(){
   const pier = hafenLayout(gridSizeForLevel(state.basisLevel)).pier;
   state.player.x = pier.x+pier.w/2;
   state.player.y = pier.y+pier.h/2;
+  // Ein beim Einsteigen noch aktives Klick-Laufziel wuerde sonst im naechsten
+  // Frame wieder aufleben und den Spieler vom Steg weglaufen lassen.
+  state.player.moveTarget = null;
   inBoat = false;
   save();
 }
