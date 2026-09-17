@@ -441,7 +441,7 @@ function defaultState(){
     nextWaveComposition: null,
     dailyQuests: { date: null, progress: {}, claimed: [] },
     claimedChapters: [],
-    boot: { level: 1, hp: 90, cargo: { holz:0, stein:0 } },
+    boot: { level: 1, hp: 90, cargo: { holz:0, stein:0 }, weapon: "bogen" },
     player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
       abilitiesInventory: [], abilitiesEquipped: {}, nextAbilityId: 1,
       gearInventory: [], gearEquipped: { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null },
@@ -479,8 +479,9 @@ if(!state.player.nextGearId) state.player.nextGearId = 1;
 delete state.player.equip;
 if(!state.dailyQuests) state.dailyQuests = { date: null, progress: {}, claimed: [] };
 if(!state.claimedChapters) state.claimedChapters = [];
-if(!state.boot) state.boot = { level: 1, hp: 90, cargo: { holz:0, stein:0 } };
+if(!state.boot) state.boot = { level: 1, hp: 90, cargo: { holz:0, stein:0 }, weapon: "bogen" };
 if(!state.boot.cargo) state.boot.cargo = { holz:0, stein:0 };
+if(!state.boot.weapon) state.boot.weapon = "bogen";
 
 // Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
 // anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
@@ -626,6 +627,16 @@ const WEAPONS = {
   moerser:   { name:"Mörser",    desc:"Flächenschaden, aber Mindestreichweite - trifft nichts direkt daneben.", unlockLevel:6 },
   feuerturm: { name:"Feuerturm", desc:"Entzündet Getroffene - sie nehmen einige Sekunden lang zusätzlichen Schaden über Zeit.", unlockLevel:8 }
 };
+
+// Eigene, kleinere Freischalt-Stufen fuers Boot statt die Turm-Level zu
+// benutzen ("Ab Lvl 1 Bogen, Lvl 5 Kanone") - Schaden/Rate kommen trotzdem
+// aus den gleichen WEAPON_STATS wie beim Turm, nur die Freischaltung ist
+// bootseigen.
+const BOAT_WEAPONS = {
+  bogen:  { name:"Bogen",  desc:"Standardwaffe, immer verfügbar.", unlockLevel:1 },
+  kanone: { name:"Kanone", desc:"Mehr Schaden, dafür langsamer.",  unlockLevel:5 }
+};
+function boatDamage(boot){ return towerDamage(boot); }
 
 function basisUpgradeCost(level){ return { holz: Math.round(45*Math.pow(1.55,level-1)), stein: Math.round(45*Math.pow(1.55,level-1)) }; }
 
@@ -2139,26 +2150,42 @@ function drawHafen(gridSize){
   }
 }
 
+// Umriss einer einzelnen Planke: spitz zulaufender Bug links, abgerundetes
+// Heck rechts - liest sich als Boots-Silhouette statt als schlichtes
+// Rechteck, bleibt aber eine einzelne einfache Flaeche ohne Rumpf/Kabine-
+// Deko (siehe Kommentar unten).
+function plankPath(x0,y0,w,h){
+  const r = 4;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0+h/2);
+  ctx.lineTo(x0+w*0.22, y0);
+  ctx.lineTo(x0+w-r, y0);
+  ctx.quadraticCurveTo(x0+w, y0, x0+w, y0+r);
+  ctx.lineTo(x0+w, y0+h-r);
+  ctx.quadraticCurveTo(x0+w, y0+h, x0+w-r, y0+h);
+  ctx.lineTo(x0+w*0.22, y0+h);
+  ctx.closePath();
+}
+
 // Bewusst nur 2 schlichte Holzplanken statt des vollen Rumpf-Icons: das
 // alte Icon hatte einen festen Blickwinkel (Bug immer "nach oben"), der
 // beim freien Steuern in beliebige Richtungen schief und falsch wirkte.
 // Zwei einfache, symmetrische Planken brauchen keinen Drehwinkel und sehen
 // aus jeder Fahrtrichtung gleich richtig aus. Mehr Deko (Rumpf, Kabine, ...)
-// gibt es dann erst wieder als Belohnung fuer hoehere Boot-Level.
+// gibt es dann erst wieder als Belohnung fuer hoehere Boot-Level. Zweiter
+// Anlauf (Nutzer-Feedback): insgesamt groesser, mit spitzem Bug statt
+// stumpfer Rechtecke, damit es wirklich wie ein (kleines) Schiff wirkt statt
+// wie zwei schwimmende Bretter.
 function drawBoatPlanks(cx,cy){
-  drawShadow(cx-13, cy+8, 24, 6);
-  const plankW = 46, plankH = 15, gap = 5;
+  const plankW = 64, plankH = 19, gap = 6;
+  drawShadow(cx-4, cy+plankH+2, 34, 8);
   const grad = ctx.createLinearGradient(cx,cy-plankH-gap/2,cx,cy+plankH+gap/2);
   grad.addColorStop(0, HUD.woodA); grad.addColorStop(1, HUD.woodB);
-  drawRoundRect(cx-plankW/2, cy-gap/2-plankH, plankW, plankH, 4, grad);
-  drawRoundRect(cx-plankW/2, cy+gap/2, plankW, plankH, 4, grad);
   ctx.strokeStyle = "rgba(40,24,10,0.45)"; ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  if(ctx.roundRect){
-    ctx.roundRect(cx-plankW/2, cy-gap/2-plankH, plankW, plankH, 4);
-    ctx.roundRect(cx-plankW/2, cy+gap/2, plankW, plankH, 4);
-  }
-  ctx.stroke();
+  [cy-gap/2-plankH, cy+gap/2].forEach(y0=>{
+    plankPath(cx-plankW/2, y0, plankW, plankH);
+    ctx.fillStyle = grad; ctx.fill(); ctx.stroke();
+  });
 }
 
 // Waehrend der Fahrt: Boot an der Steuerposition statt am Steg, mit einer
@@ -4914,6 +4941,11 @@ function openProfileHub(mode){
   document.body.appendChild(overlay);
 }
 
+// "Besatzung" ist noch nicht befuellbar (kommt erst mit dem Angreifer-
+// Mitnahme-System) - die Kapazitaet waechst aber schon mit dem Boot-Level,
+// damit die Anzeige nicht ewig bei 0/0 haengt, sobald es soweit ist.
+function crewCapacityFor(level){ return level; }
+
 // Boot-Menue: genau wie das Gebaeude-Verbessern/Reparieren im normalen
 // Baumenue (gleiche Kosten-/HP-Formeln ueber BUILDABLE_TYPES.boot), nur
 // eigenstaendig statt an eine Rasterzelle gebunden.
@@ -4922,12 +4954,13 @@ function openBoatMenu(){
   const def = BUILDABLE_TYPES.boot;
   const maxHp = maxHpFor("boot", boot.level);
   const isDestroyed = boot.hp<=0;
+  const dmg = Math.round(boatDamage(boot));
 
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
   box.className = "box";
-  box.innerHTML = `<h3>⛵ ${def.name}${isDestroyed?" (kaputt)":""}</h3><div class="hint2">Level ${boot.level} · HP ${Math.round(boot.hp)}/${maxHp}</div>
+  box.innerHTML = `<h3>⛵ ${def.name}${isDestroyed?" (kaputt)":""}</h3><div class="hint2">Level ${boot.level} · HP ${Math.round(boot.hp)}/${maxHp} · Schaden ${dmg} · Besatzung 0/${crewCapacityFor(boot.level)}</div>
     <div class="hint2">${def.desc} Aktuelle Lagerkapazität: ${storageCap()} pro Rohstoff.</div>
     <div class="hint2">Boot-Ladung: ${boatCargoTotal()}/${boatCargoCapacity()}${boatCargoTotal()>0?" - einfach hinlaufen, um sie zu übernehmen":""}</div>`;
 
@@ -4957,7 +4990,7 @@ function openBoatMenu(){
     ? `<span>Verbessern auf Level ${boot.level+1}<small>Erst reparieren</small></span>`
     : atLevelCap
     ? `<span>Verbessern auf Level ${boot.level+1}<small>Erst ab Basis-Level ${boot.level+1} möglich</small></span>`
-    : `<span>Verbessern auf Level ${boot.level+1}<small>Repariert dabei auch komplett, mehr Lagerkapazität</small></span><b>${formatCost(cost)}</b>`;
+    : `<span>Verbessern auf Level ${boot.level+1}<small>Repariert dabei auch komplett, mehr Schaden, HP und Lagerkapazität</small></span><b>${formatCost(cost)}</b>`;
   upOpt.addEventListener("click", ()=>{
     if(!isDestroyed && !atLevelCap && canAfford(cost)){
       payCost(cost); boot.level++; boot.hp = maxHpFor("boot",boot.level);
@@ -4979,6 +5012,23 @@ function openBoatMenu(){
     });
     box.appendChild(repOpt);
   }
+
+  // Waffe waehlen - gleiches Muster wie beim Turm, nur mit eigenen,
+  // bootseigenen Freischalt-Stufen (BOAT_WEAPONS) statt der Turm-Level.
+  const wHead = document.createElement("div");
+  wHead.className="hint2"; wHead.style.marginTop="6px"; wHead.textContent="Waffe auswählen:";
+  box.appendChild(wHead);
+  Object.entries(BOAT_WEAPONS).forEach(([key2,w])=>{
+    const unlocked = boot.level>=w.unlockLevel && !isDestroyed;
+    const selected = boot.weapon===key2;
+    const wOpt = document.createElement("div");
+    wOpt.className = "buildopt"+(!unlocked?" disabled":"");
+    wOpt.style.border = selected ? "1px solid #7aa2f7" : "";
+    const hint = isDestroyed ? "Erst reparieren" : !unlocked ? "Braucht Boot-Level "+w.unlockLevel : w.desc;
+    wOpt.innerHTML = `<span>${w.name}${selected?" (aktiv)":""}<small>${hint}</small></span>`;
+    if(unlocked && !selected) wOpt.addEventListener("click", ()=>{ boot.weapon=key2; save(); document.body.removeChild(overlay); render(); openBoatMenu(); });
+    box.appendChild(wOpt);
+  });
 
   addCloseBtn(box, overlay);
   overlay.appendChild(box);
