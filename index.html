@@ -436,12 +436,12 @@ function defaultState(){
     tutorialDone: false,
     tutorialIntroShown: false,
     tutorialCollected: false,
-    npc: { reparaturCount: 0, angreifer: [], training: null },
+    npc: { reparaturCount: 0, angreifer: [], training: null, nextAngreiferId: 1 },
     repairJob: null,
     nextWaveComposition: null,
     dailyQuests: { date: null, progress: {}, claimed: [] },
     claimedChapters: [],
-    boot: { level: 1, hp: 90, cargo: { holz:0, stein:0 }, weapon: "bogen" },
+    boot: { level: 1, hp: 90, cargo: { holz:0, stein:0 }, weapon: "bogen", crew: [] },
     player: { x:0, y:0, backpack:{holz:0,stein:0}, moveTarget:null, hp:PLAYER_MAX_HP, invulnCd:0,
       abilitiesInventory: [], abilitiesEquipped: {}, nextAbilityId: 1,
       gearInventory: [], gearEquipped: { stiefel:null, handschuhe:null, brustplatte:null, hose:null, waffe:null, ring:null },
@@ -479,9 +479,19 @@ if(!state.player.nextGearId) state.player.nextGearId = 1;
 delete state.player.equip;
 if(!state.dailyQuests) state.dailyQuests = { date: null, progress: {}, claimed: [] };
 if(!state.claimedChapters) state.claimedChapters = [];
-if(!state.boot) state.boot = { level: 1, hp: 90, cargo: { holz:0, stein:0 }, weapon: "bogen" };
+if(!state.boot) state.boot = { level: 1, hp: 90, cargo: { holz:0, stein:0 }, weapon: "bogen", crew: [] };
 if(!state.boot.cargo) state.boot.cargo = { holz:0, stein:0 };
 if(!state.boot.weapon) state.boot.weapon = "bogen";
+if(!state.boot.crew) state.boot.crew = [];
+// Alte Speicherstaende kennen noch keine Angreifer-IDs (wurden bisher nur
+// ueber Objekt-Referenz im Array identifiziert) - fuer die Besatzungs-
+// Auswahl (merkt sich IDs, nicht Referenzen, damit es einen Reload
+// uebersteht) brauchen bestehende Angreifer nachtraeglich eine.
+if(!state.npc.nextAngreiferId) state.npc.nextAngreiferId = 1;
+state.npc.angreifer.forEach(a=>{ if(!a.id) a.id = state.npc.nextAngreiferId++; });
+// Besatzungs-Zuweisungen, die auf inzwischen verlorene/nicht mehr aktive
+// Angreifer zeigen, wieder rauswerfen statt auf Geister-Crew zu bestehen.
+state.boot.crew = state.boot.crew.filter(id=>state.npc.angreifer.some(a=>a.id===id && a.status==="aktiv"));
 
 // Test-Hilfe fuers Handy (kein echtes Spiel-Feature): Link mit ?cheat=1
 // anhaengen (in der Adressleiste antippen und "?cheat=1" ans Ende schreiben),
@@ -1535,7 +1545,7 @@ function updateTraining(dt){
   state.npc.training.timeLeft -= dt;
   if(state.npc.training.timeLeft<=0){
     if(state.npc.training.kind==="reparatur") state.npc.reparaturCount++;
-    else state.npc.angreifer.push({ hp:ANGREIFER_STATS.hp, maxHp:ANGREIFER_STATS.hp, status:"aktiv", healLeft:0, fireCd:0 });
+    else state.npc.angreifer.push({ id: state.npc.nextAngreiferId++, hp:ANGREIFER_STATS.hp, maxHp:ANGREIFER_STATS.hp, status:"aktiv", healLeft:0, fireCd:0 });
     state.npc.training = null;
     save();
   }
@@ -2221,6 +2231,10 @@ let owBoatX = 0, owBoatY = 0;
 // gespeichert: sonst haengt der Spieler nach einem Reload mitten auf einer
 // fremden Insel fest statt zuhause zu starten.
 let visitPlayerX = 0, visitPlayerY = 0;
+// Mitgenommene Besatzung waehrend eines Besuchs - Momentaufnahme von
+// activeCrewList() beim Start des Angriffs (siehe enterVisiting), nicht
+// gespeichert aus demselben Grund wie visitPlayerX/Y.
+let visitCrew = [];
 const OPEN_WORLD_RADIUS = 600; // absichtlich innerhalb der bestehenden Kamera-Klemme (WATER_RADIUS-40)
 
 function startLoadingTransition(label, applyFn){
@@ -2283,6 +2297,9 @@ function enterVisiting(p){
     const boat = visitBoatPos(gridSizeForLevel(p.basisLevel));
     visitPlayerX = boat.x+60; visitPlayerY = boat.y;
     visitProjectiles = []; visitPlayerAttackCd = 0;
+    // Besatzung als Momentaufnahme mitnehmen - startet dicht beim Spieler,
+    // folgt ihm dann (siehe updateVisitCrew).
+    visitCrew = activeCrewList().map((a,i)=>({ id:a.id, x:visitPlayerX-16-i*10, y:visitPlayerY+14, fireCd:0 }));
     camera.x = 0; camera.y = 0;
     worldMode = "visiting";
   });
@@ -2291,6 +2308,7 @@ function leaveVisiting(){
   startLoadingTransition("Lade Open World …", ()=>{
     visitingPlayer = null;
     visitProjectiles = [];
+    visitCrew = [];
     camera.x = 0; camera.y = 0;
     worldMode = "openworld";
   });
@@ -2362,6 +2380,44 @@ function updateVisitPlayer(dt){
   collectNearbyLoot();
   depositLootToBoatIfNear();
   updateVisitCombat(dt);
+  updateVisitCrew(dt);
+}
+
+// Mitgenommene Besatzung: folgt dem Spieler in einem kleinen Kreis um ihn
+// herum und feuert wie ein Turm auf das naechste Gebaeude in Reichweite
+// (ANGREIFER_STATS - gleiche Werte wie zuhause). Nutzt dieselbe
+// visitProjectiles-Liste/Treffer-Logik wie der Spieler-Schuss in
+// updateVisitCombat, daher hier nur das Erzeugen der Schuesse - Bewegung
+// und Treffer laufen dort mit durch. Bewusst unverwundbar (die Tuerme
+// zielen weiterhin nur auf den Spieler) - Besatzung ist reine
+// Zusatz-Feuerkraft, kein eigenes Risiko-System noetig fuer diesen ersten
+// Ausbau.
+function updateVisitCrew(dt){
+  const p = visitingPlayer;
+  if(!p || visitCrew.length===0) return;
+  const gridSize = gridSizeForLevel(p.basisLevel);
+  const speed = PLAYER_SPEED*0.95;
+  visitCrew.forEach((u,i)=>{
+    const ang = (i/visitCrew.length)*Math.PI*2;
+    const tx = visitPlayerX+Math.cos(ang)*26, ty = visitPlayerY+Math.sin(ang)*26;
+    const dx = tx-u.x, dy = ty-u.y, d = Math.hypot(dx,dy);
+    if(d>4){ u.x += dx/d*speed*dt; u.y += dy/d*speed*dt; }
+
+    u.fireCd = (u.fireCd||0)-dt;
+    if(u.fireCd>0) return;
+    let closest=null, closestDist=ANGREIFER_STATS.range, closestKey=null, closestPos=null;
+    Object.entries(p.cellsByCoord).forEach(([key,slot])=>{
+      if(!slot.building || slot.building.hp<=0) return;
+      const [c,r] = key.split(",").map(Number);
+      const pos = cellCenter(c,r,gridSize);
+      const dd = Math.hypot(u.x-pos.x, u.y-pos.y);
+      if(dd<closestDist){ closestDist=dd; closest=slot; closestKey=key; closestPos=pos; }
+    });
+    if(!closest) return;
+    u.fireCd = ANGREIFER_STATS.rate;
+    const shotAng = Math.atan2(closestPos.y-u.y, closestPos.x-u.x);
+    visitProjectiles.push({x:u.x,y:u.y,vx:Math.cos(shotAng)*260,vy:Math.sin(shotAng)*260,life:1.2,dmg:ANGREIFER_STATS.dmg,color:"#8fe0a0",targetKey:closestKey});
+  });
 }
 
 // Eigene, kleine Kampf-Schleife nur fuer den Basis-Besuch: Tuerme feuern auf
@@ -2572,6 +2628,19 @@ function drawLootPile(x,y,node){
   ctx.textAlign="left";
 }
 
+// Mitgenommene Besatzung waehrend eines Besuchs - gleicher Look wie
+// drawAngreiferUnits zuhause (kleiner gruener Kreis mit Bogen-Andeutung),
+// nur ohne HP-Leiste, da Besatzung in diesem ersten Ausbau nicht verwundbar
+// ist (siehe updateVisitCrew).
+function drawVisitCrewUnit(x,y){
+  drawShadow(x,y+10,11,3);
+  ctx.beginPath(); ctx.arc(x,y,10,0,Math.PI*2);
+  ctx.fillStyle="#4a8f5a"; ctx.fill();
+  ctx.strokeStyle="#204a2c"; ctx.lineWidth=1.8; ctx.stroke();
+  ctx.strokeStyle="#eafff0"; ctx.lineWidth=1.6;
+  ctx.beginPath(); ctx.arc(x+3,y,4.5,-0.9,0.9); ctx.stroke();
+}
+
 function drawWorldLabel(text,x,y){
   ctx.font="700 12px sans-serif"; ctx.textAlign="center";
   ctx.strokeStyle="rgba(0,0,0,0.5)"; ctx.lineWidth=3;
@@ -2638,6 +2707,7 @@ function drawVisitingBase(){
 
   (p.loot||[]).forEach(n=>drawLootPile(n.x,n.y,n));
 
+  visitCrew.forEach(u=>drawVisitCrewUnit(u.x,u.y));
   drawVisitPlayerSprite();
   visitProjectiles.forEach(drawProjectile);
 
@@ -4941,10 +5011,66 @@ function openProfileHub(mode){
   document.body.appendChild(overlay);
 }
 
-// "Besatzung" ist noch nicht befuellbar (kommt erst mit dem Angreifer-
-// Mitnahme-System) - die Kapazitaet waechst aber schon mit dem Boot-Level,
-// damit die Anzeige nicht ewig bei 0/0 haengt, sobald es soweit ist.
+// Besatzungs-Kapazitaet waechst mit dem Boot-Level. Zugewiesen wird ueber
+// state.boot.crew (Liste von Angreifer-IDs aus der Kaserne) - beide Listen
+// werden ueber activeCrewList() gefiltert statt boot.crew direkt zu lesen,
+// damit ein inzwischen verletzter/verlorener Angreifer automatisch aus der
+// Besatzung "faellt" ohne dass jede Stelle, die ihn verletzt, extra daran
+// denken muss, ihn auch aus boot.crew zu entfernen.
 function crewCapacityFor(level){ return level; }
+function activeCrewList(){
+  return state.boot.crew
+    .map(id=>state.npc.angreifer.find(a=>a.id===id))
+    .filter(a=>a && a.status==="aktiv");
+}
+function activeCrewCount(){ return activeCrewList().length; }
+
+// Besatzung zuweisen/abziehen: listet alle ausgebildeten (aktiven)
+// Angreifer, Antippen schaltet sie an Bord/von Bord um, bis zur
+// Boot-Kapazitaet.
+function openCrewMenu(){
+  const boot = state.boot;
+  const cap = crewCapacityFor(boot.level);
+  const active = state.npc.angreifer.filter(a=>a.status==="aktiv");
+  const crewCount = activeCrewCount();
+
+  const overlay = document.createElement("div");
+  overlay.className = "buildmenu";
+  const box = document.createElement("div");
+  box.className = "box";
+  box.innerHTML = `<h3>⚓ Besatzung</h3><div class="hint2">${crewCount}/${cap} an Bord - waehlt aus deinen ausgebildeten Angreifern (Kaserne). Kommen beim naechsten Angriff mit und helfen kaempfen.</div>`;
+
+  if(active.length===0){
+    const info = document.createElement("div");
+    info.className = "hint2";
+    info.textContent = "Noch keine ausgebildeten Angreifer - erst in der Kaserne ausbilden.";
+    box.appendChild(info);
+  }
+
+  active.forEach((a,i)=>{
+    const inCrew = state.boot.crew.includes(a.id);
+    const full = !inCrew && crewCount>=cap;
+    const opt = document.createElement("div");
+    opt.className = "buildopt" + (full ? " disabled":"");
+    opt.style.border = inCrew ? "1px solid #7aa2f7" : "";
+    opt.innerHTML = `<span>Angreifer ${i+1}${inCrew?" (an Bord)":""}<small>HP ${Math.round(a.hp)}/${a.maxHp}${full?" · Besatzung voll":""}</small></span>`;
+    opt.addEventListener("click", ()=>{
+      if(inCrew){
+        state.boot.crew = state.boot.crew.filter(id=>id!==a.id);
+      } else {
+        if(activeCrewCount()>=cap) return;
+        state.boot.crew.push(a.id);
+      }
+      save(); document.body.removeChild(overlay); render();
+      openCrewMenu();
+    });
+    box.appendChild(opt);
+  });
+
+  addCloseBtn(box, overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
 
 // Boot-Menue: genau wie das Gebaeude-Verbessern/Reparieren im normalen
 // Baumenue (gleiche Kosten-/HP-Formeln ueber BUILDABLE_TYPES.boot), nur
@@ -4955,14 +5081,21 @@ function openBoatMenu(){
   const maxHp = maxHpFor("boot", boot.level);
   const isDestroyed = boot.hp<=0;
   const dmg = Math.round(boatDamage(boot));
+  const crewCap = crewCapacityFor(boot.level);
 
   const overlay = document.createElement("div");
   overlay.className = "buildmenu";
   const box = document.createElement("div");
   box.className = "box";
-  box.innerHTML = `<h3>⛵ ${def.name}${isDestroyed?" (kaputt)":""}</h3><div class="hint2">Level ${boot.level} · HP ${Math.round(boot.hp)}/${maxHp} · Schaden ${dmg} · Besatzung 0/${crewCapacityFor(boot.level)}</div>
+  box.innerHTML = `<h3>⛵ ${def.name}${isDestroyed?" (kaputt)":""}</h3><div class="hint2">Level ${boot.level} · HP ${Math.round(boot.hp)}/${maxHp} · Schaden ${dmg} · Besatzung ${activeCrewCount()}/${crewCap}</div>
     <div class="hint2">${def.desc} Aktuelle Lagerkapazität: ${storageCap()} pro Rohstoff.</div>
     <div class="hint2">Boot-Ladung: ${boatCargoTotal()}/${boatCargoCapacity()}${boatCargoTotal()>0?" - einfach hinlaufen, um sie zu übernehmen":""}</div>`;
+
+  const crewOpt = document.createElement("div");
+  crewOpt.className = "buildopt";
+  crewOpt.innerHTML = `<span>Besatzung verwalten<small>Angreifer aus der Kaserne mitnehmen</small></span><b>+ ${activeCrewCount()}/${crewCap}</b>`;
+  crewOpt.addEventListener("click", ()=>{ document.body.removeChild(overlay); openCrewMenu(); });
+  box.appendChild(crewOpt);
 
   // Beim Besuch einer fremden Basis ergibt "Einsteigen" (faehrt zum
   // heimischen Steg) keinen Sinn - hier bedeutet dieselbe Aktion stattdessen
