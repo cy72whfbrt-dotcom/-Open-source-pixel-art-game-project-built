@@ -1909,19 +1909,16 @@ function drawWater(){
 // Wasser stehen, einem Boot am freien Platz statt gaehnender Leere, und
 // einem gestrichelten "spaeter"-Platz statt einer schwarzen Box drueber.
 
-// Ein einziges zusammenhaengendes Deck fuer beide Bootsplaetze statt zwei
-// getrennter, versetzter Bloecke (Nutzer-Feedback: wirkte wie schwebende
-// Einzelteile statt einer echten kleinen Marina) - Planken-Farbe jetzt
-// verwittertes Grau-Beige statt dem warmen Mauer-Holzton, damit der Steg
-// nicht wie eine zweite Mauer aussieht.
+// Dritter Anlauf, jetzt nach exakter Nutzer-Vorgabe: ein schlichter 1x5-Steg
+// (1 Zelle breit, 5 Zellen lang) statt der vorherigen breiten Deck-Flaeche
+// ("viel zu fett") - direkt davor, am wasserseitigen Ende, liegt ein 2x1-Boot.
 function hafenLayout(gridSize){
   const x0 = -gridHalfExtent(gridSize); // linke Kante der Insel
-  const deckW = CELL*2.4, deckH = CELL*3.1;
-  const walkwayW = CELL*0.85;
-  const deckRightX = x0-walkwayW;
+  const pierW = CELL, pierL = CELL*5;
+  const pier = { x: x0-pierL, y: -pierW/2, w: pierL, h: pierW };
   return {
-    walkway: { x: x0-walkwayW, y: -CELL*0.24, w: walkwayW+3, h: CELL*0.48 },
-    deck: { x: deckRightX-deckW, y: -deckH/2, w: deckW, h: deckH }
+    pier,
+    boat: { cx: pier.x-CELL*0.78, cy: 0, w: CELL*2, h: CELL }
   };
 }
 
@@ -1937,66 +1934,48 @@ function drawPilingPost(x,y){
 }
 
 // Einfaches, flaches Boot im selben 2-Ton-Baustein-Stil wie Tuerme/Mauern -
-// belegt den freien Bootsplatz, statt dass er einfach leer aussieht.
+// Bug zeigt nach links (weg von der Insel, aufs offene Wasser), passend zur
+// Lage am Steg-Ende. w = Laengsachse (2 Zellen), h = Breite (1 Zelle).
 function drawBoatIcon(cx,cy,w,h){
   ctx.save();
-  drawShadow(cx,cy+h*0.36,w*0.42,5);
+  drawShadow(cx,cy+h*0.5,w*0.46,5);
   ctx.beginPath();
-  ctx.moveTo(cx, cy-h*0.42);
-  ctx.quadraticCurveTo(cx+w*0.38, cy-h*0.4, cx+w*0.38, cy+h*0.08);
-  ctx.quadraticCurveTo(cx+w*0.38, cy+h*0.34, cx+w*0.2, cy+h*0.36);
-  ctx.lineTo(cx-w*0.2, cy+h*0.36);
-  ctx.quadraticCurveTo(cx-w*0.38, cy+h*0.34, cx-w*0.38, cy+h*0.08);
-  ctx.quadraticCurveTo(cx-w*0.38, cy-h*0.4, cx, cy-h*0.42);
+  ctx.moveTo(cx-w*0.44, cy);
+  ctx.quadraticCurveTo(cx-w*0.4, cy-h*0.44, cx-w*0.08, cy-h*0.44);
+  ctx.lineTo(cx+w*0.3, cy-h*0.44);
+  ctx.quadraticCurveTo(cx+w*0.42, cy-h*0.44, cx+w*0.42, cy-h*0.16);
+  ctx.lineTo(cx+w*0.42, cy+h*0.16);
+  ctx.quadraticCurveTo(cx+w*0.42, cy+h*0.44, cx+w*0.3, cy+h*0.44);
+  ctx.lineTo(cx-w*0.08, cy+h*0.44);
+  ctx.quadraticCurveTo(cx-w*0.4, cy+h*0.44, cx-w*0.44, cy);
   ctx.closePath();
-  const hullGrad = ctx.createLinearGradient(cx,cy-h*0.42,cx,cy+h*0.36);
+  const hullGrad = ctx.createLinearGradient(cx,cy-h*0.44,cx,cy+h*0.44);
   hullGrad.addColorStop(0, "#4a7ce0"); hullGrad.addColorStop(1, "#25468f");
   ctx.fillStyle = hullGrad; ctx.fill();
   ctx.strokeStyle = "rgba(12,20,45,0.55)"; ctx.lineWidth = 2; ctx.stroke();
-  drawRoundRect(cx-w*0.16, cy-h*0.1, w*0.32, h*0.28, 3, "#eee6d2");
+  drawRoundRect(cx-w*0.02, cy-h*0.28, w*0.32, h*0.56, 3, "#eee6d2");
   ctx.strokeStyle = "rgba(12,20,45,0.35)"; ctx.lineWidth = 1.2;
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(cx-w*0.16,cy-h*0.1,w*0.32,h*0.28,3); ctx.stroke();
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(cx-w*0.02,cy-h*0.28,w*0.32,h*0.56,3); ctx.stroke();
   ctx.restore();
 }
 
 function drawHafen(gridSize){
   if(state.basisLevel < HAFEN_UNLOCK_LEVEL) return;
   const L = hafenLayout(gridSize);
-  const d = L.deck;
+  const p = L.pier, b = L.boat;
 
-  // Steg zur Insel: schmale Planke statt eines breiten Blocks, mit zwei
-  // Pfaehlen am wasserseitigen Ende.
-  fillFlatBlock(L.walkway.x, L.walkway.y, L.walkway.w, L.walkway.h, 3, HUD.dockA, HUD.dockB);
-  drawPilingPost(L.walkway.x+3, L.walkway.y+2);
-  drawPilingPost(L.walkway.x+3, L.walkway.y+L.walkway.h-2);
-
-  // Ein durchgehendes Deck fuer beide Plaetze statt zwei getrennter Bloecke -
-  // wirkt wie eine kleine Marina statt schwebender Einzelteile.
-  drawShadow(d.x+d.w/2, d.y+d.h+4, d.w*0.45, 6);
-  fillFlatBlock(d.x, d.y, d.w, d.h, 9, HUD.dockA, HUD.dockB);
-  ctx.strokeStyle = "rgba(0,0,0,0.13)"; ctx.lineWidth = 1.3;
-  for(let i=1;i<7;i++){
-    const ly = d.y + (d.h/7)*i;
-    ctx.beginPath(); ctx.moveTo(d.x+4, ly); ctx.lineTo(d.x+d.w-4, ly); ctx.stroke();
+  // Schlichter 1x5-Steg, quer geplankt (Bretter liegen quer zur Gehrichtung),
+  // mit zwei Pfaehlen am wasserseitigen Ende zur Verankerung.
+  fillFlatBlock(p.x, p.y, p.w, p.h, 4, HUD.dockA, HUD.dockB);
+  ctx.strokeStyle = "rgba(0,0,0,0.13)"; ctx.lineWidth = 1.2;
+  for(let i=1;i<5;i++){
+    const lx = p.x + (p.w/5)*i;
+    ctx.beginPath(); ctx.moveTo(lx, p.y+3); ctx.lineTo(lx, p.y+p.h-3); ctx.stroke();
   }
-  // Kraeftigere Trennlinie zwischen den beiden Bootsplaetzen
-  const midY = d.y+d.h/2;
-  ctx.strokeStyle = "rgba(0,0,0,0.3)"; ctx.lineWidth = 2.4;
-  ctx.beginPath(); ctx.moveTo(d.x+3, midY); ctx.lineTo(d.x+d.w-3, midY); ctx.stroke();
-  [[d.x+5,d.y+5],[d.x+d.w-5,d.y+5],[d.x+5,d.y+d.h-5],[d.x+d.w-5,d.y+d.h-5]].forEach(([px,py])=>drawPilingPost(px,py));
+  drawPilingPost(p.x+6, p.y+5);
+  drawPilingPost(p.x+6, p.y+p.h-5);
 
-  drawBoatIcon(d.x+d.w/2, d.y+d.h*0.27, d.w*0.74, d.h*0.42);
-
-  // Gesperrter zweiter Platz: dieselbe Deck-Planke, kein Boot - nur eine
-  // kleine Schloss-Plakette in der Ecke statt eines grossen gestrichelten
-  // Rahmens mitten in der Spielwelt.
-  const lockCx = d.x+d.w-17, lockCy = d.y+d.h*0.74;
-  ctx.beginPath(); ctx.arc(lockCx,lockCy,11,0,Math.PI*2);
-  ctx.fillStyle="rgba(20,26,36,0.55)"; ctx.fill();
-  ctx.strokeStyle="rgba(255,255,255,0.32)"; ctx.lineWidth=1.4; ctx.stroke();
-  ctx.font="12px sans-serif"; ctx.textAlign="center";
-  ctx.fillText("🔒", lockCx, lockCy+4);
-  ctx.textAlign="left";
+  drawBoatIcon(b.cx, b.cy, b.w, b.h);
 }
 
 function drawGrassTile(x,y,c,r){
