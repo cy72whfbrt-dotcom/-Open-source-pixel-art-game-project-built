@@ -1909,16 +1909,17 @@ function drawWater(){
 // Wasser stehen, einem Boot am freien Platz statt gaehnender Leere, und
 // einem gestrichelten "spaeter"-Platz statt einer schwarzen Box drueber.
 
-// Dritter Anlauf, jetzt nach exakter Nutzer-Vorgabe: ein schlichter 1x5-Steg
-// (1 Zelle breit, 5 Zellen lang) statt der vorherigen breiten Deck-Flaeche
-// ("viel zu fett") - direkt davor, am wasserseitigen Ende, liegt ein 2x1-Boot.
+// Vierter Anlauf: der 1x5-Steg laeuft an der Kueste ENTLANG (5 Zellen in
+// Nord-Sued-Richtung), nicht von der Insel weg ins Wasser hinaus - nur 1
+// Zelle tief. Das Boot liegt laengsseits daneben im Wasser, ebenfalls
+// laengs zur Kueste ausgerichtet.
 function hafenLayout(gridSize){
   const x0 = -gridHalfExtent(gridSize); // linke Kante der Insel
-  const pierW = CELL, pierL = CELL*5;
-  const pier = { x: x0-pierL, y: -pierW/2, w: pierL, h: pierW };
+  const pierDepth = CELL, pierLength = CELL*5;
+  const pier = { x: x0-pierDepth, y: -pierLength/2, w: pierDepth, h: pierLength };
   return {
     pier,
-    boat: { cx: pier.x-CELL*0.78, cy: 0, w: CELL*2, h: CELL }
+    boat: { cx: pier.x-CELL*0.62, cy: 0, w: CELL, h: CELL*2 }
   };
 }
 
@@ -1933,29 +1934,32 @@ function drawPilingPost(x,y){
   drawRoundRect(x-3,y-11,6,13,2,g);
 }
 
-// Einfaches, flaches Boot im selben 2-Ton-Baustein-Stil wie Tuerme/Mauern -
-// Bug zeigt nach links (weg von der Insel, aufs offene Wasser), passend zur
-// Lage am Steg-Ende. w = Laengsachse (2 Zellen), h = Breite (1 Zelle).
-function drawBoatIcon(cx,cy,w,h){
+// Einfaches, flaches Boot im selben 2-Ton-Baustein-Stil wie Tuerme/Mauern.
+// len = Laengsachse (Bug bis Heck), wid = Breite - angle dreht das ganze
+// Boot (0 = Bug zeigt nach links), damit es laengsseits an jeder
+// Steg-Ausrichtung andocken kann statt nur horizontal zu funktionieren.
+function drawBoatIcon(cx,cy,len,wid,angle){
   ctx.save();
-  drawShadow(cx,cy+h*0.5,w*0.46,5);
+  ctx.translate(cx,cy);
+  ctx.rotate(angle||0);
+  drawShadow(0,wid*0.5,len*0.46,5);
   ctx.beginPath();
-  ctx.moveTo(cx-w*0.44, cy);
-  ctx.quadraticCurveTo(cx-w*0.4, cy-h*0.44, cx-w*0.08, cy-h*0.44);
-  ctx.lineTo(cx+w*0.3, cy-h*0.44);
-  ctx.quadraticCurveTo(cx+w*0.42, cy-h*0.44, cx+w*0.42, cy-h*0.16);
-  ctx.lineTo(cx+w*0.42, cy+h*0.16);
-  ctx.quadraticCurveTo(cx+w*0.42, cy+h*0.44, cx+w*0.3, cy+h*0.44);
-  ctx.lineTo(cx-w*0.08, cy+h*0.44);
-  ctx.quadraticCurveTo(cx-w*0.4, cy+h*0.44, cx-w*0.44, cy);
+  ctx.moveTo(-len*0.44, 0);
+  ctx.quadraticCurveTo(-len*0.4, -wid*0.44, -len*0.08, -wid*0.44);
+  ctx.lineTo(len*0.3, -wid*0.44);
+  ctx.quadraticCurveTo(len*0.42, -wid*0.44, len*0.42, -wid*0.16);
+  ctx.lineTo(len*0.42, wid*0.16);
+  ctx.quadraticCurveTo(len*0.42, wid*0.44, len*0.3, wid*0.44);
+  ctx.lineTo(-len*0.08, wid*0.44);
+  ctx.quadraticCurveTo(-len*0.4, wid*0.44, -len*0.44, 0);
   ctx.closePath();
-  const hullGrad = ctx.createLinearGradient(cx,cy-h*0.44,cx,cy+h*0.44);
+  const hullGrad = ctx.createLinearGradient(0,-wid*0.44,0,wid*0.44);
   hullGrad.addColorStop(0, "#4a7ce0"); hullGrad.addColorStop(1, "#25468f");
   ctx.fillStyle = hullGrad; ctx.fill();
   ctx.strokeStyle = "rgba(12,20,45,0.55)"; ctx.lineWidth = 2; ctx.stroke();
-  drawRoundRect(cx-w*0.02, cy-h*0.28, w*0.32, h*0.56, 3, "#eee6d2");
+  drawRoundRect(-len*0.02, -wid*0.28, len*0.32, wid*0.56, 3, "#eee6d2");
   ctx.strokeStyle = "rgba(12,20,45,0.35)"; ctx.lineWidth = 1.2;
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(cx-w*0.02,cy-h*0.28,w*0.32,h*0.56,3); ctx.stroke();
+  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(-len*0.02,-wid*0.28,len*0.32,wid*0.56,3); ctx.stroke();
   ctx.restore();
 }
 
@@ -1964,18 +1968,21 @@ function drawHafen(gridSize){
   const L = hafenLayout(gridSize);
   const p = L.pier, b = L.boat;
 
-  // Schlichter 1x5-Steg, quer geplankt (Bretter liegen quer zur Gehrichtung),
-  // mit zwei Pfaehlen am wasserseitigen Ende zur Verankerung.
+  // Schlichter 1x5-Steg, laeuft an der Kueste entlang (Nord-Sued) statt von
+  // der Insel weg - Querplanken liegen deshalb jetzt waagerecht, quer zur
+  // Gehrichtung, mit zwei Pfaehlen an den Enden zur Verankerung.
   fillFlatBlock(p.x, p.y, p.w, p.h, 4, HUD.dockA, HUD.dockB);
   ctx.strokeStyle = "rgba(0,0,0,0.13)"; ctx.lineWidth = 1.2;
   for(let i=1;i<5;i++){
-    const lx = p.x + (p.w/5)*i;
-    ctx.beginPath(); ctx.moveTo(lx, p.y+3); ctx.lineTo(lx, p.y+p.h-3); ctx.stroke();
+    const ly = p.y + (p.h/5)*i;
+    ctx.beginPath(); ctx.moveTo(p.x+3, ly); ctx.lineTo(p.x+p.w-3, ly); ctx.stroke();
   }
-  drawPilingPost(p.x+6, p.y+5);
-  drawPilingPost(p.x+6, p.y+p.h-5);
+  drawPilingPost(p.x+5, p.y+6);
+  drawPilingPost(p.x+5, p.y+p.h-6);
 
-  drawBoatIcon(b.cx, b.cy, b.w, b.h);
+  // Boot liegt laengsseits im Wasser, Bug nach Norden - gleiche Ausrichtung
+  // wie der Steg statt quer dazu.
+  drawBoatIcon(b.cx, b.cy, b.h, b.w, Math.PI/2);
 }
 
 function drawGrassTile(x,y,c,r){
