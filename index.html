@@ -2110,37 +2110,6 @@ function drawPilingPost(x,y){
   drawRoundRect(x-3,y-11,6,13,2,g);
 }
 
-// Einfaches, flaches Boot im selben 2-Ton-Baustein-Stil wie Tuerme/Mauern.
-// len = Laengsachse (Bug bis Heck), wid = Breite - angle dreht das ganze
-// Boot (0 = Bug zeigt nach links), damit es laengsseits an jeder
-// Steg-Ausrichtung andocken kann statt nur horizontal zu funktionieren.
-function drawBoatIcon(cx,cy,len,wid,angle){
-  ctx.save();
-  ctx.translate(cx,cy);
-  ctx.rotate(angle||0);
-  drawShadow(0,wid*0.5,len*0.46,5);
-  ctx.beginPath();
-  ctx.moveTo(-len*0.44, 0);
-  ctx.quadraticCurveTo(-len*0.4, -wid*0.44, -len*0.08, -wid*0.44);
-  ctx.lineTo(len*0.3, -wid*0.44);
-  ctx.quadraticCurveTo(len*0.42, -wid*0.44, len*0.42, -wid*0.16);
-  ctx.lineTo(len*0.42, wid*0.16);
-  ctx.quadraticCurveTo(len*0.42, wid*0.44, len*0.3, wid*0.44);
-  ctx.lineTo(-len*0.08, wid*0.44);
-  ctx.quadraticCurveTo(-len*0.4, wid*0.44, -len*0.44, 0);
-  ctx.closePath();
-  // Rumpf aus Holz statt Blau/Plastik-Look, gleiche Planken-Farbe wie der
-  // Steg selbst - liest sich als "gehoert zusammen" statt als Fremdkoerper.
-  const hullGrad = ctx.createLinearGradient(0,-wid*0.44,0,wid*0.44);
-  hullGrad.addColorStop(0, HUD.woodA); hullGrad.addColorStop(1, HUD.woodB);
-  ctx.fillStyle = hullGrad; ctx.fill();
-  ctx.strokeStyle = "rgba(40,24,10,0.5)"; ctx.lineWidth = 2; ctx.stroke();
-  drawRoundRect(-len*0.02, -wid*0.28, len*0.32, wid*0.56, 3, "#eee6d2");
-  ctx.strokeStyle = "rgba(40,24,10,0.35)"; ctx.lineWidth = 1.2;
-  ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(-len*0.02,-wid*0.28,len*0.32,wid*0.56,3); ctx.stroke();
-  ctx.restore();
-}
-
 function drawHafen(gridSize){
   if(state.basisLevel < HAFEN_UNLOCK_LEVEL) return;
   const L = hafenLayout(gridSize);
@@ -2164,7 +2133,7 @@ function drawHafen(gridSize){
   // (siehe openBoatMenu) - Level/HP werden genau wie bei Grid-Gebaeuden
   // angezeigt.
   if(!inBoat){
-    drawBoatIcon(b.cx, b.cy, b.h, b.w, Math.PI/2);
+    drawBoatPlanks(b.cx, b.cy);
     drawLevelPips(b.cx, b.cy+b.w*0.7+10, state.boot.level);
     drawHpBar(b.cx, b.cy+b.w*0.7+14, state.boot.hp, maxHpFor("boot",state.boot.level), 34);
   }
@@ -2235,24 +2204,18 @@ function startLoadingTransition(label, applyFn){
 }
 
 // Bewusst schlank gehalten (Nutzer-Feedback: nur EINE Waffe + EIN Lager,
-// keine echten Spielerdaten) - der Lager-Bau daneben hat auch tatsaechlich
-// Beute auf dem Boden liegen (siehe "loot"), alles andere ist erstmal nur
-// Kulisse fuer die Basis-Ansicht selbst.
+// keine echten Spielerdaten). Beute liegt NICHT von Anfang an rum - das
+// Lager muss erst kaputt gemacht werden, dann droppt es (siehe
+// dropLootFromBuilding). "loot" startet deshalb leer.
 function buildTestPlayerBase(){
   const level = 5;
   const gridSize = gridSizeForLevel(level);
   const c0 = centerOf(gridSize);
   const cells = {};
   const put = (dc,dr,building)=>{ cells[(c0+dc)+","+(c0+dr)] = { unlocked:true, building }; };
-  put(-1,0, { type:"turm", level:3, hp:maxHpFor("turm",3), weapon:"kanone" });
-  put(1,0, { type:"lager", level:2, hp:maxHpFor("lager",2) });
-
-  const lagerPos = cellCenter(c0+1, c0, gridSize);
-  const loot = [
-    { id:"loot_holz", type:"holz", amount:40, capacity:40, x:lagerPos.x, y:lagerPos.y+40 },
-    { id:"loot_stein", type:"stein", amount:26, capacity:26, x:lagerPos.x+36, y:lagerPos.y+18 }
-  ];
-  return { basisLevel: level, baseHp: 100+(level-1)*20, cellsByCoord: cells, loot };
+  put(-1,0, { type:"turm", level:2, hp:maxHpFor("turm",2), weapon:"kanone" });
+  put(1,0, { type:"lager", level:1, hp:maxHpFor("lager",1) });
+  return { basisLevel: level, baseHp: 100+(level-1)*20, cellsByCoord: cells, loot: [] };
 }
 
 const TEST_PLAYERS = [
@@ -2292,6 +2255,7 @@ function enterVisiting(p){
     // Direkt neben dem Raid-Boot "an Land gehen", nicht mitten auf der Insel.
     const boat = visitBoatPos(gridSizeForLevel(p.basisLevel));
     visitPlayerX = boat.x+60; visitPlayerY = boat.y;
+    visitProjectiles = []; visitPlayerAttackCd = 0;
     camera.x = 0; camera.y = 0;
     worldMode = "visiting";
   });
@@ -2299,6 +2263,7 @@ function enterVisiting(p){
 function leaveVisiting(){
   startLoadingTransition("Lade Open World …", ()=>{
     visitingPlayer = null;
+    visitProjectiles = [];
     camera.x = 0; camera.y = 0;
     worldMode = "openworld";
   });
@@ -2312,7 +2277,7 @@ function openEnemyBaseMenu(p){
   box.innerHTML = `<h3>⚔️ ${p.name}</h3><div class="hint2">Level ${p.basisLevel} · Basis-HP ${p.baseHp}</div>`;
   const atkOpt = document.createElement("div");
   atkOpt.className = "buildopt";
-  atkOpt.innerHTML = `<span>Angreifen<small>Zur Basis fahren und ansehen</small></span><b>⚔️</b>`;
+  atkOpt.innerHTML = `<span>Angreifen<small>An Land gehen, Tuerme kaempfen zurueck</small></span><b>⚔️</b>`;
   atkOpt.addEventListener("click", ()=>{
     document.body.removeChild(overlay);
     enterVisiting(p);
@@ -2323,12 +2288,32 @@ function openEnemyBaseMenu(p){
   document.body.appendChild(overlay);
 }
 
+// Das Angreifen-Menue darf erst aufgehen, wenn das eigene Boot (owBoatX/Y)
+// wirklich in der Naehe der Basis ist - vorher konnte man von ueberall auf
+// der Karte draufteppen und war sofort da, ohne ueberhaupt hingefahren zu
+// sein.
+const OW_ATTACK_RADIUS = 110;
+
 function handleOpenWorldTap(wx,wy){
   if(Math.hypot(wx,wy) <= 110){ returnHomeFromOpenWorld(); return; }
   for(const p of TEST_PLAYERS){
     const x = Math.cos(p.angle*Math.PI/180)*p.dist, y = Math.sin(p.angle*Math.PI/180)*p.dist;
-    if(Math.hypot(wx-x,wy-y) <= 60){ openEnemyBaseMenu(p); return; }
+    if(Math.hypot(wx-x,wy-y) <= 60){
+      if(Math.hypot(owBoatX-x, owBoatY-y) <= OW_ATTACK_RADIUS){ openEnemyBaseMenu(p); }
+      else { showToast("Erst näher heranfahren"); }
+      return;
+    }
   }
+}
+
+// Nur das Raid-Boot ist hier antippbar - zeigt dieselbe Boot-Anzeige
+// (openBoatMenu) wie zuhause statt gar nichts, "Einsteigen" wird darin zu
+// "Ablegen" umbenannt (siehe openBoatMenu).
+function handleVisitingTap(wx,wy){
+  const p = visitingPlayer;
+  if(!p) return;
+  const boat = visitBoatPos(gridSizeForLevel(p.basisLevel));
+  if(Math.hypot(wx-boat.x, wy-boat.y) <= HAFEN_INTERACT_RADIUS){ openBoatMenu(); }
 }
 
 // Fuss-Steuerung beim Basis-Besuch: gleiche Joystick/WASD-Logik wie zuhause,
@@ -2349,6 +2334,105 @@ function updateVisitPlayer(dt){
   }
   collectNearbyLoot();
   depositLootToBoatIfNear();
+  updateVisitCombat(dt);
+}
+
+// Eigene, kleine Kampf-Schleife nur fuer den Basis-Besuch: Tuerme feuern auf
+// den Spieler (gleiche WEAPON_STATS/towerDamage wie zuhause), der Spieler
+// feuert automatisch auf das naechste Gebaeude in Reichweite zurueck - kein
+// eigener Tap/Knopf noetig, passt zum "einfach hinlaufen" Stil dieser
+// Ansicht. Eigene Geschoss-Liste (visitProjectiles) statt der globalen
+// projectiles/enemies-Arrays der Heimat-Wellen, damit hier nichts mit denen
+// kollidiert oder nach dem Verlassen liegen bleibt.
+let visitProjectiles = [];
+let visitPlayerAttackCd = 0;
+const VISIT_PLAYER_ATTACK_RANGE = 80;
+const VISIT_PLAYER_ATTACK_RATE = 0.5;
+const VISIT_PLAYER_DMG = 12;
+
+function updateVisitCombat(dt){
+  const p = visitingPlayer;
+  if(!p) return;
+  const gridSize = gridSizeForLevel(p.basisLevel);
+
+  Object.entries(p.cellsByCoord).forEach(([key,slot])=>{
+    if(!slot.building || slot.building.type!=="turm" || slot.building.hp<=0) return;
+    const [c,r] = key.split(",").map(Number);
+    const pos = cellCenter(c,r,gridSize);
+    const b = slot.building;
+    const w = WEAPON_STATS[b.weapon]||WEAPON_STATS.bogen;
+    b.fireCd = (b.fireCd||0)-dt;
+    if(b.fireCd>0) return;
+    if(Math.hypot(visitPlayerX-pos.x, visitPlayerY-pos.y) > w.range) return;
+    b.fireCd = w.rate;
+    const ang = Math.atan2(visitPlayerY-pos.y, visitPlayerX-pos.x);
+    visitProjectiles.push({x:pos.x,y:pos.y,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:towerDamage(b),color:w.color,fromTower:true});
+  });
+
+  visitPlayerAttackCd -= dt;
+  if(visitPlayerAttackCd<=0){
+    let closest=null, closestDist=VISIT_PLAYER_ATTACK_RANGE, closestKey=null, closestPos=null;
+    Object.entries(p.cellsByCoord).forEach(([key,slot])=>{
+      if(!slot.building || slot.building.hp<=0) return;
+      const [c,r] = key.split(",").map(Number);
+      const pos = cellCenter(c,r,gridSize);
+      const d = Math.hypot(visitPlayerX-pos.x, visitPlayerY-pos.y);
+      if(d<closestDist){ closestDist=d; closest=slot; closestKey=key; closestPos=pos; }
+    });
+    if(closest){
+      visitPlayerAttackCd = VISIT_PLAYER_ATTACK_RATE;
+      const ang = Math.atan2(closestPos.y-visitPlayerY, closestPos.x-visitPlayerX);
+      visitProjectiles.push({x:visitPlayerX,y:visitPlayerY,vx:Math.cos(ang)*260,vy:Math.sin(ang)*260,life:1.2,dmg:VISIT_PLAYER_DMG,color:"#6ad4c9",targetKey:closestKey});
+    }
+  }
+
+  visitProjectiles.forEach(pr=>{ pr.x+=pr.vx*dt; pr.y+=pr.vy*dt; pr.life-=dt; });
+  for(let i=visitProjectiles.length-1;i>=0;i--){
+    const pr = visitProjectiles[i];
+    let hit = pr.life<=0;
+    if(!hit && pr.fromTower){
+      if(Math.hypot(pr.x-visitPlayerX,pr.y-visitPlayerY) < 12){
+        state.player.hp = Math.max(0, state.player.hp-pr.dmg);
+        hit = true;
+        if(state.player.hp<=0) visitPlayerKnockedOut();
+        else save();
+      }
+    } else if(!hit && pr.targetKey){
+      const slot = p.cellsByCoord[pr.targetKey];
+      if(slot && slot.building && slot.building.hp>0){
+        const [c,r] = pr.targetKey.split(",").map(Number);
+        const pos = cellCenter(c,r,gridSize);
+        if(Math.hypot(pr.x-pos.x,pr.y-pos.y) < 26){
+          slot.building.hp = Math.max(0, slot.building.hp-pr.dmg);
+          if(slot.building.hp<=0) dropLootFromBuilding(p, c, r, slot);
+          hit = true;
+        }
+      }
+    }
+    if(hit) visitProjectiles.splice(i,1);
+  }
+}
+
+// Lager droppt seine Beute erst beim Zerstoeren (nicht schon vorher) - und
+// nur einmal (looted-Flag), auch wenn danach noch weitere Treffer eingehen.
+function dropLootFromBuilding(p, c, r, slot){
+  if(slot.building.type!=="lager" || slot.building.looted) return;
+  slot.building.looted = true;
+  const pos = cellCenter(c,r,gridSizeForLevel(p.basisLevel));
+  p.loot.push(
+    { id:"loot_holz_"+c+"_"+r, type:"holz", amount:40, capacity:40, x:pos.x, y:pos.y+40 },
+    { id:"loot_stein_"+c+"_"+r, type:"stein", amount:26, capacity:26, x:pos.x+36, y:pos.y+18 }
+  );
+}
+
+// Vom Turmfeuer besiegt: Raid gescheitert, Rucksack ist weg (gleiches
+// Risiko wie beim heimischen K.o.), aber kein Dauerschaden - einfach
+// zurueck in die Open World statt eines eigenen Game-Over-Screens.
+function visitPlayerKnockedOut(){
+  state.player.backpack.holz = 0; state.player.backpack.stein = 0;
+  state.player.hp = playerMaxHp();
+  save();
+  leaveVisiting();
 }
 
 // Wie collectNearbyNode(pl) fuer Wasser-Knoten zuhause, nur auf p.loot der
@@ -2396,10 +2480,10 @@ function depositLootToBoatIfNear(){
   }
 }
 
-// Stark vereinfachte Kopie von drawPlayerSprite() fuer die Besuchs-Ansicht:
-// eigene Position (visitPlayerX/Y statt state.player.x/y), kein
-// Laufziel-Strich (hier gibt's kein Tap-Ziel) und keine HP-Leiste (noch
-// kein Kampf hier).
+// Vereinfachte Kopie von drawPlayerSprite() fuer die Besuchs-Ansicht: eigene
+// Position (visitPlayerX/Y statt state.player.x/y), kein Laufziel-Strich
+// (hier gibt's kein Tap-Ziel), aber MIT HP-Leiste - die Basis-Tuerme
+// schiessen hier ja tatsaechlich zurueck.
 function drawVisitPlayerSprite(){
   const x=visitPlayerX, y=visitPlayerY;
   drawShadow(x,y+13,10,4);
@@ -2432,6 +2516,7 @@ function drawVisitPlayerSprite(){
   ctx.fillStyle = fillRatio>=1 ? "#e04a4a" : "#fff";
   ctx.fillText(capLabel, x, y-24);
   ctx.textAlign = "left";
+  drawHpBar(x, y-38, state.player.hp, playerMaxHp(), 24);
 }
 
 // Beute-Haufen am Boden (Holz/Stein je nach n.type) - gleicher
@@ -2527,6 +2612,7 @@ function drawVisitingBase(){
   (p.loot||[]).forEach(n=>drawLootPile(n.x,n.y,n));
 
   drawVisitPlayerSprite();
+  visitProjectiles.forEach(drawProjectile);
 
   ctx.restore();
 }
@@ -3781,9 +3867,11 @@ function render(){
 let moveSource = null;
 
 function handleTap(wx,wy,isMouseClick){
-  // Waehrend Ladebildschirm/fremder Basis gibt es nichts zum Antippen; in
-  // der Open World gilt ein eigener Treffertest (Basis-Marker statt Raster).
-  if(worldMode==="loading" || worldMode==="visiting") return;
+  // Waehrend des Ladebildschirms gibt es nichts zum Antippen. In der Open
+  // World und beim Basis-Besuch gilt je ein eigener Treffertest (Basis-
+  // Marker bzw. Raid-Boot statt Heimat-Raster).
+  if(worldMode==="loading") return;
+  if(worldMode==="visiting"){ handleVisitingTap(wx,wy); return; }
   if(worldMode==="openworld"){ handleOpenWorldTap(wx,wy); return; }
 
   // Waehrend der Bootsfahrt nur Joystick/WASD + der feste Aussteigen-Knopf -
@@ -4843,16 +4931,21 @@ function openBoatMenu(){
     <div class="hint2">${def.desc} Aktuelle Lagerkapazität: ${storageCap()} pro Rohstoff.</div>
     <div class="hint2">Boot-Ladung: ${boatCargoTotal()}/${boatCargoCapacity()}${boatCargoTotal()>0?" - einfach hinlaufen, um sie zu übernehmen":""}</div>`;
 
+  // Beim Besuch einer fremden Basis ergibt "Einsteigen" (faehrt zum
+  // heimischen Steg) keinen Sinn - hier bedeutet dieselbe Aktion stattdessen
+  // "Ablegen": zurueck zur Open World, wie der Zurueck-Knopf.
+  const visiting = worldMode==="visiting";
   const enterOpt = document.createElement("div");
   enterOpt.className = "buildopt" + (isDestroyed ? " disabled" : "");
   enterOpt.innerHTML = isDestroyed
-    ? `<span>Einsteigen<small>Erst reparieren</small></span>`
+    ? `<span>${visiting?"Ablegen":"Einsteigen"}<small>Erst reparieren</small></span>`
+    : visiting
+    ? `<span>Ablegen<small>Zurück zur Open World</small></span><b>⛵</b>`
     : `<span>Einsteigen<small>Damit im Wasser Rohstoffe sammeln</small></span><b>⛵</b>`;
   enterOpt.addEventListener("click", ()=>{
     if(isDestroyed) return;
     document.body.removeChild(overlay);
-    enterBoat();
-    render();
+    if(visiting){ leaveVisiting(); } else { enterBoat(); render(); }
   });
   box.appendChild(enterOpt);
 
