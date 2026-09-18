@@ -1161,12 +1161,16 @@ let enemies = [];
 let projectiles = [];
 let waveActive = false;
 
-// Nur wer bereits eine Kanone gebaut hat, kann Bruecher ueberhaupt kontern -
-// deshalb tauchen sie nicht einfach ab einem festen Basis-Level auf, sondern
-// erst, wenn der Spieler die Kanone tatsaechlich freigeschaltet hat.
-function hasKanoneTower(){
+// Nur wer bereits eine staerkere Waffe als den Standard-Bogen gebaut hat,
+// kann Brecher ueberhaupt kontern - deshalb tauchen sie nicht einfach ab
+// einem festen Basis-Level auf, sondern erst, wenn der Spieler tatsaechlich
+// eine davon freigeschaltet hat. Bug (Nutzer-Feedback): das pruefte bisher
+// nur explizit "kanone", nicht Armbrust/Moerser/Feuerturm - mit denen kamen
+// dadurch nie Brecher, obwohl sie genauso als "hochgeruestet" zaehlen wie
+// die Kanone. Bogen bleibt bewusst aussen vor (Standardwaffe, kein Upgrade).
+function hasAdvancedWeaponTower(){
   return Object.values(state.cellsByCoord).some(slot=>
-    slot.building && slot.building.type==="turm" && slot.building.weapon==="kanone"
+    slot.building && slot.building.type==="turm" && slot.building.weapon && slot.building.weapon!=="bogen"
   );
 }
 
@@ -1179,7 +1183,7 @@ const STAT_SCALING_CAP_LEVEL = 15;
 function pickWaveComposition(){
   const level = state.basisLevel;
   const count = Math.min(3+Math.floor(level/2), 10);
-  const canFaceBrecher = hasKanoneTower();
+  const canFaceBrecher = hasAdvancedWeaponTower();
   const brecherChance = canFaceBrecher ? Math.min(0.45, 0.1+level*0.03) : 0;
   const types = [];
   for(let i=0;i<count;i++){
